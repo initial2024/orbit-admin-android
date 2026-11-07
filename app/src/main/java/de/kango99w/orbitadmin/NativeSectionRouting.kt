@@ -3,7 +3,7 @@ package de.kango99w.orbitadmin
 import java.net.URI
 
 /**
- * The five primary destinations are native Android UI. First-party HTML opens
+ * The six primary destinations are native Android UI. First-party HTML opens
  * only on an explicit user action for a feature with no reviewed native API.
  */
 object NativeSectionRouting {
@@ -20,6 +20,6 @@ object NativeSectionRouting {
     fun isNativePrimaryTab(section: MailSection): Boolean =
         section in setOf(
             MailSection.INBOX, MailSection.MAILBOXES, MailSection.TRANSFER,
-            MailSection.ADMIN, MailSection.SETTINGS
+            MailSection.ADMIN, MailSection.PRIVATE, MailSection.SETTINGS
         )
 }
