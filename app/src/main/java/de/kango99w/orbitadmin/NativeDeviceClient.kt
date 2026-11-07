@@ -1,0 +1,190 @@
+package de.kango99w.orbitadmin
+
+import android.content.Context
+import android.os.Looper
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import org.json.JSONObject
+import java.io.IOException
+import java.net.URL
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
+import java.util.Base64
+import javax.net.ssl.HttpsURLConnection
+
+/**
+ * Revocable account-only mail read, separate from website cookies and admin sessions.
+ * The backend feature is disabled by default; never silently substitute WebView cookies.
+ */
+class NativeDeviceClient(context: Context) {
+    private val prefs = context.getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE)
+    companion object {
+        private const val ALIAS = "orbit_mail_device_p256_v1"
+        private const val ORIGIN = "https://inbox.kango99w.de"
+        private const val EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        private val DEVICE_ID = Regex("^[a-fA-F0-9-]{36}$")
+        private val ENDPOINT = Regex("^/api/account/native-device/mailboxes(?:/[A-Za-z0-9_-]{1,128}/messages(?:/[A-Za-z0-9_-]{1,128})?)?$")
+    }
+
+    data class Response(val status: Int, val value: JSONObject?, val error: String? = null)
+
+    private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+
+    private fun existingKey(): KeyPair? {
+        val key = keyStore()
+        val privateKey = key.getKey(ALIAS, null) as? java.security.PrivateKey ?: return null
+        val publicKey = key.getCertificate(ALIAS)?.publicKey ?: return null
+        return KeyPair(publicKey, privateKey)
+    }
+
+    private fun getOrCreateKey(): KeyPair {
+        existingKey()?.let { return it }
+        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+        generator.initialize(
+            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setUserAuthenticationRequired(false)
+                .build()
+        )
+        return generator.generateKeyPair()
+    }
+
+    private fun base64(value: ByteArray): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(value)
+
+    private fun nonce(): String = ByteArray(24).also { SecureRandom().nextBytes(it) }.let(::base64)
+
+    /**
+     * Java Signature SHA256withECDSA returns DER; Worker WebCrypto ECDSA expects
+     * exactly 64-byte IEEE-P1363 (32-byte r || 32-byte s). Reject unusual DER.
+     */
+    private fun derToP1363(der: ByteArray): ByteArray {
+        val data = der.map { it.toInt() and 0xff }
+        if (data.size !in 68..74 || data[0] != 0x30 || data[1] != data.size - 2) {
+            throw IOException("Invalid ECDSA DER envelope")
+        }
+        var position = 2
+        val result = ByteArray(64)
+        repeat(2) { component ->
+            if (data.getOrNull(position++) != 0x02) throw IOException("Invalid ECDSA INTEGER")
+            val len = data.getOrNull(position++) ?: throw IOException("Truncated ECDSA")
+            if (len !in 32..33 || position + len > data.size) throw IOException("ECDSA integer length")
+            val raw = der.copyOfRange(position, position + len)
+            position += len
+            val unsigned = if (len == 33) {
+                if (raw[0].toInt() != 0) throw IOException("ECDSA sign extension")
+                raw.copyOfRange(1, 33)
+            } else raw
+            if (unsigned.size != 32) throw IOException("ECDSA width")
+            System.arraycopy(unsigned, 0, result, 32 * component, 32)
+        }
+        if (position != data.size) throw IOException("Trailing ECDSA data")
+        return result
+    }
+
+    private fun sign(payload: String): String {
+        val signer = Signature.getInstance("SHA256withECDSA")
+        signer.initSign(getOrCreateKey().private)
+        signer.update(payload.toByteArray(Charsets.UTF_8))
+        return base64(derToP1363(signer.sign()))
+    }
+
+    /**
+     * Passed to the *existing first-party website only* after a user action.
+     * The website issues the session-authenticated pairing API request.
+     * Password/TOTP fields are never stored by the APK.
+     */
+    fun createPairPayload(label: String, password: String, totp: String): JSONObject {
+        require(label.length in 1..60 && !label.contains('\n'))
+        val n = nonce()
+        val stamp = System.currentTimeMillis()
+        val body = "orbit-native-pair-v1\n$n\n$stamp\n$label"
+        return JSONObject()
+            .put("v", 1)
+            .put("action", "native_device_pair")
+            .put("public_key", base64(getOrCreateKey().public.encoded))
+            .put("signature", sign(body))
+            .put("nonce", n)
+            .put("stamp", stamp)
+            .put("label", label)
+            .put("totp_code", totp)
+            .put("current_password", password)
+    }
+
+    fun completePair(deviceId: String, expiresAt: Long): Boolean {
+        if (!DEVICE_ID.matches(deviceId) || expiresAt <= System.currentTimeMillis() ||
+            existingKey() == null) return false
+        return prefs.edit().putString("device_id", deviceId)
+            .putLong("expires_at", expiresAt).commit()
+    }
+
+    fun isBound(): Boolean = currentId() != null
+
+    fun currentId(): String? {
+        val id = prefs.getString("device_id", null) ?: return null
+        val valid = DEVICE_ID.matches(id) && prefs.getLong("expires_at", 0L) > System.currentTimeMillis()
+        if (!valid || existingKey() == null) {
+            prefs.edit().clear().apply()
+            return null
+        }
+        return id
+    }
+
+    fun localExpiry(): Long = prefs.getLong("expires_at", 0L)
+
+    fun clearLocalBinding() {
+        prefs.edit().clear().commit()
+        keyStore().deleteEntry(ALIAS)
+    }
+
+    /** Execute off the Android main thread. No redirects and no Cookie header. */
+    fun fetch(path: String): Response {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Native mail HTTP on UI thread" }
+        if (!ENDPOINT.matches(path)) return Response(400, null, "NATIVE_PATH_INVALID")
+        val id = currentId() ?: return Response(401, null, "NATIVE_DEVICE_NOT_PAIRED")
+        val stamp = System.currentTimeMillis()
+        val n = nonce()
+        val canonical = listOf(
+            "orbit-native-request-v1", "GET", ORIGIN, path, EMPTY_SHA256,
+            stamp.toString(), n
+        ).joinToString("\n")
+        var connection: HttpsURLConnection? = null
+        return try {
+            connection = URL(ORIGIN + path).openConnection() as HttpsURLConnection
+            connection.instanceFollowRedirects = false
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("X-Orbit-Device", id)
+            connection.setRequestProperty("X-Orbit-Stamp", stamp.toString())
+            connection.setRequestProperty("X-Orbit-Nonce", n)
+            connection.setRequestProperty("X-Orbit-Signature", sign(canonical))
+            val code = connection.responseCode
+            if (code !in 200..299) return Response(code, null, "HTTP_$code")
+            val stream = connection.inputStream
+            val limit = 65536
+            val bytes = stream.use { input ->
+                val buf = ByteArray(limit + 1)
+                var count = 0
+                while (count < buf.size) {
+                    val read = input.read(buf, count, buf.size - count)
+                    if (read < 0) break
+                    count += read
+                }
+                if (count > limit) throw IOException("Native response too large")
+                buf.copyOf(count)
+            }
+            Response(code, JSONObject(String(bytes, Charsets.UTF_8)))
+        } catch (_: Exception) {
+            Response(503, null, "NATIVE_NETWORK_UNAVAILABLE")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+}
