@@ -120,6 +120,12 @@ class MainActivity : FragmentActivity() {
     private var nativePairLabel by mutableStateOf("我的 Android 手机")
     private var nativePairPassword by mutableStateOf("")
     private var nativePairTotp by mutableStateOf("")
+    // Native credentials are transient Compose state, never a WebView Cookie.
+    private var nativeLoginEmail by mutableStateOf("")
+    private var nativeLoginPassword by mutableStateOf("")
+    private var nativeLoginTotp by mutableStateOf("")
+    private var nativeLoginBusy by mutableStateOf(false)
+    private var nativeLoginError by mutableStateOf("")
     private var pendingPairNonce: String? = null
     private var showNativeMail by mutableStateOf(true)
     // All regular tabs are Compose surfaces. Website views are explicit fallback only.
@@ -388,6 +394,49 @@ class MainActivity : FragmentActivity() {
         return java.text.DateFormat.getDateTimeInstance(
             java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
         ).format(java.util.Date(value))
+    }
+
+    /** First-party native HTTPS login; no WebView, site session Cookie or admin scope. */
+    private fun submitNativeLogin() {
+        if (!unlocked || nativeLoginBusy || nativeDeviceClient.isBound()) return
+        val email = nativeLoginEmail.trim()
+        val password = nativeLoginPassword
+        val totp = nativeLoginTotp.trim()
+        if (email.isBlank() || password.length !in 8..128) {
+            nativeLoginError = "请输入有效邮箱及密码（至少 8 位）。"
+            return
+        }
+        val generation = nativeRequestGeneration.incrementAndGet()
+        nativeLoginBusy = true
+        nativeLoginError = ""
+        nativeIo.execute {
+            val result = nativeDeviceClient.login(email, password, totp, nativePairLabel)
+            runOnUiThread {
+                if (nativeRequestGeneration.get() != generation) return@runOnUiThread
+                nativeLoginBusy = false
+                if (!unlocked) return@runOnUiThread
+                if (result.status == 201 && nativeDeviceClient.isBound()) {
+                    nativeLoginPassword = ""
+                    nativeLoginTotp = ""
+                    nativeLoginError = ""
+                    nativeInbox = null
+                    nativeApiActive = false
+                    message = "账号已安全绑定到本机，正在同步邮件。"
+                    refreshNativeApi()
+                } else {
+                    nativeLoginError = when (result.error) {
+                        "NATIVE_TOTP_REQUIRED" -> "该账号已启用 2FA，请输入验证器当前 6 位动态码。"
+                        "NATIVE_LOGIN_REJECTED" -> "账号、密码或动态验证码错误；请核对后重试。"
+                        "NATIVE_DEVICE_LIMIT", "NATIVE_PAIR_CONFLICT" ->
+                            "活跃设备数已达上限，或本次绑定发生冲突。"
+                        "NATIVE_DEVICE_API_DISABLED" ->
+                            "原生账号 API 尚未部署。网站登录不等于原生授权。"
+                        "NATIVE_NETWORK_UNAVAILABLE" -> "无法连接服务器，请检查网络后重试。"
+                        else -> "绑定失败（HTTP ${result.status}），请检查服务器授权状态。"
+                    }
+                }
+            }
+        }
     }
 
     /** Signed, cookie-free native API reads. Only account-owned and unlocked data is displayed. */
@@ -1025,6 +1074,56 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
+    private fun NativeLoginContent() {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Spacer(Modifier.height(18.dp))
+            Text("Orbit Mail", style = MaterialTheme.typography.headlineLarge)
+            Text("登录你的邮箱账号", style = MaterialTheme.typography.titleLarge)
+            Text("这是 Android 原生登录页。密码和动态验证码仅用于本次验证，后续由本机 Keystore 私钥签名读取邮件；不依赖网页登录 Cookie。",
+                style = MaterialTheme.typography.bodyMedium)
+            OutlinedTextField(
+                value = nativeLoginEmail,
+                onValueChange = { nativeLoginEmail = it.take(320) },
+                label = { Text("邮箱账号") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = nativeLoginPassword,
+                onValueChange = { nativeLoginPassword = it.take(128) },
+                label = { Text("账号密码") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = nativeLoginTotp,
+                onValueChange = { nativeLoginTotp = it.filter(Char::isDigit).take(8) },
+                label = { Text("2FA 动态码（仅开启 2FA 时填写）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (nativeLoginError.isNotBlank()) {
+                Text(nativeLoginError, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Button(
+                onClick = ::submitNativeLogin,
+                enabled = !nativeLoginBusy && nativeLoginEmail.isNotBlank() &&
+                    nativeLoginPassword.length >= 8,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (nativeLoginBusy) "正在安全验证…" else "登录并绑定这台设备")
+            }
+            Text("账号登录与管理员权限独立；受保护邮箱及高级管理功能仍需单独授权。",
+                style = MaterialTheme.typography.labelSmall)
+        }
+    }
+
+    @Composable
     private fun NativeMailboxLanding(showMailboxes: Boolean) {
         Column(
             modifier = Modifier.fillMaxSize().padding(22.dp),
@@ -1517,6 +1616,8 @@ class MainActivity : FragmentActivity() {
                                 NativeMailDetailContent(nativeMailDetail!!)
                             } else if (pendingNativeMessageId != null) {
                                 NativeMailLoadingContent()
+                            } else if (!nativeDeviceClient.isBound()) {
+                                NativeLoginContent()
                             } else if (snapshot != null) {
                                 NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
                             } else {
@@ -1581,6 +1682,9 @@ class MainActivity : FragmentActivity() {
         pendingPairNonce = null
         nativePairPassword = ""
         nativePairTotp = ""
+        nativeLoginPassword = ""
+        nativeLoginTotp = ""
+        nativeLoginBusy = false
         nativeApiActive = false
         nativeInbox = null
         nativeMailDetail=null
