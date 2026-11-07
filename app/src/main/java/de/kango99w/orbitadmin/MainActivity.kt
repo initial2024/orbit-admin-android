@@ -260,7 +260,7 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Orbit Admin", style = MaterialTheme.typography.headlineLarge)
+            Text("Orbit Mail", style = MaterialTheme.typography.headlineLarge)
             Spacer(modifier = Modifier.padding(8.dp))
             Text("本机解锁不代替网站的账号密码和双重验证。")
             Spacer(modifier = Modifier.padding(10.dp))
@@ -1560,7 +1560,7 @@ class MainActivity : FragmentActivity() {
         )
         val notice = Notification.Builder(this, notificationChannelId)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle("Orbit Admin · 收到新邮件")
+            .setContentTitle("Orbit Mail · 收到新邮件")
             .setContentText("请解锁应用查看，通知不会显示邮件地址、正文或验证码。")
             .setContentIntent(pi)
             .setCategory(Notification.CATEGORY_MESSAGE)
@@ -1601,7 +1601,7 @@ class MainActivity : FragmentActivity() {
         )
         val notice = Notification.Builder(this, notificationChannelId)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle("Orbit Admin · 通知测试")
+            .setContentTitle("Orbit Mail · 通知测试")
             .setContentText("系统通知通道已就绪；新邮件后台推送仍需服务器端接入。")
             .setContentIntent(pi)
             .setAutoCancel(true)
