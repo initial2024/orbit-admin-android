@@ -1591,6 +1591,11 @@ class MainActivity : FragmentActivity() {
                     adminSelectedMailbox = null
                     adminSelectedMessage = null
                     adminSelectedMessageId = null
+                    adminPane = "mailboxes"
+                    adminManagedDomains = emptyList()
+                    adminRecordedAddresses = emptyList()
+                    adminSecurityState = null
+                    adminDeleteTarget = null
                     adminTotpRequired = false
                     adminError = "已退出管理员会话。普通账号授权未更改。"
                 } else adminError = "管理员退出失败：HTTP ${response.status}，未声称退出成功。"
@@ -2094,6 +2099,41 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
+    private fun NativeAdminDeleteDialog() {
+        val target = adminDeleteTarget ?: return
+        AlertDialog(
+            onDismissRequest = {
+                if (!adminBusy) {
+                    adminDeleteTarget = null
+                    adminDeleteError = ""
+                }
+            },
+            title = { Text("确认删除管理员邮箱？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(target.address, style=MaterialTheme.typography.titleMedium)
+                    Text(if (target.privateMailbox)
+                        "该固定邮箱及其已存邮件可能永久删除，此操作不可撤销。"
+                    else "该临时邮箱将解除管理员归属并清理收信路由。已使用的域名和地址记录不代表可恢复。")
+                    if (adminDeleteError.isNotBlank())
+                        Text(adminDeleteError, color=MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                Button(enabled=!adminBusy, onClick=::deleteNativeAdminMailbox) {
+                    Text(if(adminBusy) "正在等待服务器确认…" else "确认永久删除")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled=!adminBusy, onClick={
+                    adminDeleteTarget=null
+                    adminDeleteError=""
+                }) { Text("取消") }
+            }
+        )
+    }
+
+    @Composable
     private fun NativeAdminCreateDialog() {
         AlertDialog(
             onDismissRequest={if(!adminBusy) showAdminCreateDialog=false},
@@ -2295,6 +2335,9 @@ class MainActivity : FragmentActivity() {
                     } else if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
                     else lock()
                 }
+                activeSection == MailSection.ADMIN && adminPane != "mailboxes" -> {
+                    openAdminNativePane("mailboxes")
+                }
                 activeSection == MailSection.ADMIN && adminSelectedMessageId != null &&
                     showNativeToolsPanel -> {
                     adminSelectedMessageId = null
@@ -2342,6 +2385,7 @@ class MainActivity : FragmentActivity() {
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
+        if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
@@ -2497,6 +2541,11 @@ class MainActivity : FragmentActivity() {
         adminSelectedMailbox = null
         adminSelectedMessage = null
         adminSelectedMessageId = null
+        adminPane = "mailboxes"
+        adminManagedDomains = emptyList()
+        adminRecordedAddresses = emptyList()
+        adminSecurityState = null
+        adminDeleteTarget = null
         // Website CookieManager and native Keystore grants are separate auth realms.
         // Do not revoke or erase the account grant merely because website data
         // (including the administrator WebView session) was cleared.
@@ -2532,6 +2581,11 @@ class MainActivity : FragmentActivity() {
         adminSelectedMailbox = null
         adminSelectedMessage = null
         adminSelectedMessageId = null
+        adminPane = "mailboxes"
+        adminManagedDomains = emptyList()
+        adminRecordedAddresses = emptyList()
+        adminSecurityState = null
+        adminDeleteTarget = null
         showAdminCreateDialog = false
         nativeRequestGeneration.incrementAndGet()
         nativeApiLoading = false
