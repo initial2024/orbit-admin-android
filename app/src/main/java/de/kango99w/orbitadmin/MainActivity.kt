@@ -210,6 +210,7 @@ class MainActivity : FragmentActivity() {
     private var nativeCreateDomain by mutableStateOf("")
     private var nativePickedFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
     private var activeSection by mutableStateOf(MailSection.INBOX)
+    private var workspace by mutableStateOf(MailWorkspace.ORDINARY)
     private var previousWebSection = MailSection.INBOX
     private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
     private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
@@ -436,6 +437,37 @@ class MainActivity : FragmentActivity() {
             } catch (_: Exception) { false }
         } ?: false
 
+    /**
+     * Switching workspaces only changes navigation presentation. It NEVER
+     * promotes an ordinary device grant to administrator access.
+     */
+    private fun switchWorkspace(next: MailWorkspace) {
+        if (workspace == next) return
+        workspace = next
+        if (next == MailWorkspace.ADMIN) {
+            openSection(MailSection.ADMIN)
+        } else {
+            openSection(MailSection.INBOX)
+        }
+    }
+
+    private fun selectAdminNavigation(tab: AdminDestinationTab) {
+        if (workspace != MailWorkspace.ADMIN) return
+        if (tab == AdminDestinationTab.PRIVATE) {
+            openSection(MailSection.PRIVATE)
+        } else {
+            val target = tab.pane ?: return
+            if (activeSection != MailSection.ADMIN) {
+                adminPane = target
+                openSection(MailSection.ADMIN)
+            } else if (adminAuthenticated) {
+                openAdminNativePane(target)
+            } else {
+                adminPane = target
+            }
+        }
+    }
+
     private fun openSection(section: MailSection) {
         showTools = false
         if (section == MailSection.SETTINGS) {
@@ -453,7 +485,8 @@ class MainActivity : FragmentActivity() {
                 webLoginInProgress = false
                 nativeSearchQuery = ""
             }
-            MailSection.ADMIN, MailSection.TRANSFER, MailSection.PRIVATE -> showNativeToolsPanel = true
+            MailSection.ADMIN, MailSection.TRANSFER, MailSection.PRIVATE,
+            MailSection.DECOR -> showNativeToolsPanel = true
             MailSection.SETTINGS -> Unit
         }
         activeSection = section
