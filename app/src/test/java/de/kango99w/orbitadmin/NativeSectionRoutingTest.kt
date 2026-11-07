@@ -60,6 +60,10 @@ class NativeSectionRoutingTest {
         assertFalse(source.contains("factory = { obtainBrowser(MailSection.ADMIN) }"))
         assertTrue(source.contains("if (target == MailSection.ADMIN)"))
         assertTrue(source.contains("openAdvancedAdminWebsite(url)"))
+        assertTrue(source.contains("Administrator must use native Compose, not WebView"))
+        assertFalse(source.contains("pendingAdminUrl"))
+        assertTrue(source.contains("Intent.ACTION_VIEW"))
+
         assertTrue(source.contains("NativeAdminContent()"))
         assertFalse(source.contains("if (transferWebVisible ||"))
         assertFalse(source.contains("if (adminWebVisible ||"))
