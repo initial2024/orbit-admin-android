@@ -30,4 +30,17 @@ class NativeMailLinksTest {
         assertEquals(1,links.size)
         assertTrue(links[0].url.startsWith("https://portal.example.com/sign-in"))
     }
+    @Test fun priorityShowsVerificationLinkFirstWithoutClaimingItIsTrusted() {
+        val links=listOf(
+            NativeSafeMailLink("https://news.example.com/article","news.example.com","新闻"),
+            NativeSafeMailLink("https://accounts.example.com/confirm?t=123",
+                "accounts.example.com","确认您的账户"),
+            NativeSafeMailLink("javascript:alert(1)","evil.test","验证")
+        )
+        val target=NativeMailLinks.priority(links)
+        assertEquals("accounts.example.com",target?.host)
+        assertNull(NativeMailLinks.priority(listOf(links.last())))
+        assertNull(NativeMailLinks.priority(emptyList()))
+    }
+
 }

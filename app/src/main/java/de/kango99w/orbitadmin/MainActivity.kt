@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -80,6 +81,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -115,6 +118,12 @@ class MainActivity : FragmentActivity() {
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
+    private var appearanceMode by mutableStateOf(OrbitAppearanceMode.SYSTEM)
+    private fun setAppearanceMode(next: OrbitAppearanceMode) {
+        appearanceMode=next
+        getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
+            .edit().putString("mode",next.name).apply()
+    }
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private val nativeDeviceClient by lazy { NativeDeviceClient(applicationContext) }
     private val nativeIo = Executors.newSingleThreadExecutor()
@@ -393,6 +402,9 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
+        appearanceMode=OrbitAppearanceMode.parse(
+            getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
+                .getString("mode",OrbitAppearanceMode.SYSTEM.name))
         val pushPrefs = getSharedPreferences("orbit_push",MODE_PRIVATE)
         backgroundPushRevokePending = pushPrefs.getBoolean("revoke_pending",false)
         backgroundPushOptIn = pushPrefs.getBoolean("opt_in",false)
@@ -437,8 +449,9 @@ class MainActivity : FragmentActivity() {
         )
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            OrbitMailTheme(appearanceMode) {
+                Surface(modifier = Modifier.fillMaxSize(),
+                    color=MaterialTheme.colorScheme.background) {
                     if (unlocked) AdminScreen() else LockScreen()
                 }
             }
@@ -1534,7 +1547,8 @@ class MainActivity : FragmentActivity() {
                 messageKey="ordinary:"+detail.mailboxId+":"+detail.id,
                 plainText=detail.textBody,
                 htmlBody=detail.htmlBody,
-                safeLinks=detail.safeLinks
+                safeLinks=detail.safeLinks,
+                possibleCode=detail.possibleCode
             )
             OutlinedButton(onClick={showNativeMail=false}) {
                 Text("尚未原生支持的附件或高级内容（手动打开网站）")
@@ -3021,7 +3035,8 @@ class MainActivity : FragmentActivity() {
                             messageKey="admin:"+selected.id+":"+detail.id,
                             plainText=detail.text.ifBlank{detail.htmlText},
                             htmlBody=detail.htmlBody,
-                            safeLinks=detail.safeLinks
+                            safeLinks=detail.safeLinks,
+                            possibleCode=detail.possibleCode
                         )
                     }
                 } else if (adminSelectedMessageId != null) {
@@ -3293,6 +3308,36 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            Card(modifier=Modifier.fillMaxWidth(),
+                colors=CardDefaults.cardColors(
+                    containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.54f))) {
+                Column(modifier=Modifier.padding(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Text("外观与阅读",style=MaterialTheme.typography.titleMedium)
+                    Text("主题仅影响 Orbit Mail 原生界面；随时切换，重新打开也会保留。",
+                        style=MaterialTheme.typography.bodySmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    listOf(
+                        listOf(OrbitAppearanceMode.SYSTEM,OrbitAppearanceMode.DAY),
+                        listOf(OrbitAppearanceMode.NIGHT,OrbitAppearanceMode.SOFT)
+                    ).forEach { pair ->
+                        Row(modifier=Modifier.fillMaxWidth(),
+                            horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            pair.forEach { mode ->
+                                FilterChip(
+                                    selected=appearanceMode==mode,
+                                    onClick={setAppearanceMode(mode)},
+                                    label={Text(mode.title)},
+                                    modifier=Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    Text(appearanceMode.description,
+                        style=MaterialTheme.typography.labelMedium,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {

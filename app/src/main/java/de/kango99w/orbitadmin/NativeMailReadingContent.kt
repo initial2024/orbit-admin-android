@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -37,7 +40,8 @@ fun NativeMailReadingContent(
     messageKey: String,
     plainText: String,
     htmlBody: String,
-    safeLinks: List<NativeSafeMailLink>
+    safeLinks: List<NativeSafeMailLink>,
+    possibleCode: String = ""
 ) {
     val context=LocalContext.current
     var formatted by remember(messageKey) { mutableStateOf(htmlBody.isNotBlank()) }
@@ -46,6 +50,9 @@ fun NativeMailReadingContent(
     val color=MaterialTheme.colorScheme.onSurface.toArgb()
     val html=htmlBody.take(16000)
     val text=plainText.take(16000)
+    val priorityLink=remember(messageKey,safeLinks,possibleCode) {
+        if(possibleCode.isBlank()) NativeMailLinks.priority(safeLinks) else null
+    }
     // Reuse parsed Spanned formatting across checkbox, notice and link-dialog
     // recompositions; reparsing a large MIME body on every click caused jank.
     val styledBody=remember(messageKey,html) {
@@ -53,7 +60,36 @@ fun NativeMailReadingContent(
         catch (_: Exception) { text }
     }
 
-    Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        // When no OTP is detected, put the best extracted action where users
+        // expect the code card. Never auto-open or treat the URL as verified.
+        priorityLink?.let { link ->
+            Card(
+                modifier=Modifier.fillMaxWidth(),
+                colors=CardDefaults.cardColors(
+                    containerColor=MaterialTheme.colorScheme.primaryContainer.copy(alpha=0.72f))
+            ) {
+                Column(modifier=Modifier.padding(14.dp),
+                    verticalArrangement=Arrangement.spacedBy(7.dp)) {
+                    Text("未识别到验证码 · 候选邮件链接",
+                        style=MaterialTheme.typography.titleMedium,
+                        color=MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text(link.label,style=MaterialTheme.typography.bodyMedium)
+                    Text("目标域名："+link.host,
+                        style=MaterialTheme.typography.labelMedium)
+                    Text("此链接仅来自邮件内容，请核对域名。",
+                        style=MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick={
+                            val manager=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            manager.setPrimaryClip(ClipData.newPlainText("邮件链接",link.url))
+                            notice="已复制候选链接；注意剪贴板隐私。"
+                        }) { Text("复制链接") }
+                        Button(onClick={confirmLink=link}) { Text("查看链接") }
+                    }
+                }
+            }
+        }
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             if(html.isNotBlank()) {
                 OutlinedButton(onClick={formatted=true}) {

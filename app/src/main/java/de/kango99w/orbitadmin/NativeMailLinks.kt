@@ -8,6 +8,20 @@ import java.util.Locale
 data class NativeSafeMailLink(val url: String, val host: String, val label: String)
 
 object NativeMailLinks {
+    /** A candidate verification action, not proof that the sending site is trustworthy. */
+    fun priority(links: List<NativeSafeMailLink>): NativeSafeMailLink? {
+        val valid=links.filter { approved(it.url)!=null }
+        val actions=Regex("验证|确认|激活|重置|登录|verify|confirm|activate|reset|sign.?in|log.?in|authorize|authentication",
+            RegexOption.IGNORE_CASE)
+        return valid.withIndex().maxByOrNull { pair ->
+            val item=pair.value
+            val path=try { URI(item.url).path.orEmpty() } catch(_: Exception) { "" }
+            (if(actions.containsMatchIn(item.label)) 100 else 0) +
+                (if(actions.containsMatchIn(path)) 20 else 0) -
+                pair.index
+        }?.value
+    }
+
     private val naked = Regex("""https://[^\s<>"']+""", RegexOption.IGNORE_CASE)
     private val ipv4 = Regex("""^\d{1,3}(?:\.\d{1,3}){3}$""")
     private val hostName = Regex("""^[a-z0-9.-]+$""")
