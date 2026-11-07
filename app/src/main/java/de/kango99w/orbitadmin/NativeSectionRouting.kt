@@ -19,7 +19,7 @@ object NativeSectionRouting {
 
     fun isNativePrimaryTab(section: MailSection): Boolean =
         section in setOf(
-            MailSection.INBOX, MailSection.MAILBOXES, MailSection.TRANSFER,
+            MailSection.INBOX, MailSection.MAILBOXES, MailSection.TRANSFER, MailSection.DECOR,
             MailSection.ADMIN, MailSection.PRIVATE, MailSection.SETTINGS
         )
 }
