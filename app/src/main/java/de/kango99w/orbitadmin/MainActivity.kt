@@ -3011,7 +3011,13 @@ class MainActivity : FragmentActivity() {
                             Card(modifier=Modifier.fillMaxWidth()) {
                                 Column(modifier=Modifier.padding(14.dp)) {
                                     Text("可能的验证码",style=MaterialTheme.typography.labelSmall)
-                                    NativeMailReadingContent(
+                                    SelectionContainer {
+                                        Text(detail.possibleCode,
+                                            style=MaterialTheme.typography.headlineMedium)
+                                    }
+                                }
+                            }
+                        NativeMailReadingContent(
                             messageKey="admin:"+selected.id+":"+detail.id,
                             plainText=detail.text.ifBlank{detail.htmlText},
                             htmlBody=detail.htmlBody,
