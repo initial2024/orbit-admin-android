@@ -57,6 +57,8 @@ jobs:
       - name: Verify stable version, signature and SHA-256
         id: seal
         shell: bash
+        env:
+          ORBIT_EXPECTED_CERT_SHA256: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
           VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
@@ -68,7 +70,50 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           APK_SIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APK_SIGNER"
-          "$APK_SIGNER" verify --verbose --print-certs "$SRC"
+          # Fail closed when the protected environment did not pin a certificate.
+          # The digest is public verification metadata, not a keystore secret.
+          [[ "$ORBIT_EXPECTED_CERT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || {
+            echo 'ORBIT_RELEASE_CERT_SHA256 is missing or malformed (Production variable)' >&2
+            exit 1
+          }
+          CERT_REPORT="$("$APK_SIGNER" verify --verbose --print-certs "$SRC")"
+          CERTS="$(printf '%s\n' "$CERT_REPORT" | sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p')"
+          test "$(printf '%s\n' "$CERTS" | grep -Ec '^[0-9a-fA-F]{64}
+          cp "$SRC" "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          echo "tag=orbit-mail-v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "apk=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable signed APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.seal.outputs.tag }}
+          APK: ${{ steps.seal.outputs.apk }}
+          CHECKSUM: ${{ steps.seal.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing overwrite' >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" "$CHECKSUM" --target "$GITHUB_SHA" \
+            --title "Orbit Mail $TAG" \
+            --notes "Stable user APK. Produced only after protected signing and manual release approval."
+      - name: Remove local keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/orbit-release.jks"
+)" -eq 1 || {
+            echo 'Expected exactly one valid APK certificate digest' >&2
+            exit 1
+          }
+          ACTUAL_CERT="$(printf '%s\n' "$CERTS" | tr '[:upper:]' '[:lower:]')"
+          EXPECTED_CERT="$(printf '%s' "$ORBIT_EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]]; then
+            echo 'APK signer differs from pinned Production certificate: refusing release' >&2
+            exit 1
+          fi
+          echo "Verified pinned production certificate (SHA-256): $ACTUAL_CERT"
           NAME="Orbit-Mail-v${VERSION}.apk"
           cp "$SRC" "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
