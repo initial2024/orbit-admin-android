@@ -2,7 +2,20 @@
 
 Public Android mail client for the existing [Orbit Mail service](https://inbox.kango99w.de/).
 
-**Status: v0.8.1-dev is a native-first experimental Android client; not a production release.** The production Cloudflare backend is unchanged.
+**Status: v0.9.1-dev is a Compose-native test client; not a production release.** Production has an earlier signed-device reader, but native password/TOTP enrollment and new sanitized HTML-only mail support remain pending [backend PR #620](https://github.com/initial2024/kango99w-temp-mail/pull/620).
+
+## v0.9.1-dev native account/login and readable mail milestone
+
+- The initial Inbox/Mailboxes experience is Kotlin/Jetpack Compose; no automatic WebView account sign-in. A native HTTPS password/TOTP request uses a non-exportable Keystore P-256 key to receive a **revocable, account-owned, read-only** mail grant. Password and 2FA remain in transient app state; the device stores only grant ID/expiry and its private signing key.
+- Signed native HTTPS reads can list the account's ordinary mailboxes, sender/subject and message detail, across app restarts without website cookies; device revocation returns to the native login form. Android 35 instrumentation covers real Keystore signing, persisted grants and negative cases.
+- Native message detail supports bounded plain text or **sanitized HTML-only text**; the backend strips remote images/scripts/styles/unsafe link attributes before display. High-confidence verification codes can be copied from native Compose.
+- Existing user-grant scope is `account_mail_read`. **Native mailbox creation, HTML attachments, transfers, admin APIs, cross-device sync and background push are not completed**. These require separately reviewed scopes, quota/Turnstile enforcement, encryption and user-data protections; never silently treat a read-only grant as write/admin permission.
+- **Production caveat:** the native login endpoint and HTML-only extension are currently in Draft Worker PR #620 and are not live. Do not claim account password/TOTP native enrollment, emails or device persistence have passed real-account phone end-to-end acceptance until the protected Worker release and a device test succeed.
+- The ZIP is a preview bundle containing the debug APK, checksum and installation notes. CI debug signing is not a stable distribution identity; reinstalling may clear local grants.
+
+### Historical implementation notes (v0.8.1 and earlier)
+
+The sections below describe previous versions and are not the current authentication architecture.
 
 ## Orbit Mail v0.8.1-dev: revocable native device-mail API (experimental)
 
