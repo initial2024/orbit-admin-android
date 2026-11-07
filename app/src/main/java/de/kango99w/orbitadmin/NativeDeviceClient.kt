@@ -115,21 +115,28 @@ class NativeDeviceClient(context: Context) {
     }
 
     /** Execute off the Android main thread. No redirects and no Cookie header. */
-    fun fetch(path: String): Response {
+    fun fetch(path: String): Response = perform(path, "GET")
+
+    /** Signed server-side revocation, only an explicit user action should call this. */
+    fun revokeSelf(): Response = perform("/api/account/native-device/revoke-self", "POST")
+
+    private fun perform(path: String, method: String): Response {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Native mail HTTP on UI thread" }
-        if (!ENDPOINT.matches(path)) return Response(400, null, "NATIVE_PATH_INVALID")
+        if (!((method == "GET" && ENDPOINT.matches(path)) ||
+            (method == "POST" && path == "/api/account/native-device/revoke-self")))
+            return Response(400, null, "NATIVE_PATH_INVALID")
         val id = currentId() ?: return Response(401, null, "NATIVE_DEVICE_NOT_PAIRED")
         val stamp = System.currentTimeMillis()
         val n = nonce()
         val canonical = listOf(
-            "orbit-native-request-v1", "GET", ORIGIN, path, EMPTY_SHA256,
+            "orbit-native-request-v1", method, ORIGIN, path, EMPTY_SHA256,
             stamp.toString(), n
         ).joinToString("\n")
         var connection: HttpsURLConnection? = null
         return try {
             connection = URL(ORIGIN + path).openConnection() as HttpsURLConnection
             connection.instanceFollowRedirects = false
-            connection.requestMethod = "GET"
+            connection.requestMethod = method
             connection.connectTimeout = 10000
             connection.readTimeout = 10000
             connection.setRequestProperty("Accept", "application/json")
