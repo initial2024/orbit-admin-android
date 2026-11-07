@@ -107,7 +107,7 @@ class NativeDeviceClientInstrumentedTest {
         val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
         try {
             val result = worker.submit<NativeDeviceClient.Response> {
-                native.login("person@example.org", "synthetic-password", "", "Android\\nInjected")
+                native.login("person@example.org", "synthetic-password", "", "Android\nInjected")
             }.get(8, java.util.concurrent.TimeUnit.SECONDS)
             assertEquals(400, result.status)
             assertEquals("NATIVE_LOGIN_INPUT_INVALID", result.error)
