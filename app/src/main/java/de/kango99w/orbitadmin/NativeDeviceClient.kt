@@ -196,6 +196,76 @@ class NativeDeviceClient(context: Context) {
     /** Signed server-side revocation, only an explicit user action should call this. */
     fun revokeSelf(): Response = perform("/api/account/native-device/revoke-self", "POST")
 
+    /** Native push registration is signed over the exact JSON bytes; no site cookies. */
+    fun registerPush(installationId: String, token: String): Response {
+        if (!Regex("^[A-Za-z0-9_-]{16,72}$").matches(installationId) ||
+            !Regex("^[A-Za-z0-9:_~.\-]{40,4096}$").matches(token))
+            return Response(400, null, "PUSH_INPUT_INVALID")
+        return signedPushMutation("register",
+            JSONObject().put("installation_id", installationId).put("token", token))
+    }
+
+    fun revokePush(installationId: String): Response {
+        if (!Regex("^[A-Za-z0-9_-]{16,72}$").matches(installationId))
+            return Response(400, null, "PUSH_INPUT_INVALID")
+        return signedPushMutation("revoke", JSONObject().put("installation_id", installationId))
+    }
+
+    private fun signedPushMutation(action: String, payload: JSONObject): Response {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Native push HTTP on UI thread" }
+        if (action !in setOf("register", "revoke")) return Response(400, null, "PUSH_ACTION_INVALID")
+        val id = currentId() ?: return Response(401, null, "NATIVE_DEVICE_NOT_PAIRED")
+        val path = "/api/account/native-device/push/$action"
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        if (bytes.isEmpty() || bytes.size > 4800) return Response(400, null, "PUSH_BODY_TOO_LARGE")
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        val stamp = System.currentTimeMillis()
+        val n = nonce()
+        val canonical = listOf(
+            "orbit-native-request-v1", "POST", ORIGIN, path, digest, stamp.toString(), n
+        ).joinToString("\n")
+        var connection: HttpsURLConnection? = null
+        return try {
+            connection = URL(ORIGIN + path).openConnection() as HttpsURLConnection
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.doOutput = true
+            connection.setRequestProperty("Origin", ORIGIN)
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("X-Orbit-Device", id)
+            connection.setRequestProperty("X-Orbit-Stamp", stamp.toString())
+            connection.setRequestProperty("X-Orbit-Nonce", n)
+            connection.setRequestProperty("X-Orbit-Signature", sign(canonical))
+            connection.setFixedLengthStreamingMode(bytes.size)
+            connection.outputStream.use { it.write(bytes) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream
+                         else connection.errorStream
+            val result = stream?.use { input ->
+                val limit = 8192
+                val buffer = ByteArray(limit + 1)
+                var count = 0
+                while (count < buffer.size) {
+                    val read = input.read(buffer, count, buffer.size - count)
+                    if (read < 0) break
+                    count += read
+                }
+                if (count > limit) throw IOException("Native push response too large")
+                JSONObject(String(buffer, 0, count, Charsets.UTF_8))
+            }
+            Response(code, result, if (code in 200..299) null else result?.optString("error", "HTTP_$code"))
+        } catch (_: Exception) {
+            Response(503, null, "NATIVE_PUSH_NETWORK_UNAVAILABLE")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     private fun perform(path: String, method: String): Response {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Native mail HTTP on UI thread" }
         if (!((method == "GET" && ENDPOINT.matches(path)) ||
