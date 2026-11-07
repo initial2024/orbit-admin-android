@@ -335,6 +335,8 @@ class MainActivity : FragmentActivity() {
                     else requestMissingNativeSnapshot()
                     if (activeSection == MailSection.ADMIN && showNativeToolsPanel)
                         refreshNativeAdmin()
+                    if (activeSection == MailSection.PRIVATE)
+                        privateMailReady = privateMailClient.hasLocalSession()
                     tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
@@ -427,7 +429,7 @@ class MainActivity : FragmentActivity() {
                 webLoginInProgress = false
                 nativeSearchQuery = ""
             }
-            MailSection.ADMIN, MailSection.TRANSFER -> showNativeToolsPanel = true
+            MailSection.ADMIN, MailSection.TRANSFER, MailSection.PRIVATE -> showNativeToolsPanel = true
             MailSection.SETTINGS -> Unit
         }
         activeSection = section
@@ -445,6 +447,8 @@ class MainActivity : FragmentActivity() {
             else requestMissingNativeSnapshot()
         } else if (section == MailSection.ADMIN && showNativeToolsPanel) {
             refreshNativeAdmin()
+        } else if (section == MailSection.PRIVATE) {
+            privateMailReady = privateMailClient.hasLocalSession()
         }
     }
 
@@ -2652,7 +2656,8 @@ class MainActivity : FragmentActivity() {
                     showNativeToolsPanel = true
                     if (activeSection == MailSection.ADMIN) refreshNativeAdmin()
                 }
-                (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
+                (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER ||
+                    activeSection == MailSection.PRIVATE) &&
                     showNativeToolsPanel -> openSection(MailSection.INBOX)
                 (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) &&
                     !showNativeMail -> {
@@ -2692,7 +2697,8 @@ class MainActivity : FragmentActivity() {
                 val nativeMailTab = (activeSection == MailSection.INBOX ||
                     activeSection == MailSection.MAILBOXES) && showNativeMail
                 val nativeToolsTab = (activeSection == MailSection.TRANSFER ||
-                    activeSection == MailSection.ADMIN) && showNativeToolsPanel
+                    activeSection == MailSection.ADMIN || activeSection == MailSection.PRIVATE) &&
+                    showNativeToolsPanel
                 val nativeTab = nativeMailTab || nativeToolsTab || activeSection == MailSection.SETTINGS
                 Surface(shadowElevation=1.dp) {
                     Row(
@@ -2745,6 +2751,7 @@ class MainActivity : FragmentActivity() {
                                         MailSection.MAILBOXES -> R.drawable.ic_folder
                                         MailSection.TRANSFER -> R.drawable.ic_file
                                         MailSection.ADMIN -> R.drawable.ic_admin
+                                        MailSection.PRIVATE -> R.drawable.ic_mail
                                         MailSection.SETTINGS -> R.drawable.ic_settings
                                     }),
                                     contentDescription = null
@@ -2812,6 +2819,11 @@ class MainActivity : FragmentActivity() {
                             NativeAdminContent()
                         }
                     }
+                    if (activeSection == MailSection.PRIVATE && showNativeToolsPanel) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            NativePrivateMailContent()
+                        }
+                    }
                     if (activeSection == MailSection.SETTINGS) {
                         Surface(modifier = Modifier.fillMaxSize()) {
                             SettingsContent(Modifier.fillMaxSize())
@@ -2832,6 +2844,10 @@ class MainActivity : FragmentActivity() {
 
     private fun clearLocalSession() {
         showClearConfirm = false
+        privateMailGeneration.incrementAndGet()
+        privateMailClient.invalidate()
+        privateMailReady = false
+        privateMailBusy = false
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
         adminBusy = false
@@ -2870,6 +2886,14 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        privateMailGeneration.incrementAndGet()
+        privateMailClient.invalidate()
+        privateMailBusy = false
+        privateMailError = ""
+        privateMailNotice = ""
+        // Keep the server-bound private cookie for next biometric unlock,
+        // but never retain secret compose text in the locked UI.
+        privateMailText = ""
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
         adminBusy = false
