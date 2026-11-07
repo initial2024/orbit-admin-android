@@ -22,8 +22,8 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 23
-        versionName = "0.9.6-dev"
+        versionCode = 24
+        versionName = "0.9.7-dev"
         // Firebase mobile config values are public identifiers, not service-account secrets.
         // All four must be provided or the optional background push client stays off.
         val fcmNames = listOf("ORBIT_FIREBASE_APP_ID", "ORBIT_FIREBASE_API_KEY",
@@ -46,13 +46,9 @@ android {
         }
     }
     buildTypes {
-        debug {
-            // CI debug signing certificates are ephemeral. Installing a debug
-            // preview over the existing Orbit Mail package would fail with
-            // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Side-by-side test installs
-            // preserve the user's existing app and data.
-            applicationIdSuffix = ".nativepreview"
-        }
+        // Debug uses the same application ID as the user's installed app.
+        // Its ephemeral CI signature requires uninstalling the old APK first.
+        // No signing keys are generated, copied, or claimed to be reusable.
         release {
             // No environment secrets = unsigned release; publishing must reject it.
             if (orbitReleaseSigningReady)
