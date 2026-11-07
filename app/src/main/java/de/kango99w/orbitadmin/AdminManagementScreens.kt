@@ -33,7 +33,8 @@ import androidx.compose.foundation.shape.CircleShape
 fun AdminDomainManagement(
     rows: List<AdminManagedDomain>, search: String, setSearch: (String)->Unit,
     source: String, setSource: (String)->Unit, state: String, setState: (String)->Unit,
-    expanded: Boolean, onExpand: ()->Unit, busy: Boolean
+    expanded: Boolean, onExpand: ()->Unit, busy: Boolean,
+    inventoryStatus: String, onSelect: (AdminManagedDomain)->Unit
 ) {
     Column(modifier=Modifier.fillMaxSize()) {
         OutlinedTextField(value=search,onValueChange={setSearch(it.take(100))},
@@ -44,7 +45,7 @@ fun AdminDomainManagement(
             Text("域名来源",style=MaterialTheme.typography.labelMedium)
             Row(modifier=Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                listOf("全部","管理员邮箱","网站域名","域名申请","临时邮箱").forEach { value ->
+                listOf("全部","管理员邮箱","网站域名","域名申请","临时邮箱","托管库存").forEach { value ->
                     FilterChip(selected=source==value,onClick={setSource(value)},
                         label={Text(value,maxLines=1)})
                 }
@@ -67,10 +68,15 @@ fun AdminDomainManagement(
                 (source=="全部"||item.source==source) &&
                 (state=="全部"||item.state==state)
         }
-        Text("匹配 "+filtered.size+"/"+rows.size+" 个域名 · 以服务端登记为准",
+        Text("匹配 "+filtered.size+"/"+rows.size+" 个域名 · 仅代表登记及观测数据",
             modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(inventoryStatus.isNotBlank())
+            Text(inventoryStatus,maxLines=2,
+                modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
+                style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(modifier=Modifier.fillMaxSize(),
             contentPadding=androidx.compose.foundation.layout.PaddingValues(
                 horizontal=12.dp,vertical=8.dp),
@@ -81,7 +87,9 @@ fun AdminDomainManagement(
             items(filtered) { item ->
                 AdminSummaryCard(glyph=item.domain.take(1).uppercase(),
                     primary=item.domain,secondary=item.source+" · "+item.state,
-                    detail=if(item.ingress.isBlank()) "" else "接入："+item.ingress)
+                    detail=if(item.ingress.isBlank()) "查看域名详情 ›"
+                        else item.ingress+" · 详情 ›",
+                    onClick={onSelect(item)})
             }
         }
     }
