@@ -33,6 +33,8 @@ import android.webkit.WebViewClient
 import android.webkit.WebStorage
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.net.http.SslError
@@ -135,6 +137,7 @@ class MainActivity : FragmentActivity() {
     // The existing first-party admin session is read by a separate native client.
     private val nativeAdminClient by lazy { NativeAdminClient() }
     private val adminIo = Executors.newSingleThreadExecutor()
+    private val adminReadIo = Executors.newFixedThreadPool(4)
     private val adminGeneration = AtomicLong(0)
     private var adminBusy by mutableStateOf(false)
     private var adminAuthenticated by mutableStateOf(false)
@@ -149,7 +152,15 @@ class MainActivity : FragmentActivity() {
     private var adminSelectedMailbox by mutableStateOf<AdminNativeMailbox?>(null)
     private var adminSelectedMessage by mutableStateOf<AdminNativeDetail?>(null)
     private var adminSelectedMessageId by mutableStateOf<String?>(null)
-    private var adminOrdinaryDomains by mutableStateOf<List<String>>(emptyList())
+    private var adminPrivateDomainOptions by mutableStateOf<List<AdminCreateDomainOption>>(emptyList())
+    private var adminOrdinaryDomainOptions by mutableStateOf<List<AdminCreateDomainOption>>(emptyList())
+    private var adminMailboxFilter by mutableStateOf("全部")
+    private var adminDomainSearch by mutableStateOf("")
+    private var adminDomainSourceFilter by mutableStateOf("全部")
+    private var adminDomainStateFilter by mutableStateOf("全部")
+    private var adminRecordSearch by mutableStateOf("")
+    private var adminRecordStateFilter by mutableStateOf("全部")
+    private var adminRecordSourceFilter by mutableStateOf("全部")
     // All administrator management panes are native Compose, never website links.
     private var adminPane by mutableStateOf("mailboxes")
     private var adminManagedDomains by mutableStateOf<List<AdminManagedDomain>>(emptyList())
@@ -161,7 +172,9 @@ class MainActivity : FragmentActivity() {
     private var showAdminCreateDialog by mutableStateOf(false)
     private var adminCreatePrivate by mutableStateOf(true)
     private var adminCreateLocal by mutableStateOf("")
-    private var adminCreateDomain by mutableStateOf("pieterj.nl.eu.org")
+    private var adminCreateDomain by mutableStateOf("")
+    private var adminCreateDomainQuery by mutableStateOf("")
+    private var adminCreateDomainExpanded by mutableStateOf(false)
     private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
     private var pendingNativeMessageId by mutableStateOf<String?>(null)
@@ -3109,6 +3122,7 @@ class MainActivity : FragmentActivity() {
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
         adminIo.shutdownNow()
+        adminReadIo.shutdownNow()
         nativeRequestGeneration.incrementAndGet()
         nativeIo.shutdownNow()
         pendingFileCallback?.onReceiveValue(null)
