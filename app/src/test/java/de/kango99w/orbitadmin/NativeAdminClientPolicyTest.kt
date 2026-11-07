@@ -41,11 +41,18 @@ class NativeAdminClientPolicyTest {
 
     @Test fun responseCanOnlyStoreKnownAdministratorCookies() {
         assertTrue(NativeAdminClient.mayPersistCookie(
-            "kango_admin_session=abc; Path=/; HttpOnly; Secure"))
+            "kango_admin_session=abc; Path=/; HttpOnly; Secure; SameSite=Strict"))
         assertTrue(NativeAdminClient.mayPersistCookie(
-            "kango_admin_2fa_challenge=abc; Path=/api/admin; HttpOnly; Secure"))
+            "kango_admin_2fa_challenge=abc; Path=/api/admin; HttpOnly; Secure; SameSite=Strict"))
         assertFalse(NativeAdminClient.mayPersistCookie("kango_site_access=x; Path=/"))
         assertFalse(NativeAdminClient.mayPersistCookie("evil=x; Path=/"))
+        assertFalse(NativeAdminClient.mayPersistCookie(
+            "kango_admin_session=x; Domain=.kango99w.de; Path=/; HttpOnly; Secure; SameSite=Strict"))
+        assertFalse(NativeAdminClient.mayPersistCookie(
+            "kango_admin_session=x; Path=/; Secure; SameSite=Strict"))
+        assertFalse(NativeAdminClient.adminCookies(
+            "kango_admin_session=bad" + 13.toChar() + 10.toChar() + "injected=1")
+            .contains("injected"))
         assertFalse(NativeAdminClient.mayPersistCookie(
             "kango_admin_session=x\\r\\nX-Fake: yes"))
     }
