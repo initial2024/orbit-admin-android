@@ -30,7 +30,9 @@ data class AdminNativeDetail(
     val text: String,
     val htmlText: String,
     val possibleCode: String,
-    val time: Long
+    val time: Long,
+    val htmlBody: String = "",
+    val safeLinks: List<NativeSafeMailLink> = emptyList()
 )
 
 /** Decode only bounded, server-authorized DTOs, never render HTML as WebView. */
@@ -85,13 +87,17 @@ object AdminNativeModels {
         val htmlText = o.optString("html_text_body").take(16_000).ifBlank {
             if (plain.isBlank()) htmlAsPlainText(o.optString("html_body")) else ""
         }
+        val safeHtml = o.optString("html_body").take(16_000)
+        val links = NativeMailLinks.read(o.optJSONArray("safe_links"),plain,safeHtml)
         return AdminNativeDetail(
             id, o.optString("sender").take(180),
             o.optString("recipient").take(254),
             o.optString("subject").take(300),
             plain, htmlText,
             o.optString("possible_code").take(32),
-            o.optLong("received_at")
+            o.optLong("received_at"),
+            safeHtml,
+            links
         )
     }
 }
