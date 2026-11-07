@@ -1310,6 +1310,254 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Existing admin HttpOnly session, not the ordinary account device grant. */
+    private fun refreshNativeAdmin() {
+        if (!unlocked || adminBusy) return
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminError = ""
+        adminIo.execute {
+            val status = nativeAdminClient.get("/api/admin/status")
+            val authorized = status.status == 200 &&
+                status.value?.optBoolean("authenticated") == true
+            val privateRows = if (authorized)
+                nativeAdminClient.get("/api/admin/pieterj-mail/mailboxes") else null
+            val ordinaryRows = if (authorized)
+                nativeAdminClient.get("/api/admin/ordinary-inbox/mailboxes") else null
+            val domainRows = if (authorized)
+                nativeAdminClient.get("/api/admin/ordinary-inbox/domains") else null
+            val valid = authorized && privateRows?.status == 200 &&
+                ordinaryRows?.status == 200
+            val mailboxes = if (valid)
+                AdminNativeModels.mailboxes(privateRows?.value, true) +
+                    AdminNativeModels.mailboxes(ordinaryRows?.value, false)
+                else emptyList()
+            val domainsJson = domainRows?.value?.optJSONArray("domains")
+            val domains = if (domainRows?.status == 200 && domainsJson != null)
+                (0 until minOf(100, domainsJson.length())).mapNotNull {
+                    val domain = domainsJson.optJSONObject(it)?.optString("domain").orEmpty()
+                    domain.takeIf { s -> s.matches(Regex("^[a-z0-9.-]{3,150}$")) }
+                } else emptyList()
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                adminAuthenticated = authorized && privateRows?.status != 401 &&
+                    ordinaryRows?.status != 401
+                adminUsername = if (adminAuthenticated)
+                    status.value?.optString("username").orEmpty().take(32) else ""
+                adminMailboxes = mailboxes
+                adminOrdinaryDomains = domains
+                if (!adminAuthenticated) {
+                    adminSelectedMailbox = null
+                    adminSelectedMessage = null
+                    adminSelectedMessageId = null
+                    adminMessages = emptyList()
+                    adminTotpRequired = false
+                    adminError = if (status.status == 200) ""
+                        else "管理员状态校验失败：HTTP ${status.status}；不会调用普通账号接口。"
+                } else if (!valid) {
+                    adminError = "管理员身份已验证，但邮箱列表暂不可用。请刷新重试。"
+                    adminMessages = emptyList()
+                    adminSelectedMessage = null
+                } else if (adminSelectedMailbox != null &&
+                    mailboxes.none { it.id == adminSelectedMailbox?.id &&
+                        it.privateMailbox == adminSelectedMailbox?.privateMailbox }) {
+                    adminSelectedMailbox = null
+                    adminSelectedMessage = null
+                    adminSelectedMessageId = null
+                    adminMessages = emptyList()
+                }
+            }
+        }
+    }
+
+    /** Native first-party administrator username/password, followed by separate 2FA. */
+    private fun submitAdminNativeLogin() {
+        if (!unlocked || adminBusy) return
+        val username = adminSignInUsername.trim()
+        val password = adminSignInPassword
+        if (!username.matches(Regex("^[A-Za-z0-9_.-]{3,32}$")) ||
+            password.length !in 12..128) {
+            adminError = "管理员用户名需为 3–32 位；密码至少 12 位。"
+            return
+        }
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminError = ""
+        adminIo.execute {
+            val result = nativeAdminClient.post("/api/admin/login",
+                JSONObject().put("username", username).put("password", password))
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                adminSignInPassword = ""
+                when {
+                    result.status == 200 && result.value?.optBoolean("authenticated") == true -> {
+                        adminTotpRequired = false
+                        adminTotpCode = ""
+                        refreshNativeAdmin()
+                    }
+                    result.status == 200 && result.value?.optBoolean("totp_required") == true -> {
+                        adminTotpRequired = true
+                        adminError = "管理员密码已验证，请输入管理员专用 2FA 动态码。"
+                    }
+                    else -> adminError = "管理员登录未通过（HTTP ${result.status}；${result.error ?: "UNKNOWN"}）。"
+                }
+            }
+        }
+    }
+
+    private fun submitAdminNativeTotp() {
+        if (!unlocked || adminBusy || !adminTotpRequired) return
+        val code = adminTotpCode.trim()
+        if (!code.matches(Regex("^[0-9]{6}$"))) {
+            adminError = "请输入当前 6 位管理员 2FA 动态码。"
+            return
+        }
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminError = ""
+        adminIo.execute {
+            val result = nativeAdminClient.post("/api/admin/login/totp",
+                JSONObject().put("code", code).put("trust_device", false))
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                adminTotpCode = ""
+                if (result.status == 200 &&
+                    result.value?.optBoolean("authenticated") == true) {
+                    adminTotpRequired = false
+                    refreshNativeAdmin()
+                } else {
+                    adminError = "管理员 2FA 未通过（HTTP ${result.status}；${result.error ?: "UNKNOWN"}）。"
+                    if (result.error == "ADMIN_TOTP_CHALLENGE_EXPIRED")
+                        adminTotpRequired = false
+                }
+            }
+        }
+    }
+
+    private fun openNativeAdminMailbox(mailbox: AdminNativeMailbox) {
+        if (!unlocked || !adminAuthenticated || adminBusy ||
+            !AdminNativeModels.validId(mailbox.id) || mailbox.status != "active") return
+        adminSelectedMailbox = mailbox
+        adminSelectedMessage = null
+        adminSelectedMessageId = null
+        adminMessages = emptyList()
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminError = ""
+        val path = if (mailbox.privateMailbox)
+            "/api/admin/pieterj-mail/mailboxes/${mailbox.id}/messages"
+        else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages"
+        adminIo.execute {
+            val response = nativeAdminClient.get(path)
+            val rows = if (response.status == 200) AdminNativeModels.messages(response.value)
+                else emptyList()
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                if (response.status == 401) {
+                    adminAuthenticated = false
+                    adminMailboxes = emptyList()
+                    adminSelectedMailbox = null
+                } else if (response.status == 200) adminMessages = rows
+                else adminError = "管理员邮件列表读取失败：HTTP ${response.status}"
+            }
+        }
+    }
+
+    private fun openNativeAdminMessage(id: String) {
+        val mailbox = adminSelectedMailbox ?: return
+        if (!unlocked || !adminAuthenticated || adminBusy ||
+            !AdminNativeModels.validId(id) ||
+            adminMessages.none { it.id == id }) return
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminSelectedMessageId = id
+        adminSelectedMessage = null
+        adminError = ""
+        val path = if (mailbox.privateMailbox) "/api/admin/pieterj-mail/messages/$id"
+        else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages/$id"
+        adminIo.execute {
+            val response = nativeAdminClient.get(path)
+            val detail = if (response.status == 200)
+                AdminNativeModels.detail(response.value)?.takeIf { it.id == id } else null
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                if (response.status == 401) {
+                    adminAuthenticated = false
+                    adminMailboxes = emptyList()
+                    adminMessages = emptyList()
+                    adminSelectedMailbox = null
+                    adminSelectedMessageId = null
+                } else if (detail != null) adminSelectedMessage = detail
+                else adminError = "管理员邮件正文读取失败：HTTP ${response.status}"
+            }
+        }
+    }
+
+    private fun createNativeAdminMailbox() {
+        if (!unlocked || !adminAuthenticated || adminBusy) return
+        val local = adminCreateLocal.trim()
+        val domain = adminCreateDomain.trim().lowercase(java.util.Locale.ROOT)
+        if (!local.matches(Regex("^[a-zA-Z0-9._-]{0,64}$")) ||
+            !domain.matches(Regex("^[a-z0-9.-]{3,150}$"))) {
+            adminError = "邮箱前缀或域名格式无效。"
+            return
+        }
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminError = ""
+        val privateMailbox = adminCreatePrivate
+        val path = if (privateMailbox) "/api/admin/pieterj-mail/mailboxes"
+            else "/api/admin/ordinary-inbox/mailboxes"
+        val payload = JSONObject().put("domain",domain)
+        if (local.isNotBlank())
+            payload.put(if (privateMailbox) "local_part" else "local",local)
+        adminIo.execute {
+            val response = nativeAdminClient.post(path,payload)
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                if (response.status == 201 &&
+                    response.value?.optJSONObject("mailbox") != null) {
+                    showAdminCreateDialog = false
+                    adminCreateLocal = ""
+                    adminSelectedMailbox = null
+                    adminSelectedMessage = null
+                    adminMessages = emptyList()
+                    refreshNativeAdmin()
+                } else adminError = "管理员创建邮箱失败（HTTP ${response.status}；${response.error ?: "UNKNOWN"}）。"
+            }
+        }
+    }
+
+    private fun logoutNativeAdmin() {
+        if (!unlocked || adminBusy || !adminAuthenticated) return
+        val generation = adminGeneration.incrementAndGet()
+        adminBusy = true
+        adminIo.execute {
+            val response = nativeAdminClient.post("/api/admin/logout")
+            runOnUiThread {
+                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                adminBusy = false
+                if (response.status == 200) {
+                    adminAuthenticated = false
+                    adminUsername = ""
+                    adminMailboxes = emptyList()
+                    adminMessages = emptyList()
+                    adminSelectedMailbox = null
+                    adminSelectedMessage = null
+                    adminSelectedMessageId = null
+                    adminTotpRequired = false
+                    adminError = "已退出管理员会话。普通账号授权未更改。"
+                } else adminError = "管理员退出失败：HTTP ${response.status}，未声称退出成功。"
+            }
+        }
+    }
+
     @Composable
     private fun NativeAdminContent() {
         val destinations = AdminDestination.entries.filter {
