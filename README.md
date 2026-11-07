@@ -4,6 +4,13 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 
 **Status: experimental debug build; not a production release. Android v0.4.1-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
+## Android v0.6.1-dev: prevent implicit web re-login on native navigation
+
+- The native mailbox **View** action selects the already-authorized mailbox using the existing first-party in-place command instead of loading a different public website URL.
+- A missing/not-yet-deployed native text reader no longer automatically switches to the WebView or opens a new `#orbit-message-...` navigation. Compose shows a clear unavailable state and offers an **explicit** full-website fallback.
+- Regression tests assert that both operations avoid `loadUrl`. Existing website-controlled account/admin sessions and all privileged authorization checks remain unchanged.
+- **No device-bound native API account session has been implemented yet.** See [native device session design gate](docs/native-device-session-v1.md). This build still relies on first-party WebView for authenticated data, admin and transfer; do not market it as one-time login, no-WebView, or a production release.
+
 ## Authentication
 
 - AndroidX BiometricPrompt (stable `1.1.0`) unlocks the local screen using a **strong biometric or Android device credential**.
