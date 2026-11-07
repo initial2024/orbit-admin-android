@@ -669,6 +669,12 @@ class MainActivity : FragmentActivity() {
                     pendingNativeMessageId = null
                     nativeMailDetail = null
                 }
+                val prior = nativeInbox
+                if (NewMailArrivalPolicy.hasArrival(prior,snapshot)) {
+                    val stamp=SystemClock.elapsedRealtime()
+                    if (MailNoticePolicy.canDeliver(stamp,lastNewMailNoticeAtMs) &&
+                        showMailNotification()) lastNewMailNoticeAtMs=stamp
+                }
                 nativeInbox = snapshot
                 showNativeMail = true
             }
@@ -3446,6 +3452,12 @@ class MainActivity : FragmentActivity() {
                                 if (nativeInbox?.currentId != event.data.currentId) {
                                     nativeMailDetail=null
                                     pendingNativeMessageId=null
+                                }
+                                val prior=nativeInbox
+                                if (NewMailArrivalPolicy.hasArrival(prior,event.data)) {
+                                    val stamp=SystemClock.elapsedRealtime()
+                                    if (MailNoticePolicy.canDeliver(stamp,lastNewMailNoticeAtMs) &&
+                                        showMailNotification()) lastNewMailNoticeAtMs=stamp
                                 }
                                 nativeInbox = event.data
                                 tryRegisterPush()
