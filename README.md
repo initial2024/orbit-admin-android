@@ -55,3 +55,7 @@ gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 **Debug APK upgrade warning:** GitHub-hosted builds use ephemeral debug-signing keys. If Android refuses to install an updated test build over a previous debug version, uninstall the previous test build first; that clears the APK's local login session. Production signing must later use privately controlled persistent keys.
 
 After CI passes, use the **Android debug build** Actions workflow artifact `orbit-admin-unsigned-debug` for an installable **debug/test APK only**. It is not production-signed. Review the source and perform real-device security checks before distributing it. Never upload signing keys, TOTP seeds, admin passwords, or cookie values to a public repository.
+
+## Android v0.5 native mailbox creation/management
+
+Compose supports create-random / custom local-prefix forms, allowlisted-domain selection, mailbox switching, copy address, local filtering and refresh. Commands use `WebViewCompat.postWebMessage` targeting only the currently open first-party page. **Only the website's existing verified action handlers execute network requests**. Turnstile, quotas, account ownership, protected mailbox passwords and 2FA are never bypassed. Destructive delete and protected-mailbox unlock remain in the full website. Companion site PR #611 must be deployed before native actions work. No browser cookies or administrator API keys are exposed to native code.

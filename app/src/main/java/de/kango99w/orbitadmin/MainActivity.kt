@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.SystemClock
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -52,6 +54,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -97,6 +101,9 @@ class MainActivity : FragmentActivity() {
     private var showNativeMail by mutableStateOf(true)
     private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
+    private var showCreateMailbox by mutableStateOf(false)
+    private var nativeCreateLocal by mutableStateOf("")
+    private var nativeCreateDomain by mutableStateOf("")
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var previousWebSection = MailSection.INBOX
     private var browser: WebView? = null
@@ -291,6 +298,113 @@ class MainActivity : FragmentActivity() {
         if (browser?.url != url) browser?.loadUrl(url)
     }
 
+    /** Only a tap on the native UI can send a bounded action to the current site. */
+    private fun sendNativeMailboxCommand(action: String, value: String? = null): Boolean {
+        val web = browser ?: return false
+        if (!unlocked || !isCurrentPublicMailDocument() ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) return false
+        if (action !in setOf("create_random","create_custom","select_mailbox",
+                "select_domain","refresh","show_create")) return false
+        val packet = org.json.JSONObject().put("v",1).put("action",action)
+        when (action) {
+            "create_custom" -> {
+                if (value == null || !Regex("^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$")
+                        .matches(value)) return false
+                packet.put("local",value)
+            }
+            "select_mailbox" -> {
+                if (value == null || !NativeInboxPolicy.isSafeId(value) ||
+                    nativeInbox?.mailboxes?.none { it.id == value } != false) return false
+                packet.put("id",value)
+            }
+            "select_domain" -> {
+                if (value == null || value !in nativeInbox?.availableDomains.orEmpty()) return false
+                packet.put("domain",value)
+            }
+        }
+        WebViewCompat.postWebMessage(
+            web, WebMessageCompat(packet.toString()), Uri.parse("https://inbox.kango99w.de")
+        )
+        return true
+    }
+
+    private fun copyMailboxAddress(address: String) {
+        if (!unlocked || address.isBlank() || address.length > 254) return
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("邮箱地址",address))
+        message = "邮箱地址已复制。"
+    }
+
+    @Composable
+    private fun NativeCreateMailboxDialog(snapshot: NativeInboxSnapshot) {
+        val domains = snapshot.availableDomains
+        val chosen = nativeCreateDomain.takeIf { it in domains } ?: snapshot.selectedDomain
+        val validPrefix = Regex("^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$")
+            .matches(nativeCreateLocal.trim().lowercase())
+        var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showCreateMailbox = false },
+            title = { Text("创建邮箱") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("邮箱归属、配额和安全验证仍由网站服务器检查。",
+                        style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(
+                        onClick = { expanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("邮箱域名：@${chosen.ifEmpty { "请选择" }}") }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        domains.forEach { option ->
+                            DropdownMenuItem(text = { Text("@$option") }, onClick = {
+                                expanded = false
+                                nativeCreateDomain = option
+                                if (!sendNativeMailboxCommand("select_domain",option)) {
+                                    message = "网页尚未准备好，请使用完整网页创建。"
+                                }
+                            })
+                        }
+                    }
+                    OutlinedTextField(
+                        value = nativeCreateLocal,
+                        onValueChange = { nativeCreateLocal = it.take(32) },
+                        label = { Text("自定义前缀（留空随机创建）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (snapshot.statusText.isNotBlank()) {
+                        Text(snapshot.statusText,style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (!snapshot.canCreate) {
+                        Text("请到网页完成验证码、容量检查或受保护邮箱设置。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = snapshot.canCreate && !snapshot.busy &&
+                        chosen.isNotEmpty() && chosen == snapshot.selectedDomain &&
+                        (nativeCreateLocal.isBlank() || validPrefix),
+                    onClick = {
+                        val prefix = nativeCreateLocal.trim().lowercase()
+                        val success = sendNativeMailboxCommand(
+                            if (prefix.isEmpty()) "create_random" else "create_custom",
+                            prefix.takeIf { it.isNotEmpty() }
+                        )
+                        if (success) {
+                            showCreateMailbox = false
+                            nativeCreateLocal = ""
+                            message = "请求已提交；只有邮箱列表更新才代表创建成功。"
+                        } else message = "当前网页未准备好，请使用完整网页。"
+                    }
+                ) { Text("创建") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateMailbox = false }) { Text("取消") }
+            }
+        )
+    }
+
     /** Native list items never perform deletes, sends or privileged API calls. */
     private fun openNativeMessage(id: String) {
         if (!NativeInboxPolicy.isSafeId(id)) return
@@ -323,7 +437,19 @@ class MainActivity : FragmentActivity() {
                     if (showMailboxes) "我的邮箱 · ${snapshot.mailboxes.size}" else "收件箱 · ${snapshot.messages.size}",
                     style = MaterialTheme.typography.titleMedium
                 )
-                TextButton(onClick = { webLoginInProgress = false; showNativeMail = false }) { Text("完整网页") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (showMailboxes) {
+                        TextButton(onClick = {
+                            nativeCreateDomain = snapshot.selectedDomain
+                            nativeCreateLocal = ""
+                            showCreateMailbox = true
+                        }) { Text("＋新建") }
+                    }
+                    TextButton(onClick = { sendNativeMailboxCommand("refresh") }) { Text("刷新") }
+                    TextButton(onClick = { webLoginInProgress = false; showNativeMail = false }) {
+                        Text("网页")
+                    }
+                }
             }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(13.dp)) {
@@ -370,16 +496,28 @@ class MainActivity : FragmentActivity() {
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
-                                TextButton(onClick = { openNativeMailbox(mailbox.id) }) { Text("打开") }
+                                Column {
+                                    TextButton(onClick = {
+                                        if (sendNativeMailboxCommand("select_mailbox",mailbox.id))
+                                            openSection(MailSection.INBOX)
+                                    }) { Text("收件箱") }
+                                    TextButton(onClick = { copyMailboxAddress(mailbox.address) }) { Text("复制") }
+                                    TextButton(onClick = { openNativeMailbox(mailbox.id) }) { Text("管理") }
+                                }
                             }
                         }
                     }
                     item {
                         OutlinedButton(onClick = {
+                            nativeCreateDomain = snapshot.selectedDomain
+                            nativeCreateLocal = ""
+                            showCreateMailbox = true
+                        }, modifier = Modifier.fillMaxWidth()) { Text("＋ 原生创建邮箱") }
+                        TextButton(onClick = {
                             webLoginInProgress = false
                             showNativeMail = false
                             browser?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
-                        }, modifier = Modifier.fillMaxWidth()) { Text("创建 / 管理邮箱（网页）") }
+                        }) { Text("受保护邮箱 / 高级设置") }
                     }
                 }
             } else if (snapshot.locked) {
@@ -387,7 +525,14 @@ class MainActivity : FragmentActivity() {
             } else if (snapshot.messages.isEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("暂无已加载邮件。应用在网页成功读取后更新原生列表。")
-                    OutlinedButton(onClick = { showNativeMail = false }) { Text("查看网页收件箱 / 手动刷新") }
+                    Row {
+                        TextButton(onClick = {
+                            nativeCreateDomain = snapshot.selectedDomain
+                            nativeCreateLocal = ""
+                            showCreateMailbox = true
+                        }) { Text("创建邮箱") }
+                        OutlinedButton(onClick = { showNativeMail = false }) { Text("完整网页") }
+                    }
                 }
             } else {
                 LazyColumn(
@@ -563,6 +708,7 @@ class MainActivity : FragmentActivity() {
             )
         }
         if (showTools) MailToolsDialog()
+        if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
                 Row(
