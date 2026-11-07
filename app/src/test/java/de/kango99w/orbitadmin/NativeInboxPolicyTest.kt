@@ -51,7 +51,7 @@ class NativeInboxPolicyTest {
     @Test fun emptyAccountCanCreateFirstMailbox() {
         val empty = json.replace("\"mailboxes\":[{\"id\":\"a-123\",\"address\":\"reader@example.test\",\"protected\":false}]",
                 "\"mailboxes\":[]")
-            .replace("\"id\":\"a-123\"","\"id\":\"\")
+            .replace("\"id\":\"a-123\"","\"id\":\"\"")
         assertTrue(NativeInboxPolicy.parse(empty) is NativeInboxEvent.Snapshot)
     }
     @Test fun rejectsInvalidCreationMetadata() {
