@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
@@ -108,6 +109,8 @@ class MainActivity : FragmentActivity() {
     private var showNativeMail by mutableStateOf(true)
     private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
+    private var pendingNativeMessageId by mutableStateOf<String?>(null)
+    private var nativeMailDetail by mutableStateOf<NativeMailDetail?>(null)
     private var showCreateMailbox by mutableStateOf(false)
     private var nativeCreateLocal by mutableStateOf("")
     private var nativeCreateDomain by mutableStateOf("")
@@ -294,6 +297,10 @@ class MainActivity : FragmentActivity() {
         } else showNativeMail = false
         activeSection = section
         previousWebSection = section
+        if (previousKey != nextKey || section == MailSection.MAILBOXES) {
+            pendingNativeMessageId = null
+            nativeMailDetail = null
+        }
         if (previousKey != nextKey) old?.onPause()
         // No tab-triggered loadUrl: every scope keeps its own live DOM/history.
         sectionBrowsers[nextKey]?.onResume()
@@ -306,6 +313,8 @@ class MainActivity : FragmentActivity() {
         if (BrowserSessionRouting.key(activeSection) != MailSection.ADMIN) browser?.onPause()
         activeSection = MailSection.ADMIN
         previousWebSection = MailSection.ADMIN
+        pendingNativeMessageId = null
+        nativeMailDetail = null
         showNativeMail = false
         val admin = sectionBrowsers[MailSection.ADMIN]
         if (admin == null) pendingAdminUrl = url
@@ -321,7 +330,7 @@ class MainActivity : FragmentActivity() {
         if (!unlocked || !isCurrentPublicMailDocument() ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) return false
         if (action !in setOf("create_random","create_custom","select_mailbox",
-                "select_domain","refresh","show_create")) return false
+                "select_domain","refresh","show_create","read_message")) return false
         val packet = org.json.JSONObject().put("v",1).put("action",action)
         when (action) {
             "create_custom" -> {
@@ -332,6 +341,12 @@ class MainActivity : FragmentActivity() {
             "select_mailbox" -> {
                 if (value == null || !NativeInboxPolicy.isSafeId(value) ||
                     nativeInbox?.mailboxes?.none { it.id == value } != false) return false
+                packet.put("id",value)
+            }
+            "read_message" -> {
+                if (value == null || !NativeInboxPolicy.isSafeId(value) ||
+                    nativeInbox?.locked == true ||
+                    nativeInbox?.messages?.none { it.id == value } != false) return false
                 packet.put("id",value)
             }
             "select_domain" -> {
@@ -495,19 +510,89 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** Native list items never perform deletes, sends or privileged API calls. */
+    /** Read the selected message in the native UI without reloading the mail document. */
     private fun openNativeMessage(id: String) {
-        if (!NativeInboxPolicy.isSafeId(id)) return
-        showNativeMail = false
-        val base = MailSection.INBOX.address?.substringBefore("#") ?: return
-        val url = "${base}#orbit-message-${id}"
-        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+        if (!NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true) return
+        pendingNativeMessageId = id
+        nativeMailDetail = null
+        showNativeMail = true
+        if (!sendNativeMailboxCommand("read_message",id)) {
+            pendingNativeMessageId = null
+            showNativeMail = false
+            val base = MailSection.INBOX.address?.substringBefore("#") ?: return
+            val url = "${base}#orbit-message-${id}"
+            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+        }
     }
 
     private fun openNativeMailbox(id: String) {
         if (!NativeInboxPolicy.isSafeId(id)) return
+        pendingNativeMessageId = null
+        nativeMailDetail = null
         showNativeMail = false
-        val base = MailSection.MAILBOXE    @Composable
+        val base = MailSection.MAILBOXES.address?.substringBefore("#") ?: return
+        val url = "${base}#orbit-mailbox-${id}"
+        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+    }
+
+    @Composable
+    private fun NativeMailDetailContent(detail: NativeMailDetail) {
+        Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal=18.dp,vertical=10.dp),
+            verticalArrangement=Arrangement.spacedBy(11.dp)) {
+            Row(modifier=Modifier.fillMaxWidth(),
+                horizontalArrangement=Arrangement.SpaceBetween,
+                verticalAlignment=Alignment.CenterVertically) {
+                TextButton(onClick={
+                    pendingNativeMessageId=null
+                    nativeMailDetail=null
+                }) { Text("‹ 返回收件箱") }
+                TextButton(onClick={showNativeMail=false}) { Text("完整网页") }
+            }
+            Text(detail.subject.ifBlank{"（无主题）"},
+                style=MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                MailAvatar(detail.sender,42)
+                Spacer(Modifier.padding(horizontal=7.dp))
+                Column {
+                    Text(detail.sender.ifBlank{"未知发件人"},style=MaterialTheme.typography.titleSmall)
+                    Text("收件人：${detail.recipient}",style=MaterialTheme.typography.bodySmall)
+                    Text(detail.receivedAt.take(28),style=MaterialTheme.typography.labelSmall)
+                }
+            }
+            HorizontalDivider()
+            if (detail.textBody.isBlank()) {
+                Text("这封邮件没有纯文本正文；请用完整网页查看 HTML 内容或附件。",
+                    style=MaterialTheme.typography.bodyMedium)
+                Button(onClick={showNativeMail=false}) { Text("查看原邮件及附件") }
+            } else {
+                SelectionContainer {
+                    Text(detail.textBody,style=MaterialTheme.typography.bodyLarge)
+                }
+                OutlinedButton(onClick={showNativeMail=false}) {
+                    Text("查看 HTML 原文及附件")
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeMailLoadingContent() {
+        Column(modifier=Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement=Arrangement.spacedBy(14.dp)) {
+            TextButton(onClick={
+                pendingNativeMessageId=null
+                nativeMailDetail=null
+            }) { Text("‹ 返回收件箱") }
+            Text("正在从已授权的邮箱读取正文…",
+                style=MaterialTheme.typography.titleMedium)
+            Text("若无法加载，可切换完整网页完成验证；不会自动要求重新登录。",
+                style=MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick={showNativeMail=false}) { Text("完整网页阅读") }
+        }
+    }
+
+    @Composable
     private fun MailAvatar(label: String, sizeDp: Int = 44) {
         val initial = label.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✉"
         Box(
@@ -815,7 +900,10 @@ class MainActivity : FragmentActivity() {
                 showTools -> showTools = false
                 activeSection == MailSection.SETTINGS -> openSection(previousWebSection)
                 (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) && showNativeMail -> {
-                    if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
+                    if (pendingNativeMessageId != null || nativeMailDetail != null) {
+                        pendingNativeMessageId=null
+                        nativeMailDetail=null
+                    } else if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
                     else lock()
                 }
                 browser?.canGoBack() == true -> browser?.goBack()
@@ -941,7 +1029,12 @@ class MainActivity : FragmentActivity() {
                     }
                     if (nativeVisible) {
                         Surface(modifier = Modifier.fillMaxSize()) {
-                            if (snapshot != null) {
+                            if (nativeMailDetail != null &&
+                                pendingNativeMessageId == nativeMailDetail?.id) {
+                                NativeMailDetailContent(nativeMailDetail!!)
+                            } else if (pendingNativeMessageId != null) {
+                                NativeMailLoadingContent()
+                            } else if (snapshot != null) {
                                 NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
                             } else {
                                 NativeMailboxLanding(activeSection == MailSection.MAILBOXES)
@@ -987,6 +1080,8 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        nativeMailDetail=null
+        pendingNativeMessageId=null
         browser?.onPause()
         browser?.pauseTimers()
         message = "已锁定。需要再次通过设备身份验证。"
@@ -1063,6 +1158,36 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
+        if (key == MailSection.INBOX && WebViewFeature.isFeatureSupported(
+            WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                view,"orbitMailDetail",setOf("https://inbox.kango99w.de"),
+                WebViewCompat.WebMessageListener { sender,data,origin,mainFrame,_ ->
+                    if (data.type != WebMessageCompat.TYPE_STRING ||
+                        !NativeInboxPolicy.acceptsSource(
+                            origin.scheme,origin.host,origin.port,mainFrame,sender.url
+                        )) return@WebMessageListener
+                    val event=NativeMailDetailPolicy.parse(data.data)
+                        ?: return@WebMessageListener
+                    runOnUiThread {
+                        if (!unlocked || publicWebView() !== view || !isCurrentPublicMailDocument())
+                            return@runOnUiThread
+                        when (event) {
+                            NativeMailDetailEvent.Clear -> nativeMailDetail=null
+                            is NativeMailDetailEvent.Detail -> {
+                                val detail=event.data
+                                if (pendingNativeMessageId == detail.id &&
+                                    nativeInbox?.currentId == detail.mailboxId &&
+                                    nativeInbox?.locked == false) {
+                                    nativeMailDetail=detail
+                                    showNativeMail=true
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        }
         // Separate read-only mirror: main-frame, exact origin, exact first-party
         // public mailbox route. No cookie/token exposure or native command handler.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
@@ -1080,6 +1205,10 @@ class MainActivity : FragmentActivity() {
                         when (event) {
                             NativeInboxEvent.Clear -> nativeInbox = null
                             is NativeInboxEvent.Snapshot -> {
+                                if (nativeInbox?.currentId != event.data.currentId) {
+                                    nativeMailDetail=null
+                                    pendingNativeMessageId=null
+                                }
                                 nativeInbox = event.data
                                 tryRegisterPush()
                                 if (webLoginInProgress &&
@@ -1114,7 +1243,11 @@ class MainActivity : FragmentActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 // Do not display a stale native inbox during any new full-page navigation.
-                if (key == MailSection.INBOX) nativeInbox = null
+                if (key == MailSection.INBOX) {
+                    nativeInbox = null
+                    nativeMailDetail = null
+                    pendingNativeMessageId = null
+                }
                 if (url == null || !AdminUrlPolicy.isTrustedMainFrame(url)) {
                     view?.stopLoading()
                     message = "页面来源不符合管理员域名限制。"
