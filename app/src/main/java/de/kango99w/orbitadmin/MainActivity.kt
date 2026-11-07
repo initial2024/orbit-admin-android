@@ -61,6 +61,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,6 +95,7 @@ class MainActivity : FragmentActivity() {
     private var showTools by mutableStateOf(false)
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private var showNativeMail by mutableStateOf(true)
+    private var nativeSearchQuery by mutableStateOf("")
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var previousWebSection = MailSection.INBOX
     private var browser: WebView? = null
@@ -235,7 +237,10 @@ class MainActivity : FragmentActivity() {
 
     private fun openSection(section: MailSection) {
         showTools = false
-        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) showNativeMail = true
+        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
+            showNativeMail = true
+            nativeSearchQuery = ""
+        }
         if (section == MailSection.SETTINGS) {
             activeSection = section
             browser?.onPause()
@@ -307,12 +312,27 @@ class MainActivity : FragmentActivity() {
                     )
                 }
             }
+            OutlinedTextField(
+                value = nativeSearchQuery,
+                onValueChange = { nativeSearchQuery = it.take(80) },
+                label = { Text(if (showMailboxes) "搜索当前邮箱列表" else "搜索当前加载的邮件") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            val query = nativeSearchQuery.trim()
+            val visibleMailboxes = if (query.isEmpty()) snapshot.mailboxes else
+                snapshot.mailboxes.filter { it.address.contains(query, ignoreCase = true) }
+            val visibleMessages = if (query.isEmpty()) snapshot.messages else
+                snapshot.messages.filter {
+                    it.sender.contains(query, ignoreCase = true) ||
+                        it.subject.contains(query, ignoreCase = true)
+                }
             if (showMailboxes) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(snapshot.mailboxes, key = { it.id }) { mailbox ->
+                    items(visibleMailboxes, key = { it.id }) { mailbox ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -350,7 +370,7 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    items(snapshot.messages, key = { it.id }) { messageItem ->
+                    items(visibleMessages, key = { it.id }) { messageItem ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                 Text(messageItem.sender.ifBlank { "未知发件人" },
@@ -672,9 +692,8 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                if (url == null || !NativeInboxPolicy.acceptsSource(
-                    "https", "inbox.kango99w.de", -1, true, url
-                )) nativeInbox = null
+                // Do not display a stale native inbox during any new full-page navigation.
+                nativeInbox = null
                 if (url == null || !AdminUrlPolicy.isTrustedMainFrame(url)) {
                     view?.stopLoading()
                     message = "页面来源不符合管理员域名限制。"
@@ -693,7 +712,10 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) message = "管理员页面加载失败，请检查网络后重试。"
+                if (request.isForMainFrame) {
+                    nativeInbox = null
+                    message = "管理员页面加载失败，请检查网络后重试。"
+                }
             }
 
             override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
