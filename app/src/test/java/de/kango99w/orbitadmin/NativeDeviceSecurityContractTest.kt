@@ -106,6 +106,9 @@ class NativeDeviceSecurityContractTest {
         val response = screen.substringAfter("private fun readMessageViaNativeApi(")
             .substringBefore("/** Revocation is performed")
         assertTrue(response.contains("item.optString(\"html_body\").take(12000)"))
+        assertTrue(response.contains("item.optString(\"possible_code\")"))
+        assertTrue(render.contains("detail.possibleCode.isNotBlank()"))
+        assertTrue(render.contains("ClipData.newPlainText(\"验证码\", detail.possibleCode)"))
     }
 
     @Test fun signedSelfRevocationRequiresRealServerAcknowledgment() {
