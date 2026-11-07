@@ -2,9 +2,9 @@
 
 Public Android mail client for the existing [Orbit Mail service](https://inbox.kango99w.de/).
 
-**Status: v0.7.0-dev is a native-first experimental Android client, not a production release.** The existing Cloudflare backend is unchanged.
+**Status: v0.8.1-dev is a native-first experimental Android client; not a production release.** The production Cloudflare backend is unchanged.
 
-## Orbit Mail v0.8.0-dev: revocable native device-mail API (experimental)
+## Orbit Mail v0.8.1-dev: revocable native device-mail API (experimental)
 
 - App-side P-256 private key is generated in **Android Keystore**. A user-triggered pairing flow sends an SPKI public key and proof-of-possession signature to the first-party website; the website checks its existing account session and verifies password/TOTP step-up through the **separate, disabled-by-default** Worker API in [site Draft PR #616](https://github.com/initial2024/kango99w-temp-mail/pull/616).
 - When a device is truly paired and server API is enabled, native Android HTTPS GET sends signed timestamp+nonce headers, **without website cookies**. Compose renders account-owned mailbox list, sender/subject list and bounded plain-text detail. Reopening the app can operate without creating a hidden public-mail WebView.
@@ -12,9 +12,18 @@ Public Android mail client for the existing [Orbit Mail service](https://inbox.k
 - **Not production-ready:** Worker/D1 migration 0076 is not released; API flag OFF, GitHub CI is not proof of real-phone login persistence. Server grants expire after 30 days and can be revoked from the website. Clearing only local Keystore credentials does not revoke server records; account security center should revoke lost devices.
 - Debug APK signing is ephemeral in CI; do not uninstall a previous build without backing up local state. Native mail API and device binding still need real-device end-to-end checks.
 
+
+### v0.8.1 security and navigation validation
+
+- First-party WebView is no longer automatically instantiated on ordinary native Inbox/Mailbox tab selection. It is created only following a user-selected website login or site-only operation; a device-bound signed native session can render without it.
+- Website mailbox snapshots cannot overwrite data obtained from a bound native device. Mailbox rows always route through the same native selector; account-owned mailbox creation is explicitly website-only until safe signed mutation endpoints exist.
+- Native requests use a generation counter: a response started before a device swap, mailbox switch, local lock or Activity destruction cannot re-populate sensitive screens. A failure never leaves stale mail visible.
+- Android Keystore ECDSA DER signatures are converted to raw P1363 and tested using actual JVM-generated P-256 signatures, including negative malformed-encoding tests.
+- Native enrollment and account-only mail read are feature-gated behind the still-disabled site Draft PR #616. These tests do **not** demonstrate production deployment, guaranteed 2FA persistence, native file/admin APIs or working background FCM.
+
 ### GitHub direct APK publication
 
-A manual, main-branch-only [Preview release workflow](.github/workflows/android-preview-release.yml) builds/tests a debug APK, writes a SHA-256 checksum and publishes an **immutable GitHub prerelease asset**, available through a direct /releases/download/.../Orbit-Mail-v*.apk URL. It requires the explicit PUBLISH_TEST_APK acknowledgement after integration and review. Existing Pull Request Actions artifacts remain ZIP files, not APK URLs, and may require a GitHub login. Neither mechanism produces a stable signed production build.
+The [Preview release workflow](.github/workflows/android-preview-release.yml) tests/builds a debug APK and checksum, then publishes a **GitHub prerelease APK asset** under an immutable commit-tagged URL. On the named feature branch only, a workflow-file change marked `[publish-debug]` triggers a test prerelease; on `main` a manual `workflow_dispatch` with explicit acknowledgment is required. Ordinary PR Actions artifacts remain ZIP and may require GitHub login. Neither method gives a production-signed APK. Persistent signing credentials must be privately configured before upgrades can be expected to retain app data.
 
 ## Android v0.7.0-dev: Compose-first client, no automatic web page on tab switch
 
