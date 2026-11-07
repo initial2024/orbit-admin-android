@@ -52,6 +52,7 @@ class NativeAdminClient {
         )
         private val POST_PATHS = setOf(
             "/api/admin/login", "/api/admin/login/totp", "/api/admin/logout",
+            "/api/admin/private-mail-handoff",
             "/api/admin/pieterj-mail/mailboxes", "/api/admin/ordinary-inbox/mailboxes"
         )
 
