@@ -16,10 +16,10 @@ class StableSigningWorkflowContractTest {
         assertTrue(workflow.contains("ORBIT_EXPECTED_CERT_SHA256"))
         assertTrue(workflow.contains("ACTUAL_CERT"))
         assertTrue(workflow.contains("EXPECTED_CERT"))
-        assertTrue(workflow.contains("if [[ \"$ACTUAL_CERT\" != \"$EXPECTED_CERT\" ]]"))
+        assertTrue(workflow.contains("if [[ \"\$ACTUAL_CERT\" != \"\$EXPECTED_CERT\" ]]"))
         assertTrue(workflow.contains("apksigner") || workflow.contains("APK_SIGNER"))
         assertTrue(workflow.contains("Refuse unsigned/unreviewed -dev version"))
-        assertTrue(workflow.contains("Refusing overwrite"))
+        assertTrue(workflow.contains("refusing overwrite"))
         assertFalse(workflow.contains("--insecure"))
     }
 }
