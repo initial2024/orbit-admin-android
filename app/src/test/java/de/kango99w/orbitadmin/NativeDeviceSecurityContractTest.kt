@@ -44,6 +44,29 @@ class NativeDeviceSecurityContractTest {
         assertFalse(listener.contains("CookieManager"))
     }
 
+    @Test fun nativeAccountLoginNeverUsesWebViewOrCookies() {
+        val client = source("NativeDeviceClient.kt")
+        val activity = source("MainActivity.kt")
+        val login = client.substringAfter("fun login(email: String")
+            .substringBefore("fun completePair(")
+        assertTrue(login.contains("/api/account/native-device/login"))
+        assertTrue(login.contains("connection.requestMethod = \"POST\""))
+        assertTrue(login.contains("connection.setRequestProperty(\"Origin\", ORIGIN)"))
+        assertTrue(login.contains("createNativeLoginPayload("))
+        assertTrue(login.contains("completePair("))
+        assertFalse(login.contains("CookieManager"))
+        assertFalse(login.contains("loadUrl("))
+        val render = activity.substringAfter("if (nativeVisible) {")
+            .substringBefore("if (activeSection == MailSection.TRANSFER")
+        assertTrue(render.contains("NativeLoginContent()"))
+        assertTrue(render.contains("!nativeDeviceClient.isBound()"))
+        val submit = activity.substringAfter("private fun submitNativeLogin()")
+            .substringBefore("/** Signed, cookie-free native API reads.")
+        assertTrue(submit.contains("nativeDeviceClient.login("))
+        assertFalse(submit.contains("navigateTo("))
+        assertFalse(submit.contains("publicWebView("))
+    }
+
     @Test fun websiteBridgeCannotOverwriteBoundNativeMailData() {
         val source = source("MainActivity.kt")
         assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound()) return@runOnUiThread"))
