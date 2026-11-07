@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeSectionRoutingTest {
-    @Test fun allSixTabsAreNativeFirst() {
-        assertEquals(6, MailSection.entries.size)
+    @Test fun allSevenDestinationsAreNativeFirst() {
+        assertEquals(7, MailSection.entries.size)
         MailSection.entries.forEach { assertTrue(NativeSectionRouting.isNativePrimaryTab(it)) }
     }
 
