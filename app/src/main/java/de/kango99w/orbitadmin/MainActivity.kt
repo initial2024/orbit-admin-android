@@ -1508,8 +1508,9 @@ class MainActivity : FragmentActivity() {
                 onDismissRequest = { showClearConfirm = false },
                 title = { Text("清除本机网站数据？") },
                 text = {
-                    Text("将清除当前 APK 中的网站 Cookie 和本地存储，并要求重新登录。"
-                        + "这不会撤销服务器上的管理员会话或可信设备授权；请在网站安全中心撤销。")
+                    Text("将清除本 APK 中所有网站页面（含管理员）的 Cookie 和网站存储。"
+                        + "普通账号的 Android Keystore 原生设备授权保留，不会重新绑定。"
+                        + "网站服务器会话与可信设备授权并未撤销；需要时请在各自安全中心单独撤销。")
                 },
                 confirmButton = {
                     TextButton(onClick = ::clearLocalSession) { Text("清除并锁定") }
@@ -1681,7 +1682,9 @@ class MainActivity : FragmentActivity() {
 
     private fun clearLocalSession() {
         showClearConfirm = false
-        nativeDeviceClient.clearLocalBinding()
+        // Website CookieManager and native Keystore grants are separate auth realms.
+        // Do not revoke or erase the account grant merely because website data
+        // (including the administrator WebView session) was cleared.
         nativeApiActive = false
         nativeInbox = null
         sectionBrowsers.values.forEach { it.stopLoading() }
@@ -1694,7 +1697,7 @@ class MainActivity : FragmentActivity() {
                     web.loadUrl(scope.address ?: MailSection.INBOX.address!!)
                 }
                 nativeInbox = null
-                message = "仅 APK 本机数据已清除。重新登录需要服务器授权和 2FA。"
+                message = "网站 Cookie 与页面存储已清除；原生账号设备授权仍保留，管理员网站需重新登录。"
             }
         }
         lock()
