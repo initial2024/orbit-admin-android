@@ -211,6 +211,8 @@ class MainActivity : FragmentActivity() {
     private var nativePickedFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var workspace by mutableStateOf(MailWorkspace.ORDINARY)
+    // Presentation-only; does not affect ordinary/admin authentication or browser sessions.
+    private var workspaceSwitcherExpanded by mutableStateOf(false)
     private val glyphClient by lazy { NativeGlyphClient() }
     private val glyphIo = Executors.newSingleThreadExecutor()
     private val glyphGeneration = AtomicLong(0)
@@ -791,6 +793,8 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun switchWorkspace(next: MailWorkspace) {
+        // Selecting even the active workspace closes the menu without reloading mail.
+        workspaceSwitcherExpanded = false
         if (workspace == next) return
         if (next == MailWorkspace.ADMIN) glyphBuyTarget = null
         else {
@@ -3362,6 +3366,7 @@ class MainActivity : FragmentActivity() {
         BackHandler {
             when {
                 showTools -> showTools = false
+                workspaceSwitcherExpanded -> workspaceSwitcherExpanded = false
                 activeSection == MailSection.SETTINGS -> openSection(previousWebSection)
                 (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) && showNativeMail -> {
                     if (pendingNativeMessageId != null || nativeMailDetail != null) {
@@ -3466,29 +3471,46 @@ class MainActivity : FragmentActivity() {
                             }
                             TextButton(onClick=::lock) { Text("锁定") }
                         }
+                        // A compact, collapsed-by-default workspace selector keeps the inbox tall.
+                        // It is UI-only: neither account's credentials nor session are shared.
                         Row(modifier=Modifier.fillMaxWidth()
-                            .padding(horizontal=12.dp,vertical=2.dp),
-                            horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick={switchWorkspace(MailWorkspace.ORDINARY)},
-                                modifier=Modifier.weight(1f)) {
-                                Text((if(workspace==MailWorkspace.ORDINARY)"✓ " else "")+
-                                    "普通邮箱",maxLines=1)
+                            .padding(horizontal=12.dp),
+                            verticalAlignment=Alignment.CenterVertically) {
+                            TextButton(
+                                onClick={workspaceSwitcherExpanded = !workspaceSwitcherExpanded}
+                            ) {
+                                Text((if(workspace==MailWorkspace.ORDINARY) "普通邮箱" else "管理员") +
+                                    (if(workspaceSwitcherExpanded) "  ▴ 收起" else "  ▾ 切换"),
+                                    maxLines=1)
                             }
-                            OutlinedButton(onClick={switchWorkspace(MailWorkspace.ADMIN)},
-                                modifier=Modifier.weight(1f)) {
-                                Text((if(workspace==MailWorkspace.ADMIN)"✓ " else "")+
-                                    "管理员",maxLines=1)
+                            Text(
+                                if(workspace==MailWorkspace.ORDINARY)
+                                    (if(nativeDeviceClient.isBound())"本机已绑定"
+                                    else "需要登录")
+                                else (if(adminAuthenticated)"管理员已验证"
+                                    else "需要独立验证"),
+                                modifier=Modifier.weight(1f).padding(start=8.dp),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines=1
+                            )
+                        }
+                        if(workspaceSwitcherExpanded) {
+                            Row(modifier=Modifier.fillMaxWidth()
+                                .padding(horizontal=12.dp,vertical=2.dp),
+                                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick={switchWorkspace(MailWorkspace.ORDINARY)},
+                                    modifier=Modifier.weight(1f)) {
+                                    Text((if(workspace==MailWorkspace.ORDINARY)"✓ " else "")+
+                                        "普通邮箱",maxLines=1)
+                                }
+                                OutlinedButton(onClick={switchWorkspace(MailWorkspace.ADMIN)},
+                                    modifier=Modifier.weight(1f)) {
+                                    Text((if(workspace==MailWorkspace.ADMIN)"✓ " else "")+
+                                        "管理员",maxLines=1)
+                                }
                             }
                         }
-                        Text(
-                            if(workspace==MailWorkspace.ORDINARY)
-                                (if(nativeDeviceClient.isBound())"普通账号 · 本机已绑定"
-                                else "普通账号 · 需要登录")
-                            else (if(adminAuthenticated)"管理员身份 · 已验证"
-                                else "管理员身份 · 需要独立验证"),
-                            modifier=Modifier.padding(horizontal=17.dp,vertical=2.dp),
-                            style=MaterialTheme.typography.labelSmall,
-                            color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },
