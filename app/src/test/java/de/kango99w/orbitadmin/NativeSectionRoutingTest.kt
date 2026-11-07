@@ -70,6 +70,8 @@ class NativeSectionRoutingTest {
         assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.ADMIN)"))
         assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.TRANSFER)"))
         assertTrue(source.contains("BuildConfig.VERSION_NAME"))
+        assertTrue(source.contains("Administrator must use native Compose, not WebView"))
+        assertTrue(source.contains("openAdvancedAdminWebsite(url)"))
         assertTrue(source.contains("NativeTransferContent()"))
         assertTrue(source.contains("NativeAdminContent()"))
         assertTrue(source.contains("NativeSectionRouting.explicitWebsiteTarget(url)"))
