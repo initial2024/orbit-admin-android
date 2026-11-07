@@ -753,16 +753,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-                            }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     @Composable
     private fun NativeMailboxLanding(showMailboxes: Boolean) {
         Column(
