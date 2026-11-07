@@ -8,7 +8,7 @@ enum class MailSection(val label: String, val address: String?) {
     INBOX("收件箱", "https://inbox.kango99w.de/?orbit_app=android#orbit-inbox"),
     MAILBOXES("邮箱", "https://inbox.kango99w.de/?orbit_app=android#orbit-mailboxes"),
     TRANSFER("文件", "https://inbox.kango99w.de/transfer/"),
-    ADMIN("管理", "https://inbox.kango99w.de/admin/?adminTab=tempMail"),
+    ADMIN("管理员", "https://inbox.kango99w.de/admin/?adminTab=tempMail"),
     SETTINGS("设置", null);
 
     companion object {
