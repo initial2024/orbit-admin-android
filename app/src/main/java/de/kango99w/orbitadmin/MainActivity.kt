@@ -33,6 +33,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebStorage
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.net.http.SslError
 import androidx.activity.compose.BackHandler
@@ -111,6 +112,7 @@ class MainActivity : FragmentActivity() {
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private val nativeDeviceClient by lazy { NativeDeviceClient(applicationContext) }
     private val nativeIo = Executors.newSingleThreadExecutor()
+    private val nativeRequestGeneration = AtomicLong(0)
     private var nativeApiActive by mutableStateOf(false)
     private var nativeApiLoading by mutableStateOf(false)
     private var nativeApiNotice by mutableStateOf("")
@@ -383,22 +385,26 @@ class MainActivity : FragmentActivity() {
     /** Signed, cookie-free native API reads. Only account-owned and unlocked data is displayed. */
     private fun refreshNativeApi() {
         if (!unlocked || !nativeDeviceClient.isBound() || nativeApiLoading) return
+        val deviceId = nativeDeviceClient.currentId() ?: return
+        val generation = nativeRequestGeneration.incrementAndGet()
         nativeApiLoading = true
         nativeIo.execute {
             val mailboxes = nativeDeviceClient.fetch("/api/account/native-device/mailboxes")
             if (mailboxes.status != 200 || mailboxes.value == null) {
                 runOnUiThread {
+                    if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                     nativeApiLoading = false
-                    if (unlocked) {
+                    if (unlocked && nativeDeviceClient.currentId() == deviceId) {
                         nativeApiNotice = when (mailboxes.status) {
                             401 -> "设备授权失效或被撤销，需要重新绑定。"
                             503 -> "服务器原生接口尚未启用，现有数据未被更改。"
                             else -> "原生邮箱同步失败：HTTP ${mailboxes.status}"
                         }
-                        if (mailboxes.status == 401) {
-                            nativeApiActive = false
-                            nativeInbox = null
-                        }
+                        // Never leave stale sensitive data visible after a failed authorization/read.
+                        nativeApiActive = false
+                        nativeInbox = null
+                        pendingNativeMessageId = null
+                        nativeMailDetail = null
                     }
                 }
                 return@execute
@@ -447,8 +453,9 @@ class MainActivity : FragmentActivity() {
                 messages = mail,
             )
             runOnUiThread {
+                if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                 nativeApiLoading = false
-                if (!unlocked || !nativeDeviceClient.isBound()) return@runOnUiThread
+                if (!unlocked || nativeDeviceClient.currentId() != deviceId) return@runOnUiThread
                 nativeApiActive = true
                 nativeApiNotice = if (selected != null && !locked && messageResult?.status != 200)
                     "邮件列表暂不可用；请刷新重试。" else ""
@@ -737,6 +744,8 @@ class MainActivity : FragmentActivity() {
         if (!unlocked || !NativeInboxPolicy.isSafeId(id)) return
         if (nativeApiActive) {
             val item = nativeInbox?.mailboxes?.firstOrNull { it.id == id } ?: return
+            nativeRequestGeneration.incrementAndGet()
+            nativeApiLoading = false
             getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE).edit()
                 .putString("selected_mailbox_id", id).apply()
             nativeInbox = nativeInbox?.copy(currentId = id, currentAddress = item.address,
@@ -1526,6 +1535,8 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        nativeRequestGeneration.incrementAndGet()
+        nativeApiLoading = false
         showNativePairDialog = false
         pendingPairNonce = null
         nativePairPassword = ""
@@ -1590,7 +1601,10 @@ class MainActivity : FragmentActivity() {
                                 if (nativeDeviceClient.completePair(
                                         event.optString("device_id"),event.optLong("expires_at",0L))) {
                                     message = "设备绑定成功。正在连接原生邮箱 API。"
+                                    nativeRequestGeneration.incrementAndGet()
+                                    nativeApiLoading = false
                                     nativeApiActive = false
+                                    nativeInbox = null
                                     refreshNativeApi()
                                 } else message = "设备授权返回值无效，未保存本机凭据。"
                             }
@@ -1929,6 +1943,8 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        nativeRequestGeneration.incrementAndGet()
+        nativeIo.shutdownNow()
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
         deferredFileUris = null
