@@ -21,6 +21,8 @@ object NativeLoginFeedback {
             "服务器拒绝随机数或签名时间（HTTP 400），请确认手机自动时间和时区。"
         code == "NATIVE_DEVICE_API_DISABLED" ->
             "服务器已拒绝原生设备 API（503）；请检查部署版本与功能开关。"
+        code == "NATIVE_CREDENTIAL_LOGIN_DISABLED" ->
+            "原生设备读取已开启，但普通账号原生密码/2FA 登录仍处于独立上线门禁（HTTP 503）；请等待服务端验收部署，不要反复提交密码。"
         code == "NATIVE_NETWORK_UNAVAILABLE" ->
             "原生 HTTPS 请求失败。请检查网络或系统时间；没有发放设备授权。"
         status == 400 -> "服务器拒绝原生登录请求格式（HTTP 400）；请核对客户端与接口版本。"
