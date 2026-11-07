@@ -1,5 +1,9 @@
 name: Publish Orbit Mail debug APK (manual GitHub release)
 on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - ".github/workflows/android-preview-release.yml"
   workflow_dispatch:
     inputs:
       acknowledgement:
@@ -11,7 +15,9 @@ permissions:
   contents: read
 jobs:
   build-preview:
-    if: github.ref == 'refs/heads/main' && inputs.acknowledgement == 'PUBLISH_TEST_APK'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.acknowledgement == 'PUBLISH_TEST_APK')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107' && contains(github.event.head_commit.message, '[publish-debug]'))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
