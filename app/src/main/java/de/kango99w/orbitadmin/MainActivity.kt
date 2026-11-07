@@ -107,6 +107,9 @@ class MainActivity : FragmentActivity() {
     private var showTools by mutableStateOf(false)
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private var showNativeMail by mutableStateOf(true)
+    // All regular tabs are Compose surfaces. Website views are explicit fallback only.
+    private var showNativeToolsPanel by mutableStateOf(true)
+    private var adminSearchQuery by mutableStateOf("")
     private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
     private var pendingNativeMessageId by mutableStateOf<String?>(null)
@@ -121,6 +124,8 @@ class MainActivity : FragmentActivity() {
     private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
     private fun publicWebView(): WebView? = sectionBrowsers[MailSection.INBOX]
     private var pendingAdminUrl: String? = null
+    private var pendingTransferUrl: String? = null
+    private var pendingPublicUrl: String? = null
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var allowMultipleFiles = false
     private var deferredFileUris: Array<Uri>? = null
@@ -291,37 +296,63 @@ class MainActivity : FragmentActivity() {
         val old = browser
         val previousKey = BrowserSessionRouting.key(activeSection)
         val nextKey = BrowserSessionRouting.key(section)
-        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
-            showNativeMail = true
-            webLoginInProgress = false
-            nativeSearchQuery = ""
-        } else showNativeMail = false
+        when (section) {
+            MailSection.INBOX, MailSection.MAILBOXES -> {
+                showNativeMail = true
+                webLoginInProgress = false
+                nativeSearchQuery = ""
+            }
+            MailSection.ADMIN, MailSection.TRANSFER -> showNativeToolsPanel = true
+            MailSection.SETTINGS -> Unit
+        }
         activeSection = section
         previousWebSection = section
         if (previousKey != nextKey || section == MailSection.MAILBOXES) {
             pendingNativeMessageId = null
             nativeMailDetail = null
+            nativeReadCommandUnavailable = false
         }
         if (previousKey != nextKey) old?.onPause()
-        // No tab-triggered loadUrl: every scope keeps its own live DOM/history.
+        // Native tabs never loadUrl; any website state remains in its private scope.
         sectionBrowsers[nextKey]?.onResume()
     }
 
+    /** Only a deliberate "website" action opens first-party HTML. */
     private fun navigateTo(url: String) {
         if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url)) return
+        val parsed = try { java.net.URI(url) } catch (_: Exception) { return }
+        val target = when {
+            parsed.path == "/transfer/" || parsed.path == "/transfer" -> MailSection.TRANSFER
+            parsed.path == "/" -> MailSection.INBOX
+            else -> MailSection.ADMIN
+        }
+        val oldKey = BrowserSessionRouting.key(activeSection)
+        val nextKey = BrowserSessionRouting.key(target)
+        if (oldKey != nextKey) browser?.onPause()
+        activeSection = target
+        previousWebSection = target
         showTools = false
-        webLoginInProgress = false
-        if (BrowserSessionRouting.key(activeSection) != MailSection.ADMIN) browser?.onPause()
-        activeSection = MailSection.ADMIN
-        previousWebSection = MailSection.ADMIN
         pendingNativeMessageId = null
         nativeMailDetail = null
-        showNativeMail = false
-        val admin = sectionBrowsers[MailSection.ADMIN]
-        if (admin == null) pendingAdminUrl = url
-        else {
-            admin.onResume()
-            if (admin.url != url) admin.loadUrl(url)
+        nativeReadCommandUnavailable = false
+        if (target == MailSection.INBOX) {
+            showNativeMail = false
+            webLoginInProgress = true
+        } else {
+            showNativeToolsPanel = false
+            webLoginInProgress = false
+        }
+        val existing = sectionBrowsers[nextKey]
+        if (existing == null) {
+            when (target) {
+                MailSection.INBOX -> pendingPublicUrl = url
+                MailSection.TRANSFER -> pendingTransferUrl = url
+                MailSection.ADMIN -> pendingAdminUrl = url
+                else -> Unit
+            }
+        } else {
+            existing.onResume()
+            if (existing.url != url) existing.loadUrl(url)
         }
     }
 
@@ -818,12 +849,21 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text("所有功能继续使用现有网站授权和双重验证。", style = MaterialTheme.typography.bodySmall)
+                    Text("普通页面优先使用 Android 原生界面；只有未接通原生接口的功能才需手动打开网站授权。", style = MaterialTheme.typography.bodySmall)
                     AdminDestination.entries.forEach { entry ->
+                        val nativeSection = when (entry) {
+                            AdminDestination.PUBLIC_MAIL -> MailSection.INBOX
+                            AdminDestination.TRANSFER -> MailSection.TRANSFER
+                            AdminDestination.OVERVIEW, AdminDestination.MAIL -> MailSection.ADMIN
+                            else -> null
+                        }
                         OutlinedButton(
-                            onClick = { navigateTo(entry.address) },
+                            onClick = {
+                                if (nativeSection != null) openSection(nativeSection)
+                                else navigateTo(entry.address)
+                            },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(entry.title) }
+                        ) { Text(entry.title + if (nativeSection == null) " · 网站授权" else "") }
                     }
                 }
             },
@@ -831,6 +871,115 @@ class MainActivity : FragmentActivity() {
                 TextButton(onClick = { showTools = false }) { Text("关闭") }
             }
         )
+    }
+
+    @Composable
+    private fun NativeTransferContent() {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("文件", style = MaterialTheme.typography.headlineMedium)
+            Text("原生文件中心", style = MaterialTheme.typography.titleMedium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_file), contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Text("文件传输", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "文件选择和传输记录将统一放在这里。当前服务器尚未提供经过验收的原生上传接口，不能直接声称上传成功。",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Button(
+                        onClick = { navigateTo(AdminDestination.TRANSFER.address) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("打开现有文件传输（网站操作）") }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("上传与下载", style = MaterialTheme.typography.titleMedium)
+                    Text("原生 API 尚未接通。这里不会显示虚构的进度、文件或完成状态。",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeAdminContent() {
+        val destinations = AdminDestination.entries.filter {
+            it != AdminDestination.PUBLIC_MAIL && it != AdminDestination.TRANSFER
+        }.filter {
+            adminSearchQuery.isBlank() || it.title.contains(adminSearchQuery.trim(), ignoreCase = true)
+        }
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("管理中心", style = MaterialTheme.typography.headlineMedium)
+            Text("Orbit Mail · 管理员工作台",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text("管理员权限", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "管理员会话与普通邮箱登录分开验证。目前管理接口尚未全部原生化，操作时将明确进入受保护的网站页面。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedButton(
+                        onClick = { navigateTo(AdminDestination.OVERVIEW.address) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("打开管理员授权页面") }
+                }
+            }
+            OutlinedTextField(
+                value = adminSearchQuery,
+                onValueChange = { adminSearchQuery = it.take(50) },
+                label = { Text("搜索管理功能") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("功能入口", style = MaterialTheme.typography.titleMedium)
+            destinations.forEach { entry ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { navigateTo(entry.address) }
+                            .padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painterResource(
+                                if (entry == AdminDestination.SECURITY) R.drawable.ic_shield
+                                else R.drawable.ic_admin
+                            ), contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.padding(horizontal = 9.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(entry.title, style = MaterialTheme.typography.titleMedium)
+                            Text("网站授权操作",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("›", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+            Text("管理员 API 接入前，以上按钮只打开对应的真实功能，不会假装已执行管理操作。",
+                style = MaterialTheme.typography.bodySmall)
+        }
     }
 
     @Composable
@@ -903,6 +1052,13 @@ class MainActivity : FragmentActivity() {
                     } else if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
                     else lock()
                 }
+                (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
+                    !showNativeToolsPanel -> showNativeToolsPanel = true
+                (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) &&
+                    !showNativeMail -> {
+                        showNativeMail = true
+                        webLoginInProgress = false
+                    }
                 browser?.canGoBack() == true -> browser?.goBack()
                 activeSection != MailSection.INBOX -> openSection(MailSection.INBOX)
                 else -> lock()
@@ -930,6 +1086,9 @@ class MainActivity : FragmentActivity() {
             topBar = {
                 val nativeMailTab = (activeSection == MailSection.INBOX ||
                     activeSection == MailSection.MAILBOXES) && showNativeMail
+                val nativeToolsTab = (activeSection == MailSection.TRANSFER ||
+                    activeSection == MailSection.ADMIN) && showNativeToolsPanel
+                val nativeTab = nativeMailTab || nativeToolsTab || activeSection == MailSection.SETTINGS
                 Surface(shadowElevation=1.dp) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp),
@@ -946,13 +1105,13 @@ class MainActivity : FragmentActivity() {
                             Spacer(Modifier.padding(horizontal=6.dp))
                             Column {
                                 Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
-                                Text(if(nativeMailTab) "邮箱客户端" else activeSection.label,
+                                Text(if(nativeTab) "原生客户端 · " + activeSection.label else "网站授权 · " + activeSection.label,
                                     style=MaterialTheme.typography.labelSmall,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Row(verticalAlignment=Alignment.CenterVertically) {
-                            if (!nativeMailTab && activeSection != MailSection.SETTINGS) {
+                            if (!nativeTab && activeSection != MailSection.SETTINGS) {
                                 TextButton(onClick={browser?.reload()}) {
                                     Icon(painterResource(R.drawable.ic_refresh),
                                         contentDescription="重新加载当前页面")
@@ -997,13 +1156,15 @@ class MainActivity : FragmentActivity() {
                 val publicSelected = activeSection == MailSection.INBOX ||
                     activeSection == MailSection.MAILBOXES
                 val nativeVisible = publicSelected && showNativeMail
+                val transferWebVisible = activeSection == MailSection.TRANSFER && !showNativeToolsPanel
+                val adminWebVisible = activeSection == MailSection.ADMIN && !showNativeToolsPanel
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Each WebView is mounted only after the section's first visit,
                     // then remains attached and retains its DOM/session across tabs.
                     AndroidView(
                         factory = { obtainBrowser(MailSection.INBOX) },
                         update = {
-                            it.visibility = if (publicSelected) View.VISIBLE else View.INVISIBLE
+                            it.visibility = if (publicSelected && !nativeVisible) View.VISIBLE else View.INVISIBLE
                         },
                         modifier = Modifier.fillMaxSize().alpha(
                             if (publicSelected && !nativeVisible) 1f else 0f
@@ -1014,11 +1175,10 @@ class MainActivity : FragmentActivity() {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.TRANSFER) },
                             update = {
-                                it.visibility = if (activeSection == MailSection.TRANSFER)
-                                    View.VISIBLE else View.INVISIBLE
+                                it.visibility = if (transferWebVisible) View.VISIBLE else View.INVISIBLE
                             },
                             modifier = Modifier.fillMaxSize().alpha(
-                                if (activeSection == MailSection.TRANSFER) 1f else 0f
+                                if (transferWebVisible) 1f else 0f
                             )
                         )
                     }
@@ -1027,11 +1187,10 @@ class MainActivity : FragmentActivity() {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.ADMIN) },
                             update = {
-                                it.visibility = if (activeSection == MailSection.ADMIN)
-                                    View.VISIBLE else View.INVISIBLE
+                                it.visibility = if (adminWebVisible) View.VISIBLE else View.INVISIBLE
                             },
                             modifier = Modifier.fillMaxSize().alpha(
-                                if (activeSection == MailSection.ADMIN) 1f else 0f
+                                if (adminWebVisible) 1f else 0f
                             )
                         )
                     }
@@ -1047,6 +1206,16 @@ class MainActivity : FragmentActivity() {
                             } else {
                                 NativeMailboxLanding(activeSection == MailSection.MAILBOXES)
                             }
+                        }
+                    }
+                    if (activeSection == MailSection.TRANSFER && showNativeToolsPanel) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            NativeTransferContent()
+                        }
+                    }
+                    if (activeSection == MailSection.ADMIN && showNativeToolsPanel) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            NativeAdminContent()
                         }
                     }
                     if (activeSection == MailSection.SETTINGS) {
@@ -1337,9 +1506,15 @@ class MainActivity : FragmentActivity() {
             message = "下载暂未开放；请通过网页版完成敏感附件下载。"
         }
         sectionBrowsers[key] = view
-        val initial = if (key == MailSection.ADMIN)
-            (pendingAdminUrl ?: MailSection.ADMIN.address!!).also { pendingAdminUrl = null }
-        else key.address ?: MailSection.INBOX.address!!
+        val initial = when (key) {
+            MailSection.ADMIN ->
+                (pendingAdminUrl ?: MailSection.ADMIN.address!!).also { pendingAdminUrl = null }
+            MailSection.TRANSFER ->
+                (pendingTransferUrl ?: MailSection.TRANSFER.address!!).also { pendingTransferUrl = null }
+            MailSection.INBOX ->
+                (pendingPublicUrl ?: MailSection.INBOX.address!!).also { pendingPublicUrl = null }
+            else -> MailSection.INBOX.address!!
+        }
         view.loadUrl(initial)
         if (BrowserSessionRouting.key(activeSection) != key) view.onPause()
         return view
