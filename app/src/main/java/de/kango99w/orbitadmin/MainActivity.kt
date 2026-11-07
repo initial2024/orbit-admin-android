@@ -111,6 +111,7 @@ class MainActivity : FragmentActivity() {
     private var nativeSearchQuery by mutableStateOf("")
     private var pendingNativeMessageId by mutableStateOf<String?>(null)
     private var nativeMailDetail by mutableStateOf<NativeMailDetail?>(null)
+    private var nativeReadCommandUnavailable by mutableStateOf(false)
     private var showCreateMailbox by mutableStateOf(false)
     private var nativeCreateLocal by mutableStateOf("")
     private var nativeCreateDomain by mutableStateOf("")
@@ -510,30 +511,32 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** Read the selected message in the native UI without reloading the mail document. */
+    /** Stay in Compose, even when the server-side native reader is not yet deployed. */
     private fun openNativeMessage(id: String) {
-        if (!NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true) return
+        if (!unlocked || !NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true ||
+            nativeInbox?.messages?.none { it.id == id } != false) return
         pendingNativeMessageId = id
         nativeMailDetail = null
         showNativeMail = true
-        if (nativeInbox?.nativeReadSupported != true ||
-            !sendNativeMailboxCommand("read_message",id)) {
-            pendingNativeMessageId = null
-            showNativeMail = false
-            val base = MailSection.INBOX.address?.substringBefore("#") ?: return
-            val url = "${base}#orbit-message-${id}"
-            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+        nativeReadCommandUnavailable = nativeInbox?.nativeReadSupported != true ||
+            !sendNativeMailboxCommand("read_message",id)
+        if (nativeReadCommandUnavailable) {
+            message = "原生阅读接口尚不可用；不会自动跳转网页登录。可手动选择完整网页。"
         }
     }
 
+    /** Reuse the authorized mailbox-selection command. Never force a WebView navigation. */
     private fun openNativeMailbox(id: String) {
-        if (!NativeInboxPolicy.isSafeId(id)) return
-        pendingNativeMessageId = null
-        nativeMailDetail = null
-        showNativeMail = false
-        val base = MailSection.MAILBOXES.address?.substringBefore("#") ?: return
-        val url = "${base}#orbit-mailbox-${id}"
-        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+        if (!unlocked || !NativeInboxPolicy.isSafeId(id)) return
+        if (sendNativeMailboxCommand("select_mailbox",id)) {
+            pendingNativeMessageId = null
+            nativeMailDetail = null
+            nativeReadCommandUnavailable = false
+            showNativeMail = true
+            openSection(MailSection.INBOX)
+        } else {
+            message = "无法在当前会话切换邮箱；请在登录状态有效后重试。"
+        }
     }
 
     @Composable
@@ -585,9 +588,12 @@ class MainActivity : FragmentActivity() {
                 pendingNativeMessageId=null
                 nativeMailDetail=null
             }) { Text("‹ 返回收件箱") }
-            Text("正在从已授权的邮箱读取正文…",
+            Text(if (nativeReadCommandUnavailable) "原生邮件阅读暂不可用"
+                else "正在从已授权的邮箱读取正文…",
                 style=MaterialTheme.typography.titleMedium)
-            Text("若无法加载，可切换完整网页完成验证；不会自动要求重新登录。",
+            Text(if (nativeReadCommandUnavailable)
+                "当前网站尚未开放原生正文接口，或原有会话尚未就绪。不会自动跳转登录页。"
+                else "使用当前已授权会话获取正文，不会刷新邮箱页面。",
                 style=MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick={showNativeMail=false}) { Text("完整网页阅读") }
         }
@@ -679,7 +685,7 @@ class MainActivity : FragmentActivity() {
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             TextButton(onClick={copyMailboxAddress(mailbox.address)}) { Text("复制") }
-                            TextButton(onClick={openNativeMailbox(mailbox.id)}) { Text("管理") }
+                            TextButton(onClick={openNativeMailbox(mailbox.id)}) { Text("查看") }
                         }
                         HorizontalDivider()
                     }
