@@ -2,7 +2,7 @@
 
 Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
 
-**Status: experimental debug build; not a production release. Android v0.4.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
+**Status: experimental debug build; not a production release. Android v0.4.1-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
 ## Authentication
 
@@ -15,6 +15,12 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 ## Android size optimization
 
 v0.3.1 removes the full Compose material-icons-extended dependency and uses nine small local vector drawables instead. This avoids tens of megabytes of unused debug DEX resources while keeping the same mail-first navigation.
+
+## v0.4.1: Native-first, single-session-safe navigation
+
+The app now displays a native Compose mailbox landing even when the authenticated snapshot has not loaded. The user explicitly opens the first-party site for account/password/2FA authentication, then the trusted first-party read-only snapshot returns them to the native list. The app no longer silently places a website UI beneath the intended native mailbox landing.
+
+Switching native Inbox/Mailboxes (or going back from native Settings) does not reload the same public-mail HTML document. The server continues to manage account and administrator identities as two **separate sessions**, and neither is upgraded by device biometric unlocking.
 
 ## Android v0.4 native inbox preview
 

@@ -95,6 +95,7 @@ class MainActivity : FragmentActivity() {
     private var showTools by mutableStateOf(false)
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private var showNativeMail by mutableStateOf(true)
+    private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var previousWebSection = MailSection.INBOX
@@ -235,24 +236,45 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun isCurrentPublicMailDocument(): Boolean =
+        browser?.url?.let { url ->
+            try {
+                val parsed = java.net.URI(url)
+                AdminUrlPolicy.isTrustedMainFrame(url) &&
+                    parsed.path == "/" && parsed.rawQuery.orEmpty().split("&").contains("orbit_app=android")
+            } catch (_: Exception) { false }
+        } ?: false
+
     private fun openSection(section: MailSection) {
         showTools = false
-        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
-            showNativeMail = true
-            nativeSearchQuery = ""
-        }
         if (section == MailSection.SETTINGS) {
+            if (activeSection != MailSection.SETTINGS) previousWebSection = activeSection
             activeSection = section
             browser?.onPause()
             browser?.pauseTimers()
             return
         }
-        previousWebSection = section
+        val wasSettings = activeSection == MailSection.SETTINGS
+        val sameSection = activeSection == section
         activeSection = section
+        previousWebSection = section
+        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
+            showNativeMail = true
+            webLoginInProgress = false
+            nativeSearchQuery = ""
+        } else {
+            showNativeMail = false
+        }
         browser?.resumeTimers()
         browser?.onResume()
+        // Inbox and mailbox list are native views over ONE live public-mail
+        // page. Switching tabs must never reload that page or reset its React
+        // mailbox state and access session.
+        if ((section == MailSection.INBOX || section == MailSection.MAILBOXES) &&
+            isCurrentPublicMailDocument()) return
+        if (sameSection || (wasSettings && browser?.url == section.address)) return
         section.address?.let { safe ->
-            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(safe)) {
+            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(safe) && browser?.url != safe) {
                 browser?.loadUrl(safe)
             }
         }
@@ -260,12 +282,13 @@ class MainActivity : FragmentActivity() {
 
     private fun navigateTo(url: String) {
         if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url)) return
+        webLoginInProgress = false
         showTools = false
         activeSection = MailSection.ADMIN
         previousWebSection = MailSection.ADMIN
         browser?.resumeTimers()
         browser?.onResume()
-        browser?.loadUrl(url)
+        if (browser?.url != url) browser?.loadUrl(url)
     }
 
     /** Native list items never perform deletes, sends or privileged API calls. */
@@ -300,7 +323,7 @@ class MainActivity : FragmentActivity() {
                     if (showMailboxes) "我的邮箱 · ${snapshot.mailboxes.size}" else "收件箱 · ${snapshot.messages.size}",
                     style = MaterialTheme.typography.titleMedium
                 )
-                TextButton(onClick = { showNativeMail = false }) { Text("完整网页") }
+                TextButton(onClick = { webLoginInProgress = false; showNativeMail = false }) { Text("完整网页") }
             }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(13.dp)) {
@@ -353,6 +376,7 @@ class MainActivity : FragmentActivity() {
                     }
                     item {
                         OutlinedButton(onClick = {
+                            webLoginInProgress = false
                             showNativeMail = false
                             browser?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
                         }, modifier = Modifier.fillMaxWidth()) { Text("创建 / 管理邮箱（网页）") }
@@ -393,6 +417,54 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    @Composable
+    private fun NativeMailboxLanding(showMailboxes: Boolean) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.height(24.dp))
+            Icon(
+                painterResource(if (showMailboxes) R.drawable.ic_folder else R.drawable.ic_mail),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(if (showMailboxes) "我的邮箱" else "收件箱",
+                style = MaterialTheme.typography.headlineSmall)
+            Text("使用已绑定的账号管理邮件。登录后这里会显示原生邮箱列表，"
+                + "无需在收件箱与邮箱之间重复登录。",
+                style = MaterialTheme.typography.bodyMedium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    Text("尚未取得当前邮箱数据", style = MaterialTheme.typography.titleMedium)
+                    Text("需要先在安全的官网登录页面完成账号和 2FA 验证；"
+                        + "若已经登录，可刷新页面重新同步。",
+                        style = MaterialTheme.typography.bodySmall)
+                    Button(
+                        onClick = {
+                            webLoginInProgress = true
+                            showNativeMail = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("登录 / 同步现有邮箱") }
+                    OutlinedButton(
+                        onClick = {
+                            val home = MailSection.INBOX.address ?: return@OutlinedButton
+                            if (browser?.url != home) browser?.loadUrl(home) else browser?.reload()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("重新检查邮箱") }
+                }
+            }
+            Text("管理员管理会话与普通邮箱账号会话独立；登录一个不代表自动获得另一个的权限。",
+                style = MaterialTheme.typography.labelSmall)
         }
     }
 
@@ -504,8 +576,8 @@ class MainActivity : FragmentActivity() {
                         Text(activeSection.label, style = MaterialTheme.typography.titleLarge)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if ((activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) && nativeInbox != null) {
-                            TextButton(onClick = { showNativeMail = !showNativeMail }) {
+                        if (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) {
+                            TextButton(onClick = { showNativeMail = !showNativeMail; webLoginInProgress = false }) {
                                 Text(if (showNativeMail) "网页" else "原生")
                             }
                         }
@@ -552,16 +624,19 @@ class MainActivity : FragmentActivity() {
                 Column(Modifier.fillMaxSize().padding(inner)) {
                     val snapshot = nativeInbox
                     val nativeVisible = showNativeMail &&
-                        (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) &&
-                        snapshot != null
+                        (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES)
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         AndroidView(
                             factory = { obtainBrowser() },
                             modifier = Modifier.fillMaxSize().alpha(if (nativeVisible) 0f else 1f)
                         )
-                        if (nativeVisible && snapshot != null) {
+                        if (nativeVisible) {
                             Surface(modifier = Modifier.fillMaxSize()) {
-                                NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
+                                if (snapshot != null) {
+                                    NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
+                                } else {
+                                    NativeMailboxLanding(activeSection == MailSection.MAILBOXES)
+                                }
                             }
                         }
                     }
@@ -667,7 +742,14 @@ class MainActivity : FragmentActivity() {
                         if (!unlocked) return@runOnUiThread
                         when (event) {
                             NativeInboxEvent.Clear -> nativeInbox = null
-                            is NativeInboxEvent.Snapshot -> nativeInbox = event.data
+                            is NativeInboxEvent.Snapshot -> {
+                                nativeInbox = event.data
+                                if (webLoginInProgress &&
+                                    (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES)) {
+                                    webLoginInProgress = false
+                                    showNativeMail = true
+                                }
+                            }
                         }
                     }
                 }
