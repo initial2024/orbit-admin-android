@@ -23,6 +23,8 @@ object NativeLoginFeedback {
             "服务器已拒绝原生设备 API（503）；请检查部署版本与功能开关。"
         code == "NATIVE_CREDENTIAL_LOGIN_DISABLED" ->
             "原生设备读取已开启，但普通账号原生密码/2FA 登录仍处于独立上线门禁（HTTP 503）；请等待服务端验收部署，不要反复提交密码。"
+        code == "NATIVE_KEYSTORE_UNAVAILABLE" ->
+            "本机 Android Keystore 密钥不可用，尚未向服务器发送登录请求。请检查系统锁屏和设备安全状态；不要反复输入密码。"
         code == "NATIVE_NETWORK_UNAVAILABLE" ->
             "原生 HTTPS 请求失败。请检查网络或系统时间；没有发放设备授权。"
         status == 400 -> "服务器拒绝原生登录请求格式（HTTP 400）；请核对客户端与接口版本。"
