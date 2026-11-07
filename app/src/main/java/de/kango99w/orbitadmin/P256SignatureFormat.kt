@@ -26,7 +26,7 @@ object P256SignatureFormat {
                 (integer[1].toInt() and 0x80) == 0) {
                 throw IllegalArgumentException("Noncanonical INTEGER")
             }
-            if (integer[0].toInt() and 0x80 != 0) {
+            if ((integer[0].toInt() and 0x80) != 0) {
                 throw IllegalArgumentException("Negative INTEGER")
             }
             val value = if (size == 33) {
