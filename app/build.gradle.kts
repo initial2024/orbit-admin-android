@@ -12,8 +12,16 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.5.0-dev"
+        versionCode = 10
+        versionName = "0.5.1-dev"
+        // Firebase mobile config values are public identifiers, not service-account secrets.
+        // All four must be provided or the optional background push client stays off.
+        val fcmNames = listOf("ORBIT_FIREBASE_APP_ID", "ORBIT_FIREBASE_API_KEY",
+            "ORBIT_FIREBASE_SENDER_ID", "ORBIT_FIREBASE_PROJECT_ID")
+        for (name in fcmNames) {
+            val value = (System.getenv(name) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+            buildConfigField("String", name, "\"${value}\"")
+        }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -32,6 +40,7 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }
@@ -45,6 +54,8 @@ dependencies {
     implementation("androidx.fragment:fragment:1.8.6")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.webkit:webkit:1.18.0")
+    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
