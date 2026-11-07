@@ -1552,6 +1552,42 @@ class MainActivity : FragmentActivity() {
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
         if (key == MailSection.INBOX) {
+        // Pair response is accepted only from the exact first-party main frame
+        // and for the outstanding user-initiated nonce. No cookie or password returned.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                view, "orbitNativeDeviceBinding", setOf("https://inbox.kango99w.de"),
+                WebViewCompat.WebMessageListener { sender,data,origin,mainFrame,_ ->
+                    if (data.type != WebMessageCompat.TYPE_STRING ||
+                        !NativeInboxPolicy.acceptsSource(
+                            origin.scheme,origin.host,origin.port,mainFrame,sender.url
+                        ) || data.data.length > 512) return@WebMessageListener
+                    val event = try { JSONObject(data.data) } catch (_: Exception) { return@WebMessageListener }
+                    if (event.optInt("v") != 1 ||
+                        event.keys().asSequence().toSet() !=
+                            setOf("v","kind","nonce","device_id","expires_at"))
+                        return@WebMessageListener
+                    runOnUiThread {
+                        if (!unlocked || publicWebView() !== view ||
+                            pendingPairNonce == null ||
+                            event.optString("nonce") != pendingPairNonce) return@runOnUiThread
+                        pendingPairNonce = null
+                        when (event.optString("kind")) {
+                            "paired" -> {
+                                if (nativeDeviceClient.completePair(
+                                        event.optString("device_id"),event.optLong("expires_at",0L))) {
+                                    message = "设备绑定成功。正在连接原生邮箱 API。"
+                                    nativeApiActive = false
+                                    refreshNativeApi()
+                                } else message = "设备授权返回值无效，未保存本机凭据。"
+                            }
+                            "disabled" -> message = "服务器尚未开放原生设备 API，原有登录和邮件不受影响。"
+                            "rejected" -> message = "设备绑定被服务器拒绝，请确认账户、密码或 2FA。"
+                        }
+                    }
+                }
+            )
+        }
         // The only website→Android channel carries one constant event, never
         // administrator identity, cookies, TOTP, message content or native commands.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
