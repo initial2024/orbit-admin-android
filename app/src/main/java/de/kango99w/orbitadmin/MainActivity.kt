@@ -167,7 +167,6 @@ class MainActivity : FragmentActivity() {
     private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
     private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
     private fun publicWebView(): WebView? = sectionBrowsers[MailSection.INBOX]
-    private var pendingAdminUrl: String? = null
     private var pendingTransferUrl: String? = null
     private var pendingPublicUrl: String? = null
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
@@ -418,7 +417,6 @@ class MainActivity : FragmentActivity() {
             when (target) {
                 MailSection.INBOX -> pendingPublicUrl = url
                 MailSection.TRANSFER -> pendingTransferUrl = url
-                MailSection.ADMIN -> pendingAdminUrl = url
                 else -> Unit
             }
         } else {
@@ -2313,6 +2311,9 @@ class MainActivity : FragmentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun obtainBrowser(section: MailSection): WebView {
         val key = BrowserSessionRouting.key(section)
+        // Hard fail-closed: in-app admin content must never create a WebView,
+        // even if future navigation code accidentally targets this scope.
+        check(key != MailSection.ADMIN) { "Administrator must use native Compose, not WebView" }
         sectionBrowsers[key]?.let { existing ->
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
@@ -2593,8 +2594,7 @@ class MainActivity : FragmentActivity() {
         }
         sectionBrowsers[key] = view
         val initial = when (key) {
-            MailSection.ADMIN ->
-                (pendingAdminUrl ?: MailSection.ADMIN.address!!).also { pendingAdminUrl = null }
+            MailSection.ADMIN -> error("Administrator WebView is disabled; use Compose")
             MailSection.TRANSFER ->
                 (pendingTransferUrl ?: MailSection.TRANSFER.address!!).also { pendingTransferUrl = null }
             MailSection.INBOX ->
