@@ -2,7 +2,7 @@
 
 Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
 
-**Status: experimental debug build; not a production release. Android v0.2.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
+**Status: experimental debug build; not a production release. Android v0.3.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
 ## Authentication
 
@@ -11,6 +11,12 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 - Local unlock is not server login. It does not bypass a TOTP challenge. The website sets its normal cookies in the app-private WebView profile.
 - App UI locks again when the activity is no longer visible. WebView state is preserved during an ordinary in-app lock; a process kill/restart may reload the website.
 - If Android has no secure lock configured, the app fails closed and directs users to device security settings.
+
+## Android v0.3 mail-first layout
+
+Native Compose navigation now organizes the app as **收件箱 / 邮箱 / 文件 / 管理 / 设置** with a mailbox-focused top bar and a compact Settings panel. Inbox, account-owned mailbox lists, OTP links and files still come from the existing **trusted website WebView**, not from a second authentication system or duplicate native mail database. The web URL `?orbit_app=android` only enables compact presentation and safe scroll targets.
+
+This build is **not** a fully native message reader and does not add SMTP sending. Server-side push for delivery after the app is killed is still unimplemented.
 
 ## Existing website functions
 

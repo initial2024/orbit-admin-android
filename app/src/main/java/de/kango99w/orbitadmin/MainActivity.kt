@@ -38,6 +38,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -45,11 +49,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +96,9 @@ class MainActivity : FragmentActivity() {
     private var unlocked by mutableStateOf(false)
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
     private var showClearConfirm by mutableStateOf(false)
+    private var showTools by mutableStateOf(false)
+    private var activeSection by mutableStateOf(MailSection.INBOX)
+    private var previousWebSection = MailSection.INBOX
     private var browser: WebView? = null
     private var openedOnce = false
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
@@ -213,19 +236,119 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun openSection(section: MailSection) {
+        showTools = false
+        if (section == MailSection.SETTINGS) {
+            activeSection = section
+            browser?.onPause()
+            browser?.pauseTimers()
+            return
+        }
+        previousWebSection = section
+        activeSection = section
+        browser?.resumeTimers()
+        browser?.onResume()
+        section.address?.let { safe ->
+            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(safe)) {
+                browser?.loadUrl(safe)
+            }
+        }
+    }
+
+    private fun navigateTo(url: String) {
+        if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url)) return
+        showTools = false
+        activeSection = MailSection.ADMIN
+        previousWebSection = MailSection.ADMIN
+        browser?.resumeTimers()
+        browser?.onResume()
+        browser?.loadUrl(url)
+    }
+
+    @Composable
+    private fun MailToolsDialog() {
+        AlertDialog(
+            onDismissRequest = { showTools = false },
+            title = { Text("管理工具") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text("所有功能继续使用现有网站授权和双重验证。", style = MaterialTheme.typography.bodySmall)
+                    AdminDestination.entries.forEach { entry ->
+                        OutlinedButton(
+                            onClick = { navigateTo(entry.address) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(entry.title) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTools = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    @Composable
+    private fun SettingsContent(modifier: Modifier = Modifier) {
+        Column(
+            modifier = modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            Text("管理账号登录、2FA、恢复码及可信设备均由网站负责。",
+                style = MaterialTheme.typography.bodyMedium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("邮件提醒", style = MaterialTheme.typography.titleMedium)
+                    Text("当前只支持应用使用期间的提醒；应用完全关闭后不保证送达。通知不包含邮箱、验证码或正文。",
+                        style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = ::requestTestNotification) {
+                        Icon(Icons.Default.Notifications, contentDescription = null)
+                        Spacer(Modifier.padding(horizontal = 3.dp))
+                        Text("测试系统通知")
+                    }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("账户与安全", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(onClick = { navigateTo(AdminDestination.SECURITY.address) }) {
+                        Icon(Icons.Default.Shield, contentDescription = null)
+                        Spacer(Modifier.padding(horizontal = 3.dp))
+                        Text("网站 2FA / 可信设备")
+                    }
+                    OutlinedButton(onClick = { showClearConfirm = true }) { Text("清除 APK 本机网站数据") }
+                    Text("清理本地数据不会撤销服务器上的管理员会话。",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            OutlinedButton(onClick = { openSection(previousWebSection) }) { Text("返回邮箱") }
+            OutlinedButton(onClick = ::lock) { Text("锁定应用") }
+            HorizontalDivider()
+            Text("Orbit Mail / Admin · Android 测试版。无自动发信或离线后台收信能力。",
+                style = MaterialTheme.typography.labelSmall)
+        }
+    }
+
     @Composable
     private fun AdminScreen() {
         BackHandler {
-            val current = browser
-            if (current?.canGoBack() == true) current.goBack()
-            else lock()
+            when {
+                showTools -> showTools = false
+                activeSection == MailSection.SETTINGS -> openSection(previousWebSection)
+                browser?.canGoBack() == true -> browser?.goBack()
+                activeSection != MailSection.INBOX -> openSection(MailSection.INBOX)
+                else -> lock()
+            }
         }
         if (showClearConfirm) {
             AlertDialog(
                 onDismissRequest = { showClearConfirm = false },
                 title = { Text("清除本机网站数据？") },
                 text = {
-                    Text("将清除 APK 内的网站 Cookie 和本地存储，并要求重新登录。"
+                    Text("将清除当前 APK 中的网站 Cookie 和本地存储，并要求重新登录。"
                         + "这不会撤销服务器上的管理员会话或可信设备授权；请在网站安全中心撤销。")
                 },
                 confirmButton = {
@@ -236,57 +359,74 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Orbit Admin", style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = {
-                    browser?.loadUrl(AdminUrlPolicy.HOME)
-                }) { Text("首页") }
-                OutlinedButton(onClick = ::lock) { Text("锁定") }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                AdminDestination.entries.forEach { entry ->
-                    OutlinedButton(onClick = {
-                        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(entry.address)) {
-                            browser?.loadUrl(entry.address)
+        if (showTools) MailToolsDialog()
+        Scaffold(
+            topBar = {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("ORBIT MAIL", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary)
+                        Text(activeSection.label, style = MaterialTheme.typography.titleLarge)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (activeSection != MailSection.SETTINGS) {
+                            TextButton(onClick = { browser?.reload() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "刷新当前邮箱页面")
+                            }
                         }
-                    }) { Text(entry.title) }
+                        TextButton(onClick = { showTools = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "打开管理工具")
+                        }
+                        TextButton(onClick = ::lock) { Text("锁定") }
+                    }
+                }
+            },
+            bottomBar = {
+                NavigationBar {
+                    MailSection.entries.forEach { section ->
+                        NavigationBarItem(
+                            selected = section == activeSection,
+                            onClick = { openSection(section) },
+                            icon = {
+                                Icon(
+                                    imageVector = when (section) {
+                                        MailSection.INBOX -> Icons.Default.Email
+                                        MailSection.MAILBOXES -> Icons.Default.Folder
+                                        MailSection.TRANSFER -> Icons.Default.AttachFile
+                                        MailSection.ADMIN -> Icons.Default.AdminPanelSettings
+                                        MailSection.SETTINGS -> Icons.Default.Settings
+                                    },
+                                    contentDescription = null
+                                )
+                            },
+                            label = { Text(section.label) },
+                            alwaysShowLabel = true
+                        )
+                    }
                 }
             }
-            AndroidView(
-                factory = { obtainBrowser() },
-                modifier = Modifier.weight(1f).fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                TextButton(onClick = {
-                    browser?.let { if (it.canGoBack()) it.goBack() }
-                }) { Text("返回") }
-                TextButton(onClick = {
-                    browser?.let { if (it.canGoForward()) it.goForward() }
-                }) { Text("前进") }
-                TextButton(onClick = { browser?.reload() }) { Text("刷新") }
-                TextButton(onClick = ::requestTestNotification) { Text("通知测试") }
-                TextButton(onClick = { showClearConfirm = true }) { Text("清理本机") }
-            }
-            if (message.isNotBlank()) {
-                Text(
-                    text = message,
-                    maxLines = 2,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall
-                )
+        ) { inner ->
+            if (activeSection == MailSection.SETTINGS) {
+                SettingsContent(Modifier.fillMaxSize().padding(inner))
+            } else {
+                Column(Modifier.fillMaxSize().padding(inner)) {
+                    AndroidView(
+                        factory = { obtainBrowser() },
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    )
+                    if (message.isNotBlank()) {
+                        Text(
+                            text = message,
+                            maxLines = 2,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
             }
         }
     }
@@ -458,7 +598,7 @@ class MainActivity : FragmentActivity() {
         browser = view
         if (!openedOnce) {
             openedOnce = true
-            view.loadUrl(AdminUrlPolicy.HOME)
+            view.loadUrl(activeSection.address ?: MailSection.INBOX.address!!)
         }
         return view
     }

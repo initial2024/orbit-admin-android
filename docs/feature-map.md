@@ -1,31 +1,22 @@
-# Existing website features available in the Android client
+# Orbit Mail navigation and website feature map
 
-Orbit Admin is intentionally a native **shell**, not a copy of the Worker backend. The actual admin HTML/JS is loaded from the existing HTTPS website; therefore security patches and ordinary administrative capabilities are not forked.
+The Android app now has a real **Kotlin/Jetpack Compose mail-first shell**, with five native destinations: 收件箱, 邮箱, 文件, 管理, 设置. The mailbox and message content are still shown by the trusted website inside a single WebView, not yet rendered in native Compose lists. Do **not** call v0.3 a fully native message renderer.
 
-| Native entry | Original website | Responsibility |
-| --- | --- | --- |
-| 总览 | /admin/ | invites, admin overview and current sessions |
-| 邮箱 | /admin/?adminTab=tempMail | administrator ordinary mailbox and private mailbox, OTP & safe link extraction, list, search and mailbox actions already present in the website |
-| 域名 | /admin/domain-control/ | existing DNS provider connections, domains and renewal controls |
-| 记录 | /admin/records/ | existing administrator records |
-| 安全 | /admin/#admin-screen=admin-settings | website-owned credentials, TOTP, trusted devices and security |
-| 更多 | /admin/?adminTab=advanced | existing advanced administrator tools |
+- 收件箱: `/?orbit_app=android#orbit-inbox`
+- 邮箱: `/?orbit_app=android#orbit-mailboxes` (shows existing and newly created mailboxes; creation stays in the website)
+- 文件: `/transfer/` (existing website)
+- 管理: `/admin/?adminTab=tempMail` (ordinary and private admin mail)
+- 设置: native controls for notification test, website 2FA/trusted-device entry, local-data cleanup and local lock
+- More menu: original admin domain center, records, security, and overview
 
-Back, forward, reload and jump-to-home are native conveniences. All website actions remain website actions requiring valid cookies and server checks.
+All routes are checked against the exact HTTPS hostname. The native application does not read a session cookie or mailbox access token, save 2FA seeds or create a new mailbox API. Mainframe WebView is reused across native tabs, maintaining the same website login session. A simple account can still perform its authorized website actions; the server remains authoritative.
 
-## Deliberate limits
+## Experimental notification
 
-- Native quick navigation may reload a page when changing admin paths. It does not promise seamless session-local UI state preservation across full navigations; existing website tabs remain available.
-- Verification URL copying is implemented by the existing website (Clipboard API + fallback). The APK does **not** intercept mail content or transmit OTPs to native code.
-- File input uses Android document picker; attachment **downloads** are still disabled for the initial test build to avoid leaking a privileged cookie or access token through an external download manager.
-- Android local browser storage can be cleared by explicit confirmation. This is **not** equivalent to revoking website sessions/trusted devices: revoke them from the website security center.
-- Third-party website or OAuth sign-in flows are not embedded: user-initiated external HTTPS links open in the system browser with a distinct cookie jar.
+The website signals the Android client only when a later successful mailbox poll detects a new message ID; it sends the constant `new_mail`, never the subject, address, code or link. There is **no** backend push or guaranteed notification after the APK is stopped or suspended.
 
-## Real-device acceptance
+## Release gates
 
-1. All six native entry points open correct authenticated existing pages after the current password and TOTP flow.
-2. Switching shortcuts does not introduce another user database or automatic credential reuse.
-3. In a received mail, copy OTP/login link via the website action. Neither value is logged or passed to a JS bridge.
-4. Uploading through a file chooser must require local unlock after returning from the system picker when the app was backgrounded.
-5. Clear local browser data; verify reauthentication is required. Then separately revoke server sessions/trusted-device grants.
-6. Verify correct icon appearance in launcher and Android settings at multiple densities.
+- On a real Android device test navigation, back/forward, email creation, mailbox visibility, link copying, 2FA/trusted-device behavior, document picking, re-locking on app background, safe modal overlays, and notification permission.
+- No production-signed APK until live login/2FA and UI interaction pass; CI compilation alone does not close this gate.
+- Webapp `?orbit_app=android` is presentation-only, does not change auth or access policy.
