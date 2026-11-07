@@ -46,6 +46,13 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // CI debug signing certificates are ephemeral. Installing a debug
+            // preview over the existing Orbit Mail package would fail with
+            // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Side-by-side test installs
+            // preserve the user's existing app and data.
+            applicationIdSuffix = ".nativepreview"
+        }
         release {
             // No environment secrets = unsigned release; publishing must reject it.
             if (orbitReleaseSigningReady)
