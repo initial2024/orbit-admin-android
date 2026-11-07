@@ -70,4 +70,28 @@ class AdminManagementModelsInstrumentedTest {
         assertTrue(AdminRegistrationModels.parse(null).isEmpty())
     }
 
+
+    @Test fun adminDomainInventoryNeverGrantsAuthority() {
+        val body=JSONObject("""{"domains":[
+          {"domain":"yues.blogu.tc","dns_provider":"Cloudflare",
+           "registrar_provider":"site.ac","website_host":"Pages",
+           "evidence_source":"manual","evidence_status":"unverified",
+           "mail_configured":false,"notes":"unverified user assertion"},
+          {"domain":"yues.blogu.tc","dns_provider":"duplicate"},
+          {"domain":"../../unsafe","dns_provider":"attacker"}
+        ]}""")
+        val inventory=AdminDomainInventoryModels.parse(body)
+        assertEquals(1,inventory.size)
+        assertFalse(inventory.first().mailConfigured)
+        assertEquals("Cloudflare",inventory.first().dnsProvider)
+        val rows=AdminDomainInventoryModels.combine(
+            listOf(AdminManagedDomain("yues.blogu.tc","网站域名","pending","Pages")),
+            inventory
+        )
+        assertEquals(2,rows.size)
+        assertEquals("托管库存",rows.last().source)
+        assertEquals("unverified",rows.last().state)
+        assertTrue(AdminDomainInventoryModels.parse(null).isEmpty())
+    }
+
 }
