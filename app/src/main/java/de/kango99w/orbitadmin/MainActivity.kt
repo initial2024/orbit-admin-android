@@ -2476,6 +2476,21 @@ class MainActivity : FragmentActivity() {
                 }
                 return@Column
             }
+            Row(modifier=Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal=12.dp,vertical=6.dp),
+                horizontalArrangement=Arrangement.spacedBy(7.dp)) {
+                listOf("mailboxes" to "邮箱",
+                    "domains" to "域名",
+                    "records" to "使用记录",
+                    "security" to "安全中心").forEach { (pane,label) ->
+                    OutlinedButton(enabled=!adminBusy,
+                        onClick={openAdminNativePane(pane)}) {
+                        Text((if(adminPane==pane) "✓ " else "") + label)
+                    }
+                }
+            }
+            HorizontalDivider()
             if (adminPane != "mailboxes") {
                 NativeAdminManagementContent()
                 return@Column
@@ -2622,9 +2637,25 @@ class MainActivity : FragmentActivity() {
                     singleLine=true,
                     modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp)
                 )
+                Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                    .padding(horizontal=12.dp,vertical=3.dp),
+                    horizontalArrangement=Arrangement.spacedBy(7.dp)) {
+                    listOf("全部","固定邮箱","临时邮箱").forEach { scope ->
+                        OutlinedButton(onClick={adminMailboxFilter=scope}) {
+                            Text((if(adminMailboxFilter==scope) "✓ " else "")+scope)
+                        }
+                    }
+                }
                 val query=adminSearchQuery.trim()
-                val boxes=if (query.isBlank()) adminMailboxes else
-                    adminMailboxes.filter { it.address.contains(query,ignoreCase=true) }
+                val boxes=adminMailboxes.filter { mailbox ->
+                    (query.isBlank() || mailbox.address.contains(query,ignoreCase=true)) &&
+                        (adminMailboxFilter=="全部" ||
+                            (adminMailboxFilter=="固定邮箱" && mailbox.privateMailbox) ||
+                            (adminMailboxFilter=="临时邮箱" && !mailbox.privateMailbox))
+                }
+                Text("匹配邮箱 ${boxes.size} / ${adminMailboxes.size}",
+                    modifier=Modifier.padding(horizontal=16.dp,vertical=5.dp),
+                    style=MaterialTheme.typography.labelSmall)
                 if (boxes.isEmpty() && !adminBusy) Text(
                     "暂无管理员邮箱，或尚未获得列表权限。",
                     modifier=Modifier.padding(20.dp))
@@ -2652,21 +2683,7 @@ class MainActivity : FragmentActivity() {
                         HorizontalDivider()
                     }
                 }
-                Row(modifier=Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement=Arrangement.SpaceEvenly) {
-                    TextButton(enabled=!adminBusy,
-                        onClick={openAdminNativePane("domains")}) {
-                        Text("域名")
-                    }
-                    TextButton(enabled=!adminBusy,
-                        onClick={openAdminNativePane("records")}) {
-                        Text("使用记录")
-                    }
-                    TextButton(enabled=!adminBusy,
-                        onClick={openAdminNativePane("security")}) {
-                        Text("安全中心")
-                    }
-                }
+
             }
         }
     }
