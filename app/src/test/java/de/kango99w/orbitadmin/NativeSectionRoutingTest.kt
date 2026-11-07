@@ -27,6 +27,21 @@ class NativeSectionRoutingTest {
         assertNull(NativeSectionRouting.explicitWebsiteTarget("https://inbox.kango99w.de:444/admin/"))
     }
 
+    @Test fun missingSnapshotRefreshHasNoNavigationOrCredentialDuplication() {
+        val file = listOf(
+            File("src/main/java/de/kango99w/orbitadmin/MainActivity.kt"),
+            File("app/src/main/java/de/kango99w/orbitadmin/MainActivity.kt")
+        ).firstOrNull { it.isFile } ?: error("Android source missing")
+        val source = file.readText()
+        val method = source.substringAfter("private fun requestMissingNativeSnapshot() {")
+            .substringBefore("/** Only a tap on the native UI can send")
+        assertTrue(method.contains("nativeInbox != null"))
+        assertTrue(method.contains("15_000L"))
+        assertTrue(method.contains("sendNativeMailboxCommand(\"refresh\")"))
+        assertFalse(method.contains("loadUrl("))
+        assertFalse(method.contains("CookieManager"))
+    }
+
     @Test fun tabSwitchesCannotLoadHtmlAndAdminTransferWebviewsAreLazy() {
         val file = listOf(
             File("src/main/java/de/kango99w/orbitadmin/MainActivity.kt"),
