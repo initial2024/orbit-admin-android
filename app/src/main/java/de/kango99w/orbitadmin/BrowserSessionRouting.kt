@@ -6,6 +6,7 @@ object BrowserSessionRouting {
         MailSection.INBOX, MailSection.MAILBOXES -> MailSection.INBOX
         MailSection.TRANSFER -> MailSection.TRANSFER
         MailSection.ADMIN -> MailSection.ADMIN
+        MailSection.PRIVATE -> MailSection.PRIVATE
         MailSection.SETTINGS -> MailSection.SETTINGS
     }
 }
