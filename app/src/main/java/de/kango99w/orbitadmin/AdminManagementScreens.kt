@@ -86,7 +86,8 @@ fun AdminDomainManagement(
             }
             items(filtered) { item ->
                 AdminSummaryCard(glyph=item.domain.take(1).uppercase(),
-                    primary=item.domain,secondary=item.source+" · "+item.state,
+                    primary=item.domain,secondary=if(item.source=="托管库存")
+                        "证据状态 · "+item.state else item.source+" · "+item.state,
                     detail=if(item.ingress.isBlank()) "查看域名详情 ›"
                         else item.ingress+" · 详情 ›",
                     onClick={onSelect(item)})
