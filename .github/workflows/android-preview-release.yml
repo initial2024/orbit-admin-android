@@ -4,6 +4,7 @@ on:
     branches: [feat/secure-admin-shell-v0-20261107]
     paths:
       - ".github/workflows/android-preview-release.yml"
+      - "app/**"
   workflow_dispatch:
     inputs:
       acknowledgement:
@@ -64,6 +65,7 @@ jobs:
           unzip -t "$ZIP" >/dev/null
           TAG="orbit-mail-v${VERSION}-${GITHUB_SHA:0:12}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "apk=$NAME" >> "$GITHUB_OUTPUT"
           echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
@@ -74,6 +76,7 @@ jobs:
           APK: ${{ steps.seal.outputs.apk }}
           CHECKSUM: ${{ steps.seal.outputs.sha }}
           ZIP: ${{ steps.seal.outputs.zip }}
+          VERSION: ${{ steps.seal.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -84,7 +87,7 @@ jobs:
           gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" \
             --target "$GITHUB_SHA" \
             --title "Orbit Mail $TAG (debug test)" \
-            --notes "v0.9.0-dev DEBUG / PRERELEASE ONLY. Native Kotlin Compose login, one-password plus one-time TOTP, Keystore bound signed read and expiry recovery. Includes APK and ZIP with SHA256; Android 35 Keystore instrumentation and JVM tests passed. Backend native-login PR #620 is still Draft and NOT deployed to production, so real account sign-in and mail creation/attachments/transfers/admin/push are not end-to-end accepted. Uninstall clears test credentials." \
+            --notes "$VERSION DEBUG / PRERELEASE ONLY. Kotlin Compose native ordinary-account login and a distinct administrator entry; local-vs-server HTTP 400 diagnostics and Keystore signed account reads. Administrator authentication remains independently enforced by the protected website and is NOT a native administrator API; website WebViews still share the app-level cookie store. Backend native-login PR #620 remains Draft and NOT deployed to production, so real account sign-in and inbox/admin features have NOT passed end-to-end acceptance. Test APK may need reinstall if debug signing differs." \
             --prerelease
           echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
           echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
