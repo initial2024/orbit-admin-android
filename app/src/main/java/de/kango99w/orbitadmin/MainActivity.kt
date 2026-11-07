@@ -39,6 +39,10 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Column
@@ -503,145 +507,167 @@ class MainActivity : FragmentActivity() {
     private fun openNativeMailbox(id: String) {
         if (!NativeInboxPolicy.isSafeId(id)) return
         showNativeMail = false
-        val base = MailSection.MAILBOXES.address?.substringBefore("#") ?: return
-        val url = "${base}#orbit-mailbox-${id}"
-        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
+        val base = MailSection.MAILBOXE    @Composable
+    private fun MailAvatar(label: String, sizeDp: Int = 44) {
+        val initial = label.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "✉"
+        Box(
+            modifier = Modifier.size(sizeDp.dp)
+                .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(initial,style=MaterialTheme.typography.titleMedium,
+                color=MaterialTheme.colorScheme.onSecondaryContainer)
+        }
     }
 
     @Composable
     private fun NativeInboxContent(snapshot: NativeInboxSnapshot, showMailboxes: Boolean) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    if (showMailboxes) "我的邮箱 · ${snapshot.mailboxes.size}" else "收件箱 · ${snapshot.messages.size}",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (showMailboxes) {
-                        TextButton(onClick = {
-                            nativeCreateDomain = snapshot.selectedDomain
-                            nativeCreateLocal = ""
-                            showCreateMailbox = true
-                        }) { Text("＋新建") }
-                    }
-                    TextButton(onClick = { sendNativeMailboxCommand("refresh") }) { Text("刷新") }
-                    TextButton(onClick = { webLoginInProgress = false; showNativeMail = false }) {
-                        Text("网页")
-                    }
+        val query = nativeSearchQuery.trim()
+        val mailboxes = if (query.isEmpty()) snapshot.mailboxes else
+            snapshot.mailboxes.filter { it.address.contains(query,ignoreCase=true) }
+        val mails = if (query.isEmpty()) snapshot.messages else
+            snapshot.messages.filter { it.sender.contains(query,ignoreCase=true) ||
+                it.subject.contains(query,ignoreCase=true) }
+        Column(modifier=Modifier.fillMaxSize()) {
+            // Standard inbox layout: active account, search, summary, and
+            // full-width tappable rows rather than multiple web-like panels.
+            Row(modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=12.dp),
+                horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+                Column(modifier=Modifier.weight(1f)) {
+                    Text(if (showMailboxes) "邮箱管理" else "收件箱",
+                        style=MaterialTheme.typography.headlineSmall)
+                    Text(snapshot.currentAddress.ifBlank { "尚未选择邮箱" },
+                        maxLines=1,style=MaterialTheme.typography.bodySmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(13.dp)) {
-                    Text(snapshot.currentAddress, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        if (snapshot.locked) "受保护邮箱：请在网页中完成二次解锁"
-                        else "只读原生列表 · 内容来自当前已认证的网站",
-                        style = MaterialTheme.typography.labelSmall
-                    )
+                TextButton(onClick={ sendNativeMailboxCommand("refresh") }) {
+                    Icon(painterResource(R.drawable.ic_refresh),contentDescription="刷新")
+                    Text("刷新")
                 }
+                if (showMailboxes) TextButton(onClick={
+                    nativeCreateDomain=snapshot.selectedDomain
+                    nativeCreateLocal=""
+                    showCreateMailbox=true
+                }) { Text("＋ 新建") }
             }
             OutlinedTextField(
-                value = nativeSearchQuery,
-                onValueChange = { nativeSearchQuery = it.take(80) },
-                label = { Text(if (showMailboxes) "搜索当前邮箱列表" else "搜索当前加载的邮件") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                value=nativeSearchQuery,
+                onValueChange={nativeSearchQuery=it.take(80)},
+                label={Text(if(showMailboxes) "搜索邮箱地址" else "搜索发件人或主题")},
+                leadingIcon={Icon(painterResource(R.drawable.ic_mail),contentDescription=null)},
+                singleLine=true,
+                modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp)
             )
-            val query = nativeSearchQuery.trim()
-            val visibleMailboxes = if (query.isEmpty()) snapshot.mailboxes else
-                snapshot.mailboxes.filter { it.address.contains(query, ignoreCase = true) }
-            val visibleMessages = if (query.isEmpty()) snapshot.messages else
-                snapshot.messages.filter {
-                    it.sender.contains(query, ignoreCase = true) ||
-                        it.subject.contains(query, ignoreCase = true)
-                }
+            Row(modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=12.dp,top=7.dp,bottom=6.dp),
+                horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+                Text(
+                    if (showMailboxes) "已保存邮箱 · ${mailboxes.size}"
+                    else "当前邮箱 · ${mails.size} 封",
+                    style=MaterialTheme.typography.labelLarge,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick={
+                    if(showMailboxes) openSection(MailSection.INBOX)
+                    else openSection(MailSection.MAILBOXES)
+                }) { Text(if(showMailboxes) "返回收件箱" else "切换邮箱") }
+            }
+            HorizontalDivider()
             if (showMailboxes) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(visibleMailboxes, key = { it.id }) { mailbox ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(mailbox.address, style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        if (mailbox.id == snapshot.currentId) "当前使用"
-                                        else if (mailbox.isProtected) "受保护邮箱" else "已保存邮箱",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                                Column {
-                                    TextButton(onClick = {
-                                        if (sendNativeMailboxCommand("select_mailbox",mailbox.id))
-                                            openSection(MailSection.INBOX)
-                                    }) { Text("收件箱") }
-                                    TextButton(onClick = { copyMailboxAddress(mailbox.address) }) { Text("复制") }
-                                    TextButton(onClick = { openNativeMailbox(mailbox.id) }) { Text("管理") }
-                                }
+                LazyColumn(modifier=Modifier.fillMaxSize()) {
+                    items(mailboxes,key={it.id}) { mailbox ->
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .clickable {
+                                if (sendNativeMailboxCommand("select_mailbox",mailbox.id))
+                                    openSection(MailSection.INBOX)
+                            }.padding(horizontal=16.dp,vertical=11.dp),
+                            verticalAlignment=Alignment.CenterVertically) {
+                            MailAvatar(mailbox.address,44)
+                            Spacer(Modifier.padding(horizontal=7.dp))
+                            Column(modifier=Modifier.weight(1f)) {
+                                Text(mailbox.address,maxLines=1,style=MaterialTheme.typography.titleSmall)
+                                Text(when {
+                                    mailbox.id==snapshot.currentId -> "当前邮箱"
+                                    mailbox.isProtected -> "受保护邮箱"
+                                    else -> "点击切换到此邮箱"
+                                },style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            TextButton(onClick={copyMailboxAddress(mailbox.address)}) { Text("复制") }
+                            TextButton(onClick={openNativeMailbox(mailbox.id)}) { Text("管理") }
                         }
+                        HorizontalDivider()
                     }
                     item {
-                        OutlinedButton(onClick = {
-                            nativeCreateDomain = snapshot.selectedDomain
-                            nativeCreateLocal = ""
-                            showCreateMailbox = true
-                        }, modifier = Modifier.fillMaxWidth()) { Text("＋ 原生创建邮箱") }
-                        TextButton(onClick = {
-                            webLoginInProgress = false
-                            showNativeMail = false
-                            publicWebView()?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
-                        }) { Text("受保护邮箱 / 高级设置") }
+                        Column(modifier=Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Button(onClick={
+                                nativeCreateDomain=snapshot.selectedDomain
+                                nativeCreateLocal=""
+                                showCreateMailbox=true
+                            },modifier=Modifier.fillMaxWidth()) { Text("＋ 创建邮箱") }
+                            TextButton(onClick={
+                                showNativeMail=false
+                                publicWebView()?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+                            }) { Text("受保护设置及高级管理（网页授权）") }
+                        }
                     }
                 }
             } else if (snapshot.locked) {
-                Button(onClick = { showNativeMail = false }) { Text("解锁受保护邮箱") }
+                Column(modifier=Modifier.fillMaxWidth().padding(22.dp),
+                    verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Text("此邮箱已启用额外保护",style=MaterialTheme.typography.titleMedium)
+                    Text("需完成网站原有的邮箱解锁验证才能读取邮件。")
+                    Button(onClick={showNativeMail=false}) { Text("验证并解锁邮箱") }
+                }
             } else if (snapshot.messages.isEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("暂无已加载邮件。应用在网页成功读取后更新原生列表。")
-                    Row {
-                        TextButton(onClick = {
-                            nativeCreateDomain = snapshot.selectedDomain
-                            nativeCreateLocal = ""
-                            showCreateMailbox = true
-                        }) { Text("创建邮箱") }
-                        OutlinedButton(onClick = { showNativeMail = false }) { Text("完整网页") }
+                Column(modifier=Modifier.fillMaxWidth().padding(24.dp),
+                    horizontalAlignment=Alignment.CenterHorizontally,
+                    verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Spacer(Modifier.height(24.dp))
+                    Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
+                        tint=MaterialTheme.colorScheme.primary)
+                    Text("暂无邮件",style=MaterialTheme.typography.titleLarge)
+                    Text("邮件将显示在这里。可刷新或切换邮箱。",
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick={sendNativeMailboxCommand("refresh")}) {
+                        Text("检查新邮件")
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    items(visibleMessages, key = { it.id }) { messageItem ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                                Text(messageItem.sender.ifBlank { "未知发件人" },
-                                    style = MaterialTheme.typography.titleSmall)
-                                Text(messageItem.subject.ifBlank { "（无主题）" },
-                                    style = MaterialTheme.typography.bodyMedium)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(messageItem.receivedAt.take(19),
-                                        style = MaterialTheme.typography.labelSmall)
-                                    TextButton(onClick = { openNativeMessage(messageItem.id) }) {
-                                        Text("阅读")
-                                    }
+                LazyColumn(modifier=Modifier.fillMaxSize()) {
+                    items(mails,key={it.id}) { mail ->
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .clickable { openNativeMessage(mail.id) }
+                            .padding(horizontal=16.dp,vertical=13.dp),
+                            verticalAlignment=Alignment.Top) {
+                            MailAvatar(mail.sender,45)
+                            Spacer(Modifier.padding(horizontal=7.dp))
+                            Column(modifier=Modifier.weight(1f),
+                                verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                                Row(modifier=Modifier.fillMaxWidth(),
+                                    horizontalArrangement=Arrangement.SpaceBetween) {
+                                    Text(mail.sender.ifBlank{"未知发件人"},maxLines=1,
+                                        style=MaterialTheme.typography.titleSmall,
+                                        modifier=Modifier.weight(1f))
+                                    Text(mail.receivedAt.take(16),
+                                        style=MaterialTheme.typography.labelSmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text(mail.subject.ifBlank{"（无主题）"},maxLines=2,
+                                    style=MaterialTheme.typography.bodyMedium)
+                                Text("点击阅读邮件",
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+
+                            }
                                 }
                             }
                         }
