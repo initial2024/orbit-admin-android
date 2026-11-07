@@ -32,10 +32,10 @@ class NativeAdminClientPolicyTest {
             "kango_admin_trusted_device=trusted"
         val selected=NativeAdminClient.adminCookies(raw)
         assertEquals("kango_admin_session=admin-token; " +
-            "kango_admin_2fa_challenge=challenge; " +
-            "kango_admin_trusted_device=trusted",selected)
+            "kango_admin_2fa_challenge=challenge",selected)
         assertFalse(selected.contains("kango_site_access"))
         assertFalse(selected.contains("foo=bar"))
+        assertFalse(selected.contains("kango_admin_trusted_device"))
         assertEquals("", NativeAdminClient.adminCookies("kango_site_access=user"))
     }
 
@@ -45,6 +45,8 @@ class NativeAdminClientPolicyTest {
         assertTrue(NativeAdminClient.mayPersistCookie(
             "kango_admin_2fa_challenge=abc; Path=/api/admin; HttpOnly; Secure; SameSite=Strict"))
         assertFalse(NativeAdminClient.mayPersistCookie("kango_site_access=x; Path=/"))
+        assertFalse(NativeAdminClient.mayPersistCookie(
+            "kango_admin_trusted_device=x; Path=/api/admin; HttpOnly; Secure; SameSite=Strict"))
         assertFalse(NativeAdminClient.mayPersistCookie("evil=x; Path=/"))
         assertFalse(NativeAdminClient.mayPersistCookie(
             "kango_admin_session=x; Domain=.kango99w.de; Path=/; HttpOnly; Secure; SameSite=Strict"))
