@@ -319,13 +319,8 @@ class MainActivity : FragmentActivity() {
 
     /** Only a deliberate "website" action opens first-party HTML. */
     private fun navigateTo(url: String) {
-        if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url)) return
-        val parsed = try { java.net.URI(url) } catch (_: Exception) { return }
-        val target = when {
-            parsed.path == "/transfer/" || parsed.path == "/transfer" -> MailSection.TRANSFER
-            parsed.path == "/" -> MailSection.INBOX
-            else -> MailSection.ADMIN
-        }
+        if (!unlocked) return
+        val target = NativeSectionRouting.explicitWebsiteTarget(url) ?: return
         val oldKey = BrowserSessionRouting.key(activeSection)
         val nextKey = BrowserSessionRouting.key(target)
         if (oldKey != nextKey) browser?.onPause()
