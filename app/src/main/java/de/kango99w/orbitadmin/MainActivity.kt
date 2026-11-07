@@ -1585,6 +1585,9 @@ class MainActivity : FragmentActivity() {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("管理员邮箱", style = MaterialTheme.typography.headlineSmall)
+                    Text("原生 Android · " + BuildConfig.VERSION_NAME,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary)
                     Text(if (adminAuthenticated)
                         "管理员：${adminUsername.ifBlank { "已验证" }}"
                         else "独立管理员身份验证",
@@ -2084,7 +2087,8 @@ class MainActivity : FragmentActivity() {
                             Spacer(Modifier.padding(horizontal=6.dp))
                             Column {
                                 Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
-                                Text(if(nativeTab) "原生客户端 · " + activeSection.label else "网站授权 · " + activeSection.label,
+                                Text(if(nativeTab) "原生 Compose · " + BuildConfig.VERSION_NAME + " · " + activeSection.label
+                                    else "网站视图 · " + BuildConfig.VERSION_NAME + " · " + activeSection.label,
                                     style=MaterialTheme.typography.labelSmall,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -2140,8 +2144,7 @@ class MainActivity : FragmentActivity() {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Each WebView is mounted only after the section's first visit,
                     // then remains attached and retains its DOM/session across tabs.
-                    if ((publicSelected && !nativeVisible) ||
-                        sectionBrowsers.containsKey(MailSection.INBOX)) AndroidView(
+                    if (publicSelected && !nativeVisible) AndroidView(
                         factory = { obtainBrowser(MailSection.INBOX) },
                         update = {
                             it.visibility = if (publicSelected && !nativeVisible) View.VISIBLE else View.INVISIBLE
@@ -2150,8 +2153,7 @@ class MainActivity : FragmentActivity() {
                             if (publicSelected && !nativeVisible) 1f else 0f
                         )
                     )
-                    if (transferWebVisible ||
-                        sectionBrowsers.containsKey(MailSection.TRANSFER)) {
+                    if (transferWebVisible) {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.TRANSFER) },
                             update = {
@@ -2162,8 +2164,7 @@ class MainActivity : FragmentActivity() {
                             )
                         )
                     }
-                    if (adminWebVisible ||
-                        sectionBrowsers.containsKey(MailSection.ADMIN)) {
+                    if (adminWebVisible) {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.ADMIN) },
                             update = {
