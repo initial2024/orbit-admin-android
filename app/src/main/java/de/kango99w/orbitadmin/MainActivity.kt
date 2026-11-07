@@ -1360,7 +1360,10 @@ class MainActivity : FragmentActivity() {
                     adminSelectedMessage = null
                     adminSelectedMessageId = null
                     adminMessages = emptyList()
-                    adminTotpRequired = false
+                    // /status returns unauthenticated while a password-verified
+                    // admin 2FA challenge is pending. Do not silently reset the
+                    // challenge whenever the user reopens the native admin tab.
+                    if (status.status != 200) adminTotpRequired = false
                     adminError = if (status.status == 200) ""
                         else "管理员状态校验失败：HTTP ${status.status}；不会调用普通账号接口。"
                 } else if (!valid) {
