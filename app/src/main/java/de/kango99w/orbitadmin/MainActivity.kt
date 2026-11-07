@@ -1096,6 +1096,7 @@ class MainActivity : FragmentActivity() {
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
         }
+        CookieManager.getInstance().setAcceptCookie(true)
         val view = WebView(this)
         WebView.setWebContentsDebuggingEnabled(false)
         view.settings.apply {
@@ -1257,8 +1258,10 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (url != null && AdminUrlPolicy.isTrustedMainFrame(url)) {
+                if (url != null && AdminUrlPolicy.isTrustedMainFrame(url) &&
+                    BrowserSessionRouting.key(activeSection) == key) {
                     message = ""
+                    CookieManager.getInstance().flush()
                 }
             }
 
@@ -1270,7 +1273,8 @@ class MainActivity : FragmentActivity() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     if (key == MailSection.INBOX) nativeInbox = null
-                    message = "页面加载失败，请检查网络后重试。"
+                    if (BrowserSessionRouting.key(activeSection) == key)
+                        message = "页面加载失败，请检查网络后重试。"
                 }
             }
 
@@ -1359,6 +1363,10 @@ class MainActivity : FragmentActivity() {
         } else {
             lock()
         }
+        // Persist the website's first-party HttpOnly session cookies even if
+        // Android later kills the process. This does not share cookies with
+        // the user's ordinary browser or bypass server expiry/revocation.
+        CookieManager.getInstance().flush()
         super.onStop()
     }
 
