@@ -2,7 +2,7 @@
 
 Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
 
-**Status: experimental debug build; not a production release. Android v0.3.1-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
+**Status: experimental debug build; not a production release. Android v0.4.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
 ## Authentication
 
@@ -15,6 +15,10 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 ## Android size optimization
 
 v0.3.1 removes the full Compose material-icons-extended dependency and uses nine small local vector drawables instead. This avoids tens of megabytes of unused debug DEX resources while keeping the same mail-first navigation.
+
+## Android v0.4 native inbox preview
+
+Public mail now has native Compose **read-only mailbox and message preview lists**, populated with a bounded, strictly validated snapshot from the currently authenticated first-party website. The native app never copies cookies or API credentials. Message reading remains on the original website, selected only if the ID is in its already-authorized list. Admin mail and attachments remain web-based; real background push is not available.
 
 ## Android v0.3 mail-first layout
 
