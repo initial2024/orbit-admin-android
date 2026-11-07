@@ -46,6 +46,12 @@ fun NativeMailReadingContent(
     val color=MaterialTheme.colorScheme.onSurface.toArgb()
     val html=htmlBody.take(16000)
     val text=plainText.take(16000)
+    // Reuse parsed Spanned formatting across checkbox, notice and link-dialog
+    // recompositions; reparsing a large MIME body on every click caused jank.
+    val styledBody=remember(messageKey,html) {
+        try { Html.fromHtml(html,Html.FROM_HTML_MODE_COMPACT) }
+        catch (_: Exception) { text }
+    }
 
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -70,8 +76,10 @@ fun NativeMailReadingContent(
                 update={view ->
                     view.setTextColor(color)
                     // Sanitized first-party HTML: native spans only, never a WebView.
-                    view.text=try { Html.fromHtml(html,Html.FROM_HTML_MODE_COMPACT) }
-                        catch (_: Exception) { text }
+                    if(view.tag !== styledBody) {
+                        view.text=styledBody
+                        view.tag=styledBody
+                    }
                 }
             )
         } else SelectionContainer {
