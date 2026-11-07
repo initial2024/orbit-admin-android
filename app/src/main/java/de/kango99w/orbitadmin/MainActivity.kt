@@ -83,6 +83,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import androidx.webkit.WebMessageCompat
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 
 /**
  * Local device authentication gates visibility. The existing website, and only the
@@ -115,8 +117,19 @@ class MainActivity : FragmentActivity() {
     private var pickerLaunchedAtMs = 0L
     private val notificationChannelId = "orbit_mail_notice"
     private var lastNewMailNoticeAtMs = 0L
+    private var backgroundPushOptIn by mutableStateOf(false)
+    private var backgroundPushStatus by mutableStateOf("未启用")
+    private var lastPushAttemptAtMs = 0L
 
     private lateinit var biometricPrompt: BiometricPrompt
+
+    private val pushPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                setPushOptIn(true)
+                tryRegisterPush()
+            } else backgroundPushStatus = "未授予通知权限，设备未登记。"
+        }
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
@@ -168,6 +181,9 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
+        backgroundPushOptIn = getSharedPreferences("orbit_push",MODE_PRIVATE)
+            .getBoolean("opt_in",false)
+        backgroundPushStatus = if (backgroundPushOptIn) "已授权，等待服务器确认" else "未启用"
 
         biometricPrompt = BiometricPrompt(
             this,
@@ -178,6 +194,7 @@ class MainActivity : FragmentActivity() {
                     message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
+                    tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
                         deferredFileUris = null
@@ -326,6 +343,79 @@ class MainActivity : FragmentActivity() {
             web, WebMessageCompat(packet.toString()), Uri.parse("https://inbox.kango99w.de")
         )
         return true
+    }
+
+    private fun setPushOptIn(value: Boolean) {
+        backgroundPushOptIn = value
+        getSharedPreferences("orbit_push",MODE_PRIVATE).edit().putBoolean("opt_in",value).apply()
+    }
+
+    private fun pushInstallationId(): String {
+        val prefs = getSharedPreferences("orbit_push",MODE_PRIVATE)
+        val current = prefs.getString("installation_id",null)
+        if (current != null && Regex("^[A-Za-z0-9_-]{16,72}$").matches(current)) return current
+        val generated = java.util.UUID.randomUUID().toString().replace("-","")
+        prefs.edit().putString("installation_id",generated).apply()
+        return generated
+    }
+
+    private fun sendPushAction(action: String, token: String? = null): Boolean {
+        val web = browser ?: return false
+        if (!unlocked || !isCurrentPublicMailDocument() ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) return false
+        if (action !in setOf("push_register","push_revoke")) return false
+        val packet = org.json.JSONObject().put("v",1).put("action",action)
+            .put("installation_id",pushInstallationId())
+        if (action == "push_register") {
+            if (token == null || token.length !in 40..4096 ||
+                !Regex("^[A-Za-z0-9:_~.\\-]{40,4096}$").matches(token)) return false
+            packet.put("token",token)
+        }
+        WebViewCompat.postWebMessage(
+            web,WebMessageCompat(packet.toString()),Uri.parse("https://inbox.kango99w.de")
+        )
+        return true
+    }
+
+    private fun tryRegisterPush() {
+        if (!backgroundPushOptIn || !OrbitPushConfig.configured ||
+            FirebaseApp.getApps(this).isEmpty() || !unlocked || !isCurrentPublicMailDocument()) return
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val stamp = SystemClock.elapsedRealtime()
+        if (lastPushAttemptAtMs != 0L && stamp-lastPushAttemptAtMs < 15*60*1000L) return
+        lastPushAttemptAtMs = stamp
+        FirebaseMessaging.getInstance().token
+            .addOnSuccessListener { token ->
+                if (!backgroundPushOptIn || !unlocked) return@addOnSuccessListener
+                backgroundPushStatus = if (sendPushAction("push_register",token))
+                    "设备登记已提交，等待服务器确认" else "需在已登录的普通收件箱登记设备"
+            }
+            .addOnFailureListener {
+                backgroundPushStatus = "设备令牌暂不可用；检查 Google Play 服务与网络。"
+            }
+    }
+
+    private fun requestBackgroundPush() {
+        if (!OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty()) {
+            backgroundPushStatus = "Firebase 项目未配置，暂不能启用后台通知。"
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pushPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            setPushOptIn(true)
+            tryRegisterPush()
+        }
+    }
+
+    private fun revokeBackgroundPush() {
+        if (!sendPushAction("push_revoke")) {
+            backgroundPushStatus = "请先进入已登录的普通收件箱，再撤销设备登记。"
+            return
+        }
+        backgroundPushStatus = "已请求服务器撤销，等待确认"
     }
 
     private fun copyMailboxAddress(address: String) {
@@ -672,6 +762,21 @@ class MainActivity : FragmentActivity() {
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp),verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("后台邮件推送（可选）",style = MaterialTheme.typography.titleMedium)
+                    Text("仅限绑定登录账号的邮箱，需 Firebase、服务器和通知权限。",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text(backgroundPushStatus,style = MaterialTheme.typography.bodySmall)
+                    if (backgroundPushOptIn) {
+                        OutlinedButton(onClick = ::revokeBackgroundPush) { Text("撤销本机推送授权") }
+                    } else {
+                        Button(onClick = ::requestBackgroundPush,enabled = OrbitPushConfig.configured) {
+                            Text(if (OrbitPushConfig.configured) "开启后台邮件提醒" else "Firebase 尚未配置")
+                        }
+                    }
+                }
+            }
             OutlinedButton(onClick = { openSection(previousWebSection) }) { Text("返回邮箱") }
             OutlinedButton(onClick = ::lock) { Text("锁定应用") }
             HorizontalDivider()
@@ -872,6 +977,29 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                view,"orbitMobilePushStatus",setOf("https://inbox.kango99w.de"),
+                WebViewCompat.WebMessageListener { sender, data, origin, mainFrame, _ ->
+                    if (data.type != WebMessageCompat.TYPE_STRING ||
+                        !NativeInboxPolicy.acceptsSource(
+                            origin.scheme,origin.host,origin.port,mainFrame,sender.url
+                        ) || data.data !in setOf("registered","revoked","disabled","error"))
+                        return@WebMessageListener
+                    runOnUiThread {
+                        when (data.data) {
+                            "registered" -> backgroundPushStatus = "服务器已登记本机后台提醒"
+                            "revoked" -> {
+                                setPushOptIn(false)
+                                backgroundPushStatus = "服务器已撤销本机设备授权"
+                            }
+                            "disabled" -> backgroundPushStatus = "服务器 FCM 推送尚未上线"
+                            "error" -> backgroundPushStatus = "服务器拒绝登记；检查账号与配置"
+                        }
+                    }
+                }
+            )
+        }
         // Separate read-only mirror: main-frame, exact origin, exact first-party
         // public mailbox route. No cookie/token exposure or native command handler.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
@@ -890,6 +1018,7 @@ class MainActivity : FragmentActivity() {
                             NativeInboxEvent.Clear -> nativeInbox = null
                             is NativeInboxEvent.Snapshot -> {
                                 nativeInbox = event.data
+                                tryRegisterPush()
                                 if (webLoginInProgress &&
                                     (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES)) {
                                     webLoginInProgress = false
@@ -1020,6 +1149,7 @@ class MainActivity : FragmentActivity() {
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
+            tryRegisterPush()
         }
     }
 
