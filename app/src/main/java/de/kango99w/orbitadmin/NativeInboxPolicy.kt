@@ -3,7 +3,7 @@ package de.kango99w.orbitadmin
 import org.json.JSONObject
 import java.net.URI
 
-data class NativeMailboxRow(val id: String, val address: String, val protected: Boolean)
+data class NativeMailboxRow(val id: String, val address: String, val isProtected: Boolean)
 data class NativeMailRow(val id: String, val sender: String, val subject: String, val receivedAt: String)
 data class NativeInboxSnapshot(
     val currentId: String,

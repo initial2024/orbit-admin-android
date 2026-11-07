@@ -323,7 +323,7 @@ class MainActivity : FragmentActivity() {
                                     Text(mailbox.address, style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         if (mailbox.id == snapshot.currentId) "当前使用"
-                                        else if (mailbox.protected) "受保护邮箱" else "已保存邮箱",
+                                        else if (mailbox.isProtected) "受保护邮箱" else "已保存邮箱",
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
