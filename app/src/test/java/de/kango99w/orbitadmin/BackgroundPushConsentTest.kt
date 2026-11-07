@@ -37,4 +37,22 @@ class BackgroundPushConsentTest {
         assertTrue(service.contains("BackgroundPushConsent.mayDeliver"))
         assertTrue(service.contains("getBoolean(\"revoke_pending\",false)"))
     }
+    @Test fun localDeviceClearAndSignedOutServiceMustNeverDisplayFCMMail() {
+        val sources = listOf(
+            File("src/main/java/de/kango99w/orbitadmin"),
+            File("app/src/main/java/de/kango99w/orbitadmin")
+        ).first { it.isDirectory }
+        val client = File(sources, "NativeDeviceClient.kt").readText()
+        val svc = File(sources, "OrbitFcmService.kt").readText()
+        val ui = File(sources, "MainActivity.kt").readText()
+        val clear = client.substringAfter("fun clearLocalBinding() {")
+            .substringBefore("/** Execute off the Android main thread")
+        assertTrue(clear.contains("pushPrefs.edit().putBoolean(\"opt_in\", false).commit()"))
+        assertTrue(clear.indexOf("putBoolean(\"opt_in\", false)") < clear.indexOf("deleteEntry(ALIAS)"))
+        assertTrue(svc.contains("NativeDeviceClient(applicationContext).isBound()"))
+        assertTrue(svc.contains("if (!bound) return"))
+        assertTrue(svc.contains("message.data != mapOf(\"kind\" to \"new_mail\")"))
+        assertTrue(ui.contains("backgroundPushStatus = \"本机通知已关闭"))
+    }
+
 }

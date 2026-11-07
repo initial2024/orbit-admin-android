@@ -1010,6 +1010,7 @@ class MainActivity : FragmentActivity() {
                         if (mailboxes.status == 401) {
                             // A revoked device must not trap the app in website login fallback.
                             nativeDeviceClient.clearLocalBinding()
+                            setPushOptIn(false)
                             nativeLoginPassword = ""
                             nativeLoginTotp = ""
                             nativeLoginError = "原设备授权已撤销或过期，请在原生界面重新登录。"
@@ -1137,6 +1138,10 @@ class MainActivity : FragmentActivity() {
             }
             runOnUiThread {
                 nativeApiLoading = false
+                if (revoked) {
+                    setPushOptIn(false)
+                    setPushRevokePending(false)
+                }
                 if (!unlocked) return@runOnUiThread
                 message = if (revoked) "服务器已撤销此 Android 设备授权，本机退出原生邮箱。"
                     else "服务器撤销失败（HTTP ${response.status}）。本机密钥保留，可重试；请勿误认为已解绑。"
@@ -3347,9 +3352,11 @@ class MainActivity : FragmentActivity() {
                         OutlinedButton(onClick = {
                             nativeRequestGeneration.incrementAndGet()
                             nativeDeviceClient.clearLocalBinding()
+                            setPushOptIn(false)
                             nativeApiActive = false
                             nativeInbox = null
-                            message = "仅本机密钥已清除；须进入网站设备管理撤销服务器授权。"
+                            backgroundPushStatus = "本机通知已关闭；服务器设备登记仍须单独撤销。"
+                            message = "仅本机密钥与通知许可已清除；须在网站设备管理撤销服务器授权。"
                         }) { Text("只清除本机设备凭据") }
                     }
                     OutlinedButton(onClick = {

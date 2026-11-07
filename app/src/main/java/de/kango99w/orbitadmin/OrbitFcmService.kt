@@ -30,6 +30,11 @@ class OrbitFcmService : FirebaseMessagingService() {
         if (!BackgroundPushConsent.mayDeliver(
                 consent.getBoolean("opt_in",false),
                 consent.getBoolean("revoke_pending",false))) return
+        // Protect a cleared/signed-out device even when an in-flight FCM event
+        // arrives after the local Keystore key has been removed.
+        val bound = try { NativeDeviceClient(applicationContext).isBound() }
+                    catch (_: Exception) { false }
+        if (!bound) return
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val manager=getSystemService(NOTIFICATION_SERVICE) as NotificationManager

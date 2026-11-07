@@ -22,6 +22,7 @@ import javax.net.ssl.HttpsURLConnection
  */
 class NativeDeviceClient(context: Context) {
     private val prefs = context.getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE)
+    private val pushPrefs = context.getSharedPreferences("orbit_push", Context.MODE_PRIVATE)
     companion object {
         private const val ALIAS = "orbit_mail_device_p256_v1"
         private const val ORIGIN = "https://inbox.kango99w.de"
@@ -186,6 +187,9 @@ class NativeDeviceClient(context: Context) {
     fun localExpiry(): Long = prefs.getLong("expires_at", 0L)
 
     fun clearLocalBinding() {
+        // Local-only sign-out cannot prove server revocation. Immediately disable
+        // delivery on this device even if a remote FCM registration still exists.
+        pushPrefs.edit().putBoolean("opt_in", false).commit()
         prefs.edit().clear().commit()
         keyStore().deleteEntry(ALIAS)
     }
