@@ -19,6 +19,24 @@ class WorkspaceNavigationContractTest {
         assertTrue(WorkspaceNavigation.adminTabs.contains(AdminDestinationTab.SECURITY))
     }
 
+    @Test fun selectorIsCollapsedByDefaultAndClosesAfterSelectionOrBack() {
+        val source = listOf(
+            File("src/main/java/de/kango99w/orbitadmin/MainActivity.kt"),
+            File("app/src/main/java/de/kango99w/orbitadmin/MainActivity.kt")
+        ).first(File::isFile).readText()
+        assertTrue(source.contains("private var workspaceSwitcherExpanded by mutableStateOf(false)"))
+        assertTrue(source.contains("onClick={workspaceSwitcherExpanded = !workspaceSwitcherExpanded}"))
+        assertTrue(source.contains("if(workspaceSwitcherExpanded) {"))
+        assertTrue(source.contains("workspaceSwitcherExpanded -> workspaceSwitcherExpanded = false"))
+        val switcher = source.substringAfter("private fun switchWorkspace(next: MailWorkspace) {")
+            .substringBefore("private fun selectAdminNavigation(")
+        assertTrue(switcher.contains("workspaceSwitcherExpanded = false"))
+        assertTrue(switcher.indexOf("workspaceSwitcherExpanded = false") <
+            switcher.indexOf("if (workspace == next) return"))
+        assertFalse(switcher.contains("nativeDeviceClient.logout"))
+        assertFalse(switcher.contains("adminAuthenticated = true"))
+    }
+
     @Test fun switchingWorkspaceMustNotReuseTheOtherAccountSession() {
         val source = listOf(
             File("src/main/java/de/kango99w/orbitadmin/MainActivity.kt"),
