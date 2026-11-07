@@ -36,11 +36,19 @@ class NativeAdminClient {
             "^/api/admin/(?:pieterj-mail|ordinary-inbox)/mailboxes/$UUID/messages(?:/$UUID)?$"
         )
         private val PRIVATE_MESSAGE = Regex("^/api/admin/pieterj-mail/messages/$UUID$")
+        private val PRIVATE_MAILBOX = Regex("^/api/admin/pieterj-mail/mailboxes/$UUID$")
+        private val ORDINARY_RENEW = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID/renew$")
+        private val ORDINARY_MAILBOX = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID$")
+        private val TRUSTED_REVOKE = Regex("^/api/admin/trusted-devices/$UUID/revoke$")
         private val GET_PATHS = setOf(
             "/api/admin/status",
             "/api/admin/pieterj-mail/mailboxes",
             "/api/admin/ordinary-inbox/mailboxes",
-            "/api/admin/ordinary-inbox/domains"
+            "/api/admin/ordinary-inbox/domains",
+            "/api/admin/ordinary-inbox/recorded-addresses",
+            "/api/admin/pieterj-mail/status",
+            "/api/admin/trusted-devices",
+            "/api/admin/2fa/status"
         )
         private val POST_PATHS = setOf(
             "/api/admin/login", "/api/admin/login/totp", "/api/admin/logout",
@@ -53,7 +61,10 @@ class NativeAdminClient {
             return when (method) {
                 "GET" -> path in GET_PATHS || MAILBOX_MESSAGES.matches(path) ||
                     PRIVATE_MESSAGE.matches(path)
-                "POST" -> path in POST_PATHS
+                "POST" -> path in POST_PATHS || ORDINARY_RENEW.matches(path) ||
+                    TRUSTED_REVOKE.matches(path)
+                "PATCH" -> PRIVATE_MAILBOX.matches(path)
+                "DELETE" -> PRIVATE_MAILBOX.matches(path) || ORDINARY_MAILBOX.matches(path)
                 else -> false
             }
         }
@@ -87,6 +98,9 @@ class NativeAdminClient {
     fun get(path: String, epoch: Long): Reply = send("GET", path, null, epoch)
     fun post(path: String, body: JSONObject = JSONObject(), epoch: Long): Reply =
         send("POST", path, body, epoch)
+    fun patch(path: String, body: JSONObject, epoch: Long): Reply =
+        send("PATCH", path, body, epoch)
+    fun delete(path: String, epoch: Long): Reply = send("DELETE", path, null, epoch)
 
     private fun send(method: String, path: String, body: JSONObject?, epoch: Long): Reply {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Admin HTTPS on main thread" }
@@ -109,13 +123,15 @@ class NativeAdminClient {
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Cache-Control", "no-store")
             if (cookies.isNotBlank()) connection.setRequestProperty("Cookie", cookies)
-            if (method == "POST") {
+            if (method != "GET") {
                 connection.setRequestProperty("Origin", ORIGIN)
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.doOutput = true
-                val payload = bytes ?: "{}".toByteArray(Charsets.UTF_8)
-                connection.setFixedLengthStreamingMode(payload.size)
-                connection.outputStream.use { it.write(payload) }
+                if (method == "POST" || method == "PATCH") {
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.doOutput = true
+                    val payload = bytes ?: "{}".toByteArray(Charsets.UTF_8)
+                    connection.setFixedLengthStreamingMode(payload.size)
+                    connection.outputStream.use { it.write(payload) }
+                }
             }
             val code = connection.responseCode
             // Accept only the three administrator cookie names from the exact
