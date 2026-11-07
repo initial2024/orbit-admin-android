@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Signing keys are supplied only at protected release time. They are never checked in.
+val orbitReleaseKeystoreFile = System.getenv("ORBIT_RELEASE_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+val orbitReleaseKeystorePassword = System.getenv("ORBIT_RELEASE_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val orbitReleaseKeyAlias = System.getenv("ORBIT_RELEASE_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val orbitReleaseKeyPassword = System.getenv("ORBIT_RELEASE_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val orbitReleaseSigningReady = listOf(
+    orbitReleaseKeystoreFile, orbitReleaseKeystorePassword,
+    orbitReleaseKeyAlias, orbitReleaseKeyPassword
+).all { it != null }
+
 android {
     namespace = "de.kango99w.orbitadmin"
     compileSdk = 36
@@ -25,8 +35,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("orbitRelease") {
+            if (orbitReleaseSigningReady) {
+                storeFile = file(requireNotNull(orbitReleaseKeystoreFile))
+                storePassword = requireNotNull(orbitReleaseKeystorePassword)
+                keyAlias = requireNotNull(orbitReleaseKeyAlias)
+                keyPassword = requireNotNull(orbitReleaseKeyPassword)
+            }
+        }
+    }
     buildTypes {
         release {
+            // No environment secrets = unsigned release; publishing must reject it.
+            if (orbitReleaseSigningReady)
+                signingConfig = signingConfigs.getByName("orbitRelease")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
