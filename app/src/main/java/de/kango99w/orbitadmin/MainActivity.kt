@@ -1697,6 +1697,8 @@ class MainActivity : FragmentActivity() {
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
+                    adminPane = "mailboxes"
+                    adminDeleteTarget = null
                     adminError = "管理员会话已过期，需要独立管理员验证。"
                     return@runOnUiThread
                 }
@@ -1819,7 +1821,7 @@ class MainActivity : FragmentActivity() {
                         modifier=Modifier.padding(15.dp),
                         style=MaterialTheme.typography.bodySmall)
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(adminRecordedAddresses, key={it.address}) { record ->
+                        items(adminRecordedAddresses) { record ->
                             Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
                                 Text(record.address,style=MaterialTheme.typography.titleSmall)
                                 Text(record.source + " · " +
@@ -2292,10 +2294,13 @@ class MainActivity : FragmentActivity() {
                             message = "仅本机密钥已清除；须进入网站设备管理撤销服务器授权。"
                         }) { Text("只清除本机设备凭据") }
                     }
-                    OutlinedButton(onClick = { openAdvancedAdminWebsite(AdminDestination.SECURITY.address) }) {
+                    OutlinedButton(onClick = {
+                        openSection(MailSection.ADMIN)
+                        if (adminAuthenticated) openAdminNativePane("security")
+                    }) {
                         Icon(painterResource(R.drawable.ic_shield), contentDescription = null)
                         Spacer(Modifier.padding(horizontal = 3.dp))
-                        Text("网站 2FA / 可信设备")
+                        Text("管理员 2FA / 可信设备（原生）")
                     }
                     OutlinedButton(onClick = { showClearConfirm = true }) { Text("清除 APK 本机网站数据") }
                     Text("清理本地数据不会撤销服务器上的管理员会话。",
