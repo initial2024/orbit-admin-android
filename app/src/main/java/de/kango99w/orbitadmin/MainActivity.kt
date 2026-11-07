@@ -260,6 +260,30 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+    private val privateMailFilePicker =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (!unlocked) return@registerForActivityResult
+            privateMailFiles = uris.take(3).mapNotNull { uri ->
+                try {
+                    if (uri.scheme != "content") return@mapNotNull null
+                    var name = "attachment"
+                    var size = -1L
+                    contentResolver.query(uri,
+                        arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,
+                            android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val n = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            val s = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                            if (n >= 0) name = cursor.getString(n)?.take(120) ?: name
+                            if (s >= 0 && !cursor.isNull(s)) size = cursor.getLong(s)
+                        }
+                    }
+                    if (size > 5L * 1024 * 1024) null
+                    else NativeSelectedFile(uri,name,size)
+                } catch (_: Exception) { null }
+            }
+        }
+
     private val pushPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
