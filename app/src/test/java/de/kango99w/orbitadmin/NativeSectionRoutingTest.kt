@@ -52,8 +52,15 @@ class NativeSectionRoutingTest {
             .substringBefore("private fun navigateTo(url: String)")
         assertFalse(open.contains("loadUrl("))
         assertTrue(open.contains("showNativeToolsPanel = true"))
-        assertTrue(source.contains("if (transferWebVisible ||"))
-        assertTrue(source.contains("if (adminWebVisible ||"))
+        // Cached WebViews must never be mounted as invisible AndroidViews over
+        // native Compose administrator screens. Only explicit web mode can.
+        assertTrue(source.contains("if (transferWebVisible) {"))
+        assertTrue(source.contains("if (adminWebVisible) {"))
+        assertFalse(source.contains("if (transferWebVisible ||"))
+        assertFalse(source.contains("if (adminWebVisible ||"))
+        assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.ADMIN)"))
+        assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.TRANSFER)"))
+        assertTrue(source.contains("BuildConfig.VERSION_NAME"))
         assertTrue(source.contains("NativeTransferContent()"))
         assertTrue(source.contains("NativeAdminContent()"))
         assertTrue(source.contains("NativeSectionRouting.explicitWebsiteTarget(url)"))
