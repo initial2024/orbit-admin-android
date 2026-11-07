@@ -499,6 +499,33 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Revocation is performed by signed request; failures never falsely claim success. */
+    private fun revokeNativeDeviceOnServer() {
+        if (!unlocked || !nativeDeviceClient.isBound() || nativeApiLoading) return
+        nativeRequestGeneration.incrementAndGet()
+        nativeApiLoading = true
+        nativeApiActive = false
+        nativeInbox = null
+        nativeMailDetail = null
+        pendingNativeMessageId = null
+        nativeIo.execute {
+            val response = nativeDeviceClient.revokeSelf()
+            val revoked = response.status == 200 && response.value?.optBoolean("revoked") == true
+            if (revoked) {
+                try { nativeDeviceClient.clearLocalBinding() } catch (_: Exception) {
+                    // Server revocation already succeeded. The stale device ID cannot authenticate.
+                }
+            }
+            runOnUiThread {
+                nativeApiLoading = false
+                if (!unlocked) return@runOnUiThread
+                message = if (revoked) "服务器已撤销此 Android 设备授权，本机退出原生邮箱。"
+                    else "服务器撤销失败（HTTP ${response.status}）。本机密钥保留，可重试；请勿误认为已解绑。"
+                nativeApiNotice = message
+            }
+        }
+    }
+
     /** Explicit user action only: website performs session-bound password/TOTP verification. */
     private fun submitNativePair() {
         val web = publicWebView()
@@ -1231,12 +1258,17 @@ class MainActivity : FragmentActivity() {
                         }
                     }) { Text("绑定此设备 · 原生 API") }
                     if (nativeDeviceClient.isBound()) {
+                        OutlinedButton(
+                            enabled = !nativeApiLoading,
+                            onClick = ::revokeNativeDeviceOnServer
+                        ) { Text(if (nativeApiLoading) "正在撤销…" else "安全解绑 · 撤销服务器授权") }
                         OutlinedButton(onClick = {
+                            nativeRequestGeneration.incrementAndGet()
                             nativeDeviceClient.clearLocalBinding()
                             nativeApiActive = false
                             nativeInbox = null
                             message = "仅本机密钥已清除；须进入网站设备管理撤销服务器授权。"
-                        }) { Text("清除本机设备凭据") }
+                        }) { Text("只清除本机设备凭据") }
                     }
                     OutlinedButton(onClick = { navigateTo(AdminDestination.SECURITY.address) }) {
                         Icon(painterResource(R.drawable.ic_shield), contentDescription = null)
