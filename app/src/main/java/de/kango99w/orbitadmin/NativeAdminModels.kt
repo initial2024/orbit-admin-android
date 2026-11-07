@@ -1,6 +1,7 @@
 package de.kango99w.orbitadmin
 
 import org.json.JSONObject
+import android.text.Html
 
 data class AdminNativeMailbox(
     val id: String,
@@ -33,6 +34,14 @@ data class AdminNativeDetail(
 /** Decode only bounded, server-authorized DTOs, never render HTML as WebView. */
 object AdminNativeModels {
     private val safeId = Regex("^[A-Za-z0-9-]{8,64}$")
+
+    // Html.fromHtml with no ImageGetter only extracts inert text; it does not
+    // load remote images, execute JavaScript, or mount a WebView.
+    private fun htmlAsPlainText(value: String): String =
+        if (value.isBlank()) "" else try {
+            Html.fromHtml(value.take(24_000), Html.FROM_HTML_MODE_COMPACT)
+                .toString().replace('\uFFFC', ' ').trim().take(16_000)
+        } catch (_: Exception) { "" }
     fun validId(id: String): Boolean = safeId.matches(id)
 
     fun mailboxes(body: JSONObject?, privateMailbox: Boolean): List<AdminNativeMailbox> {
@@ -68,12 +77,15 @@ object AdminNativeModels {
         val o = body?.optJSONObject("message") ?: return null
         val id = o.optString("id")
         if (!validId(id)) return null
+        val plain = o.optString("text_body").take(16_000)
+        val htmlText = o.optString("html_text_body").take(16_000).ifBlank {
+            if (plain.isBlank()) htmlAsPlainText(o.optString("html_body")) else ""
+        }
         return AdminNativeDetail(
             id, o.optString("sender").take(180),
             o.optString("recipient").take(254),
             o.optString("subject").take(300),
-            o.optString("text_body").take(16_000),
-            o.optString("html_text_body").take(16_000),
+            plain, htmlText,
             o.optString("possible_code").take(32),
             o.optLong("received_at")
         )
