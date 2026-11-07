@@ -557,7 +557,8 @@ class MainActivity : FragmentActivity() {
                     item.optString("recipient").take(254),
                     item.optString("subject").take(240),
                     formatNativeMessageTime(item.optLong("received_at", 0L)),
-                    item.optString("text_body").take(8000))
+                    item.optString("text_body").take(8000),
+                    item.optString("html_body").take(12000))
                 showNativeMail = true
             }
         }
@@ -885,17 +886,28 @@ class MainActivity : FragmentActivity() {
                 }
             }
             HorizontalDivider()
-            if (detail.textBody.isBlank()) {
-                Text("这封邮件没有纯文本正文；请用完整网页查看 HTML 内容或附件。",
-                    style=MaterialTheme.typography.bodyMedium)
-                Button(onClick={showNativeMail=false}) { Text("查看原邮件及附件") }
-            } else {
+            if (detail.textBody.isNotBlank()) {
                 SelectionContainer {
                     Text(detail.textBody,style=MaterialTheme.typography.bodyLarge)
                 }
-                OutlinedButton(onClick={showNativeMail=false}) {
-                    Text("查看 HTML 原文及附件")
+            } else if (detail.htmlBody.isNotBlank()) {
+                // Text-only Android rendering of sanitized HTML: no WebView,
+                // JavaScript, cookie, remote image or embedded browser network calls.
+                val formatted = android.text.Html.fromHtml(
+                    detail.htmlBody, android.text.Html.FROM_HTML_MODE_COMPACT
+                ).toString().trim().take(16000)
+                SelectionContainer {
+                    Text(formatted.ifBlank { "（邮件 HTML 正文无可显示文字）" },
+                        style=MaterialTheme.typography.bodyLarge)
                 }
+                Text("为保护隐私，远程图片和追踪链接已由服务器清理。",
+                    style=MaterialTheme.typography.labelSmall)
+            } else {
+                Text("此邮件没有可读取的文本正文，附件将在后续原生接口中提供。",
+                    style=MaterialTheme.typography.bodyMedium)
+            }
+            OutlinedButton(onClick={showNativeMail=false}) {
+                Text("尚未原生支持的附件或高级内容（手动打开网站）")
             }
         }
     }
