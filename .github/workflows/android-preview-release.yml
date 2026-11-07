@@ -55,11 +55,29 @@ jobs:
           VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
           test -s app/build/outputs/apk/debug/app-debug.apk
-          NAME="Orbit-Mail-v${VERSION}-debug.apk"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -F "package: name='de.kango99w.orbitadmin.nativepreview'"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -F "versionName='${VERSION}'"
+          APK_SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          test -x "$APK_SIGNER"
+          "$APK_SIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+          NAME="Orbit-Mail-Native-v${VERSION}-debug.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
-          printf "%s\n" "Orbit Mail $VERSION — development/test APK only." "Built from GitHub commit $GITHUB_SHA." "This APK uses the CI debug key, not a stable production signing certificate." "Installing over a different signature may fail. Uninstalling destroys local browser/Keystore state." "Native password/TOTP login and Compose inbox are a PREVIEW. Backend PR #620 must be reviewed and deployed through the production gate." > INSTALL_NOTES.txt
-          ZIP="Orbit-Mail-v${VERSION}-debug.zip"
+          printf "%s\n" \
+            "Orbit Mail Native Preview $VERSION — DEBUG ONLY." \
+            "Package: de.kango99w.orbitadmin.nativepreview (side-by-side, independent Android app)." \
+            "Built from pinned GitHub source commit $GITHUB_SHA." \
+            "Administrator mailbox screen, login and TOTP are native Jetpack Compose." \
+            "No in-app administrator WebView exists; advanced website links open the external browser explicitly." \
+            "This preview does not share website CookieManager, Android Keystore, or login state with the installed old Orbit Mail package." \
+            "The CI Debug signing key is temporary; a future preview may not install over this one." \
+            "Do NOT uninstall your old Orbit Mail v0.9.4 to test this APK." \
+            "Ordinary account direct native password/TOTP API requires undeployed backend Draft PR #620." \
+            "Administrator production accounts and real mail content remain unverified on physical Android hardware." > INSTALL_NOTES.txt
+          ZIP="Orbit-Mail-Native-v${VERSION}-debug.zip"
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null
           test -s "$ZIP"
           unzip -t "$ZIP" >/dev/null
@@ -86,8 +104,8 @@ jobs:
           fi
           gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" \
             --target "$GITHUB_SHA" \
-            --title "Orbit Mail $TAG (debug test)" \
-            --notes "$VERSION DEBUG / PRERELEASE ONLY. Kotlin Compose native ordinary-account login and a distinct administrator entry; local-vs-server HTTP 400 diagnostics and Keystore signed account reads. Administrator authentication remains independently enforced by the protected website and is NOT a native administrator API; website WebViews still share the app-level cookie store. Backend native-login PR #620 remains Draft and NOT deployed to production, so real account sign-in and inbox/admin features have NOT passed end-to-end acceptance. Test APK may need reinstall if debug signing differs." \
+            --title "Orbit Mail Native Preview $TAG (debug)" \
+            --notes "$VERSION NATIVE ANDROID DEBUG PREVIEW. Android package de.kango99w.orbitadmin.nativepreview installs side-by-side with the older Orbit Mail package. Real administrator login/TOTP and mailbox UI are Jetpack Compose + first-party administrator API (not an in-app admin WebView). External browser required for advanced security/domain actions. Signing is ephemeral CI Debug, not the previous v0.9.4 key; no in-place upgrade claim. Ordinary native account login backend PR #620 remains Draft and undeployed. Real-phone administrator acceptance and mailbox/create checks have NOT been completed." \
             --prerelease
           echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
           echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
