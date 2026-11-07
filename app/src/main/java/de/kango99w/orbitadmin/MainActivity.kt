@@ -1894,12 +1894,14 @@ class MainActivity : FragmentActivity() {
                             Text("检测当前已登录的管理员会话")
                         }
                     }
-                    OutlinedButton(onClick={openAdvancedAdminWebsite(AdminDestination.OVERVIEW.address)}) {
-                        Text("备用：在系统浏览器打开旧后台（非应用页面）")
-                    }
-                    Text("网站和原生管理页使用同一服务器管理员会话；尚未实现独立 Cookie 存储。管理员 TOTP 不会跳过。",
+                    Text("管理员邮箱与管理功能在 Android 原生界面执行。" +
+                        "登录和 2FA 由独立的管理员 API 验证，绝不改用普通账号设备凭据。",
                         style=MaterialTheme.typography.bodySmall)
                 }
+                return@Column
+            }
+            if (adminPane != "mailboxes") {
+                NativeAdminManagementContent()
                 return@Column
             }
             val selected = adminSelectedMailbox
@@ -1924,6 +1926,25 @@ class MainActivity : FragmentActivity() {
                             style=MaterialTheme.typography.labelSmall)
                     }
                     if (adminBusy) Text("加载中…",style=MaterialTheme.typography.labelSmall)
+                }
+                Row(modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=4.dp),
+                    horizontalArrangement=Arrangement.spacedBy(7.dp)) {
+                    if (selected.privateMailbox) {
+                        OutlinedButton(enabled=!adminBusy,
+                            onClick={updateNativeAdminMailbox(selected,"star")}) {
+                            Text(if(selected.starred) "取消标星" else "标星")
+                        }
+                    } else {
+                        OutlinedButton(enabled=!adminBusy,
+                            onClick={updateNativeAdminMailbox(selected,"renew")}) {
+                            Text("续期30分钟")
+                        }
+                    }
+                    OutlinedButton(enabled=!adminBusy,
+                        onClick={
+                            adminDeleteError=""
+                            adminDeleteTarget=selected
+                        }) { Text("删除邮箱") }
                 }
                 HorizontalDivider()
                 if (detail != null && adminSelectedMessageId == detail.id) {
@@ -2053,18 +2074,19 @@ class MainActivity : FragmentActivity() {
                         HorizontalDivider()
                     }
                 }
-                // Advanced domains/security still use the reviewed website until
-                // dedicated, permissioned native endpoints are available.
                 Row(modifier=Modifier.fillMaxWidth().padding(8.dp),
                     horizontalArrangement=Arrangement.SpaceEvenly) {
-                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.DOMAINS.address)}) {
-                        Text("域名·外部浏览器")
+                    TextButton(enabled=!adminBusy,
+                        onClick={openAdminNativePane("domains")}) {
+                        Text("域名")
                     }
-                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.RECORDS.address)}) {
-                        Text("记录·外部浏览器")
+                    TextButton(enabled=!adminBusy,
+                        onClick={openAdminNativePane("records")}) {
+                        Text("使用记录")
                     }
-                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.SECURITY.address)}) {
-                        Text("安全·外部浏览器")
+                    TextButton(enabled=!adminBusy,
+                        onClick={openAdminNativePane("security")}) {
+                        Text("安全中心")
                     }
                 }
             }
