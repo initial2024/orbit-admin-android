@@ -27,7 +27,9 @@ class NativeDeviceClient(context: Context) {
         private const val ORIGIN = "https://inbox.kango99w.de"
         private const val EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         private val DEVICE_ID = Regex("^[a-fA-F0-9-]{36}$")
-        private val ENDPOINT = Regex("^/api/account/native-device/mailboxes(?:/[A-Za-z0-9_-]{1,128}/messages(?:/[A-Za-z0-9_-]{1,128})?)?$")
+        private val ENDPOINT = Regex(
+            "^/api/account/native-device/(?:mailboxes(?:/[A-Za-z0-9_-]{1,128}/messages(?:/[A-Za-z0-9_-]{1,128})?)?|glyphs/(?:status|collections))$"
+        )
     }
 
     data class Response(val status: Int, val value: JSONObject?, val error: String? = null)
