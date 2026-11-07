@@ -136,6 +136,7 @@ class MainActivity : FragmentActivity() {
     private var backgroundPushOptIn by mutableStateOf(false)
     private var backgroundPushStatus by mutableStateOf("未启用")
     private var lastPushAttemptAtMs = 0L
+    private var lastNativeSnapshotRequestAtMs = 0L
 
     private lateinit var biometricPrompt: BiometricPrompt
 
@@ -210,6 +211,7 @@ class MainActivity : FragmentActivity() {
                     message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
+                    requestMissingNativeSnapshot()
                     tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
@@ -315,6 +317,9 @@ class MainActivity : FragmentActivity() {
         if (previousKey != nextKey) old?.onPause()
         // Native tabs never loadUrl; any website state remains in its private scope.
         sectionBrowsers[nextKey]?.onResume()
+        if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
+            requestMissingNativeSnapshot()
+        }
     }
 
     /** Only a deliberate "website" action opens first-party HTML. */
@@ -349,6 +354,15 @@ class MainActivity : FragmentActivity() {
             existing.onResume()
             if (existing.url != url) existing.loadUrl(url)
         }
+    }
+
+    /** Recover a lost Compose snapshot without reloading the website or launching login. */
+    private fun requestMissingNativeSnapshot() {
+        if (!unlocked || nativeInbox != null || !isCurrentPublicMailDocument()) return
+        val stamp = SystemClock.elapsedRealtime()
+        if (lastNativeSnapshotRequestAtMs != 0L &&
+            stamp - lastNativeSnapshotRequestAtMs < 15_000L) return
+        if (sendNativeMailboxCommand("refresh")) lastNativeSnapshotRequestAtMs = stamp
     }
 
     /** Only a tap on the native UI can send a bounded action to the current site. */
@@ -1530,6 +1544,7 @@ class MainActivity : FragmentActivity() {
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
+            requestMissingNativeSnapshot()
             tryRegisterPush()
         }
     }
