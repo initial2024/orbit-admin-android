@@ -829,6 +829,10 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun switchWorkspace(next: MailWorkspace) {
+        // Clear overlays before switching security realms; never display admin
+        // registration detail on an ordinary-account screen.
+        adminSelectedRegistration = null
+        showNativeAccountDetails = false
         // Selecting even the active workspace closes the menu without reloading mail.
         workspaceSwitcherExpanded = false
         if (workspace == next) return
@@ -3606,7 +3610,8 @@ class MainActivity : FragmentActivity() {
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
-        if (adminSelectedRegistration != null && adminAuthenticated) AdminRegistrationDetailDialog()
+        if (adminSelectedRegistration != null && adminAuthenticated && workspace==MailWorkspace.ADMIN)
+            AdminRegistrationDetailDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
