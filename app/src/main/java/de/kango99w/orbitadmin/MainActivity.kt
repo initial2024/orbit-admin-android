@@ -376,6 +376,9 @@ class MainActivity : FragmentActivity() {
     private fun navigateTo(url: String) {
         if (!unlocked) return
         val target = NativeSectionRouting.explicitWebsiteTarget(url) ?: return
+        adminGeneration.incrementAndGet()
+        nativeAdminClient.invalidatePendingResponses()
+        adminBusy = false
         val oldKey = BrowserSessionRouting.key(activeSection)
         val nextKey = BrowserSessionRouting.key(target)
         if (oldKey != nextKey) browser?.onPause()
@@ -1318,18 +1321,19 @@ class MainActivity : FragmentActivity() {
     private fun refreshNativeAdmin() {
         if (!unlocked || adminBusy) return
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminError = ""
         adminIo.execute {
-            val status = nativeAdminClient.get("/api/admin/status")
+            val status = nativeAdminClient.get("/api/admin/status", requestEpoch)
             val authorized = status.status == 200 &&
                 status.value?.optBoolean("authenticated") == true
             val privateRows = if (authorized)
-                nativeAdminClient.get("/api/admin/pieterj-mail/mailboxes") else null
+                nativeAdminClient.get("/api/admin/pieterj-mail/mailboxes", requestEpoch) else null
             val ordinaryRows = if (authorized)
-                nativeAdminClient.get("/api/admin/ordinary-inbox/mailboxes") else null
+                nativeAdminClient.get("/api/admin/ordinary-inbox/mailboxes", requestEpoch) else null
             val domainRows = if (authorized)
-                nativeAdminClient.get("/api/admin/ordinary-inbox/domains") else null
+                nativeAdminClient.get("/api/admin/ordinary-inbox/domains", requestEpoch) else null
             val valid = authorized && privateRows?.status == 200 &&
                 ordinaryRows?.status == 200
             val mailboxes = if (valid)
@@ -1386,11 +1390,12 @@ class MainActivity : FragmentActivity() {
             return
         }
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminError = ""
         adminIo.execute {
             val result = nativeAdminClient.post("/api/admin/login",
-                JSONObject().put("username", username).put("password", password))
+                JSONObject().put("username", username).put("password", password), requestEpoch)
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -1419,11 +1424,12 @@ class MainActivity : FragmentActivity() {
             return
         }
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminError = ""
         adminIo.execute {
             val result = nativeAdminClient.post("/api/admin/login/totp",
-                JSONObject().put("code", code).put("trust_device", false))
+                JSONObject().put("code", code).put("trust_device", false), requestEpoch)
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -1449,13 +1455,14 @@ class MainActivity : FragmentActivity() {
         adminSelectedMessageId = null
         adminMessages = emptyList()
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminError = ""
         val path = if (mailbox.privateMailbox)
             "/api/admin/pieterj-mail/mailboxes/${mailbox.id}/messages"
         else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages"
         adminIo.execute {
-            val response = nativeAdminClient.get(path)
+            val response = nativeAdminClient.get(path, requestEpoch)
             val rows = if (response.status == 200) AdminNativeModels.messages(response.value)
                 else emptyList()
             runOnUiThread {
@@ -1477,6 +1484,7 @@ class MainActivity : FragmentActivity() {
             !AdminNativeModels.validId(id) ||
             adminMessages.none { it.id == id }) return
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminSelectedMessageId = id
         adminSelectedMessage = null
@@ -1484,7 +1492,7 @@ class MainActivity : FragmentActivity() {
         val path = if (mailbox.privateMailbox) "/api/admin/pieterj-mail/messages/$id"
         else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages/$id"
         adminIo.execute {
-            val response = nativeAdminClient.get(path)
+            val response = nativeAdminClient.get(path, requestEpoch)
             val detail = if (response.status == 200)
                 AdminNativeModels.detail(response.value)?.takeIf { it.id == id } else null
             runOnUiThread {
@@ -1512,6 +1520,7 @@ class MainActivity : FragmentActivity() {
             return
         }
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminError = ""
         val privateMailbox = adminCreatePrivate
@@ -1521,7 +1530,7 @@ class MainActivity : FragmentActivity() {
         if (local.isNotBlank())
             payload.put(if (privateMailbox) "local_part" else "local",local)
         adminIo.execute {
-            val response = nativeAdminClient.post(path,payload)
+            val response = nativeAdminClient.post(path,payload, requestEpoch)
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -1541,9 +1550,10 @@ class MainActivity : FragmentActivity() {
     private fun logoutNativeAdmin() {
         if (!unlocked || adminBusy || !adminAuthenticated) return
         val generation = adminGeneration.incrementAndGet()
+        val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
         adminIo.execute {
-            val response = nativeAdminClient.post("/api/admin/logout")
+            val response = nativeAdminClient.post("/api/admin/logout", JSONObject(), requestEpoch)
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -2207,6 +2217,15 @@ class MainActivity : FragmentActivity() {
 
     private fun clearLocalSession() {
         showClearConfirm = false
+        adminGeneration.incrementAndGet()
+        nativeAdminClient.invalidatePendingResponses()
+        adminBusy = false
+        adminAuthenticated = false
+        adminMailboxes = emptyList()
+        adminMessages = emptyList()
+        adminSelectedMailbox = null
+        adminSelectedMessage = null
+        adminSelectedMessageId = null
         // Website CookieManager and native Keystore grants are separate auth realms.
         // Do not revoke or erase the account grant merely because website data
         // (including the administrator WebView session) was cleared.
@@ -2231,6 +2250,7 @@ class MainActivity : FragmentActivity() {
     private fun lock() {
         unlocked = false
         adminGeneration.incrementAndGet()
+        nativeAdminClient.invalidatePendingResponses()
         adminBusy = false
         adminAuthenticated = false
         adminSignInPassword = ""
@@ -2654,6 +2674,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onDestroy() {
         adminGeneration.incrementAndGet()
+        nativeAdminClient.invalidatePendingResponses()
         adminIo.shutdownNow()
         nativeRequestGeneration.incrementAndGet()
         nativeIo.shutdownNow()
