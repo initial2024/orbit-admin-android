@@ -870,36 +870,71 @@ class MainActivity : FragmentActivity() {
                 }
             }
         ) { inner ->
-            if (activeSection == MailSection.SETTINGS) {
-                SettingsContent(Modifier.fillMaxSize().padding(inner))
-            } else {
-                Column(Modifier.fillMaxSize().padding(inner)) {
-                    val snapshot = nativeInbox
-                    val nativeVisible = showNativeMail &&
-                        (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES)
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        AndroidView(
-                            factory = { obtainBrowser() },
-                            modifier = Modifier.fillMaxSize().alpha(if (nativeVisible) 0f else 1f)
+            Column(Modifier.fillMaxSize().padding(inner)) {
+                val snapshot = nativeInbox
+                val publicSelected = activeSection == MailSection.INBOX ||
+                    activeSection == MailSection.MAILBOXES
+                val nativeVisible = publicSelected && showNativeMail
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // Each WebView is mounted only after the section's first visit,
+                    // then remains attached and retains its DOM/session across tabs.
+                    AndroidView(
+                        factory = { obtainBrowser(MailSection.INBOX) },
+                        update = {
+                            it.visibility = if (publicSelected) View.VISIBLE else View.INVISIBLE
+                        },
+                        modifier = Modifier.fillMaxSize().alpha(
+                            if (publicSelected && !nativeVisible) 1f else 0f
                         )
-                        if (nativeVisible) {
-                            Surface(modifier = Modifier.fillMaxSize()) {
-                                if (snapshot != null) {
-                                    NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
-                                } else {
-                                    NativeMailboxLanding(activeSection == MailSection.MAILBOXES)
-                                }
+                    )
+                    if (activeSection == MailSection.TRANSFER ||
+                        sectionBrowsers.containsKey(MailSection.TRANSFER)) {
+                        AndroidView(
+                            factory = { obtainBrowser(MailSection.TRANSFER) },
+                            update = {
+                                it.visibility = if (activeSection == MailSection.TRANSFER)
+                                    View.VISIBLE else View.INVISIBLE
+                            },
+                            modifier = Modifier.fillMaxSize().alpha(
+                                if (activeSection == MailSection.TRANSFER) 1f else 0f
+                            )
+                        )
+                    }
+                    if (activeSection == MailSection.ADMIN ||
+                        sectionBrowsers.containsKey(MailSection.ADMIN)) {
+                        AndroidView(
+                            factory = { obtainBrowser(MailSection.ADMIN) },
+                            update = {
+                                it.visibility = if (activeSection == MailSection.ADMIN)
+                                    View.VISIBLE else View.INVISIBLE
+                            },
+                            modifier = Modifier.fillMaxSize().alpha(
+                                if (activeSection == MailSection.ADMIN) 1f else 0f
+                            )
+                        )
+                    }
+                    if (nativeVisible) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            if (snapshot != null) {
+                                NativeInboxContent(snapshot, activeSection == MailSection.MAILBOXES)
+                            } else {
+                                NativeMailboxLanding(activeSection == MailSection.MAILBOXES)
                             }
                         }
                     }
-                    if (message.isNotBlank()) {
-                        Text(
-                            text = message,
-                            maxLines = 2,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                    if (activeSection == MailSection.SETTINGS) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            SettingsContent(Modifier.fillMaxSize())
+                        }
                     }
+                }
+                if (message.isNotBlank()) {
+                    Text(
+                        text = message,
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 }
             }
         }
