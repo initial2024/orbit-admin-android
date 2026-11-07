@@ -4,6 +4,18 @@ Public Android mail client for the existing [Orbit Mail service](https://inbox.k
 
 **Status: v0.7.0-dev is a native-first experimental Android client, not a production release.** The existing Cloudflare backend is unchanged.
 
+## Orbit Mail v0.8.0-dev: revocable native device-mail API (experimental)
+
+- App-side P-256 private key is generated in **Android Keystore**. A user-triggered pairing flow sends an SPKI public key and proof-of-possession signature to the first-party website; the website checks its existing account session and verifies password/TOTP step-up through the **separate, disabled-by-default** Worker API in [site Draft PR #616](https://github.com/initial2024/kango99w-temp-mail/pull/616).
+- When a device is truly paired and server API is enabled, native Android HTTPS GET sends signed timestamp+nonce headers, **without website cookies**. Compose renders account-owned mailbox list, sender/subject list and bounded plain-text detail. Reopening the app can operate without creating a hidden public-mail WebView.
+- Site-only fallback stays explicit for pairing/login, anonymous or protected mailbox, HTML/attachments, file transfer and administrator actions. Ordinary device pairing does not confer admin privileges.
+- **Not production-ready:** Worker/D1 migration 0076 is not released; API flag OFF, GitHub CI is not proof of real-phone login persistence. Server grants expire after 30 days and can be revoked from the website. Clearing only local Keystore credentials does not revoke server records; account security center should revoke lost devices.
+- Debug APK signing is ephemeral in CI; do not uninstall a previous build without backing up local state. Native mail API and device binding still need real-device end-to-end checks.
+
+### GitHub direct APK publication
+
+A manual, main-branch-only [Preview release workflow](.github/workflows/android-preview-release.yml) builds/tests a debug APK, writes a SHA-256 checksum and publishes an **immutable GitHub prerelease asset**, available through a direct /releases/download/.../Orbit-Mail-v*.apk URL. It requires the explicit PUBLISH_TEST_APK acknowledgement after integration and review. Existing Pull Request Actions artifacts remain ZIP files, not APK URLs, and may require a GitHub login. Neither mechanism produces a stable signed production build.
+
 ## Android v0.7.0-dev: Compose-first client, no automatic web page on tab switch
 
 - The five main tabs (Inbox, Mailboxes, Transfer, Admin, Settings) now open native Compose surfaces by default.
