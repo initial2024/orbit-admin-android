@@ -88,6 +88,68 @@ class NativeDeviceClient(context: Context) {
             .put("current_password", password)
     }
 
+    /**
+     * True native first-party account sign-in. One password + (if enabled) one
+     * TOTP produces a revocable Keystore-bound device grant. Never opens WebView,
+     * stores a password, stores an account cookie, or receives admin privileges.
+     */
+    fun login(email: String, password: String, totp: String, label: String): Response {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Native login on UI thread" }
+        val trimmed = email.trim().lowercase(java.util.Locale.ROOT)
+        if (!Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(trimmed) ||
+            trimmed.length > 320 || password.length !in 8..128 ||
+            label.isBlank() || label.length > 60) {
+            return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
+        }
+        val packet = createPairPayload(label, password, totp).apply {
+            remove("v")
+            remove("action")
+            put("email", trimmed)
+        }
+        val body = packet.toString().toByteArray(Charsets.UTF_8)
+        if (body.size > 7000) return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
+        var connection: HttpsURLConnection? = null
+        return try {
+            connection = URL("$ORIGIN/api/account/native-device/login")
+                .openConnection() as HttpsURLConnection
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.doOutput = true
+            connection.setRequestProperty("Origin", ORIGIN)
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setFixedLengthStreamingMode(body.size)
+            connection.outputStream.use { it.write(body) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream
+                         else connection.errorStream ?: return Response(code, null, "HTTP_$code")
+            val value = stream.use { input ->
+                val limit = 8192
+                val buffer = ByteArray(limit + 1)
+                var count = 0
+                while (count < buffer.size) {
+                    val n = input.read(buffer, count, buffer.size - count)
+                    if (n < 0) break
+                    count += n
+                }
+                if (count > limit) throw IOException("Native login response too large")
+                JSONObject(String(buffer, 0, count, Charsets.UTF_8))
+            }
+            if (code == 201 && value.optString("scope") == "account_mail_read" &&
+                completePair(value.optString("device_id"), value.optLong("expires_at"))) {
+                return Response(201, value)
+            }
+            Response(code, value, value.optString("error", "NATIVE_LOGIN_FAILED"))
+        } catch (_: Exception) {
+            Response(503, null, "NATIVE_NETWORK_UNAVAILABLE")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     fun completePair(deviceId: String, expiresAt: Long): Boolean {
         if (!DEVICE_ID.matches(deviceId) || expiresAt <= System.currentTimeMillis() ||
             existingKey() == null) return false
