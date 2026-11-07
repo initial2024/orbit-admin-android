@@ -1900,27 +1900,114 @@ class MainActivity : FragmentActivity() {
             HorizontalDivider()
             when (adminPane) {
                 "domains" -> {
-                    Text("管理员邮箱域名、网站域名与已申请域名（服务端实时状态）",
-                        modifier = Modifier.padding(15.dp),
-                        style = MaterialTheme.typography.bodyMedium)
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(adminManagedDomains, key={it.source+":"+it.domain+":"+it.state}) { domain ->
-                            Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text(domain.domain, style=MaterialTheme.typography.titleMedium)
-                                Text(domain.source + " · " + domain.state +
-                                    (if(domain.ingress.isNotBlank()) " · " + domain.ingress else ""),
-                                    style=MaterialTheme.typography.bodySmall)
+                    Text("域名库存 · 仅显示服务端登记状态",
+                        modifier=Modifier.padding(horizontal=14.dp,vertical=8.dp),
+                        style=MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(
+                        value=adminDomainSearch,
+                        onValueChange={adminDomainSearch=it.take(100)},
+                        singleLine=true,
+                        label={Text("搜索域名、来源或接入方式")},
+                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp))
+                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal=10.dp,vertical=5.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        listOf("全部","管理员邮箱","网站域名","域名申请","临时邮箱").forEach { source ->
+                            OutlinedButton(onClick={adminDomainSourceFilter=source}) {
+                                Text((if(adminDomainSourceFilter==source) "✓ " else "") + source)
+                            }
+                        }
+                    }
+                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal=10.dp,vertical=5.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        val statuses = listOf("全部") +
+                            adminManagedDomains.map{it.state}.distinct().sorted()
+                        statuses.forEach { state ->
+                            OutlinedButton(onClick={adminDomainStateFilter=state}) {
+                                Text((if(adminDomainStateFilter==state) "✓ " else "") + state)
+                            }
+                        }
+                    }
+                    val q=adminDomainSearch.trim()
+                    val filtered=adminManagedDomains.filter { domain ->
+                        (q.isBlank() || listOf(domain.domain,domain.source,domain.ingress)
+                            .any { it.contains(q,ignoreCase=true) }) &&
+                        (adminDomainSourceFilter=="全部" ||
+                            domain.source==adminDomainSourceFilter) &&
+                        (adminDomainStateFilter=="全部" ||
+                            domain.state==adminDomainStateFilter)
+                    }
+                    Text("匹配域名 ${filtered.size} / ${adminManagedDomains.size}",
+                        modifier=Modifier.padding(14.dp),
+                        style=MaterialTheme.typography.labelMedium)
+                    if(filtered.isEmpty() && !adminBusy)
+                        Text("没有匹配的域名，清除搜索或筛选条件后重试。",
+                            modifier=Modifier.padding(16.dp))
+                    LazyColumn(modifier=Modifier.fillMaxSize()) {
+                        items(filtered) { domain ->
+                            Row(modifier=Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment=Alignment.CenterVertically) {
+                                MailAvatar(domain.domain,38)
+                                Spacer(Modifier.padding(horizontal=5.dp))
+                                Column(modifier=Modifier.weight(1f)) {
+                                    Text(domain.domain,
+                                        style=MaterialTheme.typography.titleSmall)
+                                    Text(domain.source+" · "+domain.state,
+                                        style=MaterialTheme.typography.labelMedium)
+                                    if(domain.ingress.isNotBlank())
+                                        Text(domain.ingress,
+                                            style=MaterialTheme.typography.bodySmall)
+                                }
                             }
                             HorizontalDivider()
                         }
                     }
                 }
                 "records" -> {
-                    Text("地址登记记录仅供审计；并非域名可创建或能收信的证明。",
-                        modifier=Modifier.padding(15.dp),
-                        style=MaterialTheme.typography.bodySmall)
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(adminRecordedAddresses) { record ->
+                    Text("邮箱使用记录 · 登记不等于域名可收件",
+                        modifier=Modifier.padding(horizontal=14.dp,vertical=8.dp),
+                        style=MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(value=adminRecordSearch,
+                        onValueChange={adminRecordSearch=it.take(100)},
+                        label={Text("搜索邮箱地址或来源")},
+                        singleLine=true,
+                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp))
+                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal=10.dp,vertical=6.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        listOf("全部","已保留","已释放").forEach { state ->
+                            OutlinedButton(onClick={adminRecordStateFilter=state}) {
+                                Text((if(adminRecordStateFilter==state) "✓ " else "")+state)
+                            }
+                        }
+                    }
+                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal=10.dp,vertical=3.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        val sources = listOf("全部") +
+                            adminRecordedAddresses.map { it.source }.filter{it.isNotBlank()}.distinct()
+                        sources.forEach { source ->
+                            OutlinedButton(onClick={adminRecordSourceFilter=source}) {
+                                Text((if(adminRecordSourceFilter==source) "✓ " else "") + source)
+                            }
+                        }
+                    }
+                    val q=adminRecordSearch.trim()
+                    val filtered=adminRecordedAddresses.filter { record ->
+                        (q.isBlank() || record.address.contains(q,ignoreCase=true) ||
+                            record.source.contains(q,ignoreCase=true)) &&
+                        (adminRecordSourceFilter=="全部" ||
+                            record.source==adminRecordSourceFilter) &&
+                        (adminRecordStateFilter=="全部" ||
+                            (adminRecordStateFilter=="已保留" && record.reserved) ||
+                            (adminRecordStateFilter=="已释放" && !record.reserved))
+                    }
+                    Text("匹配记录 ${filtered.size} / ${adminRecordedAddresses.size}",
+                        modifier=Modifier.padding(14.dp),
+                        style=MaterialTheme.typography.labelMedium)
+                    LazyColumn(modifier=Modifier.fillMaxSize()) {
+                        items(filtered) { record ->
                             Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
                                 Text(record.address,style=MaterialTheme.typography.titleSmall)
                                 Text(record.source + " · " +
