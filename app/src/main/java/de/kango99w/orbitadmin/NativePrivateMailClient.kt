@@ -112,7 +112,10 @@ class NativePrivateMailClient {
         if (path !in setOf("/handoff", "/api/send", "/api/scheduled/cancel"))
             return Reply(400, null, "PRIVATE_ROUTE_DENIED")
         val payload = body.toString().toByteArray(StandardCharsets.UTF_8)
-        if (payload.size > 32_768) return Reply(413, null, "PRIVATE_PAYLOAD_TOO_LARGE")
+        // 5 MiB of real file bytes expand to ~7 MiB of Base64 JSON.
+        // The Worker independently enforces the same 3-file/5-MiB policy.
+        if (payload.size > 8_000_000)
+            return Reply(413, null, "PRIVATE_PAYLOAD_TOO_LARGE")
         val cookie = if (acceptHandoffCookie) null else
             filterSessionCookie(CookieManager.getInstance().getCookie(origin))
         if (!acceptHandoffCookie && cookie == null)
