@@ -18,8 +18,8 @@ class NativeDeviceClientInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun asn1Integer(integer: ByteArray): ByteArray {
-        val raw = integer.dropWhile { it == 0.toByte() }.toByteArray()
-            .ifEmpty { byteArrayOf(0) }
+        val unpadded = integer.dropWhile { it == 0.toByte() }
+        val raw = if (unpadded.isEmpty()) byteArrayOf(0) else unpadded.toByteArray()
         val positive = if ((raw[0].toInt() and 0x80) != 0)
             byteArrayOf(0) + raw else raw
         return byteArrayOf(0x02, positive.size.toByte()) + positive
