@@ -57,16 +57,23 @@ jobs:
           NAME="Orbit-Mail-v${VERSION}-debug.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
+          printf "%s\n" "Orbit Mail $VERSION — development/test APK only." "Built from GitHub commit $GITHUB_SHA." "This APK uses the CI debug key, not a stable production signing certificate." "Installing over a different signature may fail. Uninstalling destroys local browser/Keystore state." "Native API requires the separate server release and explicit enrollment; not production verified." > INSTALL_NOTES.txt
+          ZIP="Orbit-Mail-v${VERSION}-debug.zip"
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null
+          test -s "$ZIP"
+          unzip -t "$ZIP" >/dev/null
           TAG="orbit-mail-v${VERSION}-${GITHUB_SHA:0:12}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "apk=$NAME" >> "$GITHUB_OUTPUT"
           echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
       - name: Publish immutable prerelease (direct APK asset)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.seal.outputs.tag }}
           APK: ${{ steps.seal.outputs.apk }}
           CHECKSUM: ${{ steps.seal.outputs.sha }}
+          ZIP: ${{ steps.seal.outputs.zip }}
         shell: bash
         run: |
           set -euo pipefail
@@ -74,9 +81,9 @@ jobs:
             echo "Refusing to overwrite existing debug release" >&2
             exit 1
           fi
-          gh release create "$TAG" "$APK" "$CHECKSUM" \
+          gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" \
             --target "$GITHUB_SHA" \
             --title "Orbit Mail $TAG (debug test)" \
-            --notes "v0.8.1-dev DEBUG / PRERELEASE ONLY. Native-first mail routing and P-256 signature tests. Not production-signed; debug signing may prevent in-place upgrades, and uninstall clears local login. Native Worker API + D1 still disabled, awaiting controlled deployment, security review and real-device acceptance." \
+            --notes "v0.8.2-dev DEBUG / PRERELEASE ONLY. This GitHub Release includes a direct APK and a ZIP containing the same APK, SHA256, and installation notes. Android instrumentation security tests and live server enrollment still gate final approval. Debug signing may prevent in-place upgrades; uninstall clears local credentials. Native Worker API + D1 production deployment still pending." \
             --prerelease
           echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
