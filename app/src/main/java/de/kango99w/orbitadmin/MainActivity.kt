@@ -462,6 +462,13 @@ class MainActivity : FragmentActivity() {
                         nativeInbox = null
                         pendingNativeMessageId = null
                         nativeMailDetail = null
+                        if (mailboxes.status == 401) {
+                            // A revoked device must not trap the app in website login fallback.
+                            nativeDeviceClient.clearLocalBinding()
+                            nativeLoginPassword = ""
+                            nativeLoginTotp = ""
+                            nativeLoginError = "原设备授权已撤销或过期，请在原生界面重新登录。"
+                        }
                     }
                 }
                 return@execute
@@ -1150,30 +1157,15 @@ class MainActivity : FragmentActivity() {
                         else "尚未取得当前邮箱数据", style = MaterialTheme.typography.titleMedium)
                     if (nativeApiNotice.isNotBlank())
                         Text(nativeApiNotice, style = MaterialTheme.typography.bodySmall)
-                    Text("需要先在安全的官网登录页面完成账号和 2FA 验证；"
-                        + "若已经登录，可刷新页面重新同步。",
+                    Text("正在使用独立设备授权读取邮件。无需打开网站登录；失败时只重试服务器 API。",
                         style = MaterialTheme.typography.bodySmall)
-                    Button(
-                        onClick = {
-                            navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-inbox")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (nativeDeviceClient.isBound()) "打开网站授权功能"
-                        else "首次登录 / 绑定设备") }
-                    OutlinedButton(
-                        onClick = {
-                            if (nativeDeviceClient.isBound()) refreshNativeApi()
-                            else {
-                                val home = MailSection.INBOX.address ?: return@OutlinedButton
-                                val public = publicWebView()
-                                if (public == null) navigateTo(home)
-                                else if (public.url != home) public.loadUrl(home)
-                                else public.reload()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (nativeDeviceClient.isBound()) "重试原生 API"
-                        else "重新检查邮箱") }
+                    Button(onClick = ::refreshNativeApi,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(if (nativeApiLoading) "正在同步…" else "重新同步收件箱")
+                    }
+                    OutlinedButton(onClick = ::revokeNativeDeviceOnServer,
+                        enabled = nativeDeviceClient.isBound() && !nativeApiLoading,
+                        modifier = Modifier.fillMaxWidth()) { Text("设备安全解绑") }
                 }
             }
             Text("管理员管理会话与普通邮箱账号会话独立；登录一个不代表自动获得另一个的权限。",
@@ -1354,16 +1346,12 @@ class MainActivity : FragmentActivity() {
                             java.util.Date(nativeDeviceClient.localExpiry()))
                         else "尚未绑定 Android 原生设备授权",
                         style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = {
-                        if (publicWebView() == null || !isCurrentPublicMailDocument()) {
-                            navigateTo(MailSection.INBOX.address!!)
-                            message = "请先登录普通账号，再回到设置完成设备绑定。"
-                        } else {
-                            nativePairPassword = ""
-                            nativePairTotp = ""
-                            showNativePairDialog = true
-                        }
-                    }) { Text("绑定此设备 · 原生 API") }
+                    if (!nativeDeviceClient.isBound()) {
+                        OutlinedButton(onClick = {
+                            showNativeMail = true
+                            openSection(MailSection.INBOX)
+                        }) { Text("原生账号登录 · 不打开网页") }
+                    }
                     if (nativeDeviceClient.isBound()) {
                         OutlinedButton(
                             enabled = !nativeApiLoading,
