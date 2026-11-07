@@ -639,10 +639,10 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 }
-                val items = if(glyphTab=="每日商店") data.shop else data.catalog
+                val glyphItems = if(glyphTab=="每日商店") data.shop else data.catalog
                 val rarityLabels=mapOf("common" to "普通","rare" to "稀有",
                     "epic" to "史诗","legendary" to "传说")
-                val filtered=if(glyphTab=="图鉴")items.filter {
+                val filtered=if(glyphTab=="图鉴")glyphItems.filter {
                     (glyphSearch.isBlank() ||
                         it.name.contains(glyphSearch,ignoreCase=true) ||
                         it.id.contains(glyphSearch,ignoreCase=true) ||
@@ -650,7 +650,7 @@ class MainActivity : FragmentActivity() {
                         (glyphScope=="全部" ||
                             (glyphScope=="已拥有" && it.owned) ||
                             (rarityLabels[it.rarity]==glyphScope))
-                } else items
+                } else glyphItems
                 if(glyphTab=="图鉴" || glyphTab=="每日商店") {
                     LazyColumn(modifier=Modifier.fillMaxSize(),
                         contentPadding=PaddingValues(bottom=18.dp)) {
