@@ -1,8 +1,16 @@
-# Orbit Admin for Android
+# Orbit Mail for Android
 
-Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
+Public Android mail client for the existing [Orbit Mail service](https://inbox.kango99w.de/).
 
-**Status: experimental debug build; not a production release. Android v0.4.1-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
+**Status: v0.7.0-dev is a native-first experimental Android client, not a production release.** The existing Cloudflare backend is unchanged.
+
+## Android v0.7.0-dev: Compose-first client, no automatic web page on tab switch
+
+- The five main tabs (Inbox, Mailboxes, Transfer, Admin, Settings) now open native Compose surfaces by default.
+- Transfer and Admin show honest native entry panels. Their legacy website documents are **not created** until a user explicitly selects a site-only operation; returning from website mode restores the native screen.
+- Explicit website fallback routes to the correct public, transfer, or admin WebView scope. Ordinary mailbox switching still uses the existing authorized in-place first-party bridge without reloading.
+- The trusted website remains the source of mail data; real native API + revocable device-bound session, admin/transfer APIs, background FCM and website body integration still need separate server implementation and device validation. **No fake file uploads, admin operation successes, or claims that WebView has been eliminated altogether.**
+- New policy and source-contract tests verify native-first routing, no web load on tab selection, and exact-origin fallback.
 
 ## Android v0.6.1-dev: prevent implicit web re-login on native navigation
 
