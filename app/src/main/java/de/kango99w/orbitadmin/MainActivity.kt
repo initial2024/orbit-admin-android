@@ -424,16 +424,7 @@ class MainActivity : FragmentActivity() {
                     message = "账号已安全绑定到本机，正在同步邮件。"
                     refreshNativeApi()
                 } else {
-                    nativeLoginError = when (result.error) {
-                        "NATIVE_TOTP_REQUIRED" -> "该账号已启用 2FA，请输入验证器当前 6 位动态码。"
-                        "NATIVE_LOGIN_REJECTED" -> "账号、密码或动态验证码错误；请核对后重试。"
-                        "NATIVE_DEVICE_LIMIT", "NATIVE_PAIR_CONFLICT" ->
-                            "活跃设备数已达上限，或本次绑定发生冲突。"
-                        "NATIVE_DEVICE_API_DISABLED" ->
-                            "原生账号 API 尚未部署。网站登录不等于原生授权。"
-                        "NATIVE_NETWORK_UNAVAILABLE" -> "无法连接服务器，请检查网络后重试。"
-                        else -> "绑定失败（HTTP ${result.status}），请检查服务器授权状态。"
-                    }
+                    nativeLoginError = NativeLoginFeedback.describe(result.status, result.error)
                 }
             }
         }
@@ -1125,7 +1116,7 @@ class MainActivity : FragmentActivity() {
         ) {
             Spacer(Modifier.height(18.dp))
             Text("Orbit Mail", style = MaterialTheme.typography.headlineLarge)
-            Text("登录你的邮箱账号", style = MaterialTheme.typography.titleLarge)
+            Text("普通账号登录", style = MaterialTheme.typography.titleLarge)
             Text("这是 Android 原生登录页。密码和动态验证码仅用于本次验证，后续由本机 Keystore 私钥签名读取邮件；不依赖网页登录 Cookie。",
                 style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(
@@ -1162,8 +1153,18 @@ class MainActivity : FragmentActivity() {
             ) {
                 Text(if (nativeLoginBusy) "正在安全验证…" else "登录并绑定这台设备")
             }
-            Text("账号登录与管理员权限独立；受保护邮箱及高级管理功能仍需单独授权。",
+            Text("这里只允许普通账号绑定 account_mail_read 权限，不能取得管理员权限。",
                 style = MaterialTheme.typography.labelSmall)
+            HorizontalDivider()
+            OutlinedButton(
+                onClick = {
+                    nativeLoginPassword = ""
+                    nativeLoginTotp = ""
+                    nativeLoginError = ""
+                    openSection(MailSection.ADMIN)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("进入管理员账号入口（独立认证）") }
         }
     }
 
@@ -1305,13 +1306,13 @@ class MainActivity : FragmentActivity() {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("管理员权限", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "管理员会话与普通邮箱登录分开验证。目前管理接口尚未全部原生化，操作时将明确进入受保护的网站页面。",
+                        "管理员身份必须单独登录并通过管理员 2FA；普通账号的原生设备授权不能访问管理员数据。当前管理操作仍需进入受保护的网站。应用内网页共享 Cookie 存储，尚未实现管理员网站会话的独立进程隔离。",
                         style = MaterialTheme.typography.bodySmall
                     )
                     OutlinedButton(
                         onClick = { navigateTo(AdminDestination.OVERVIEW.address) },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("打开管理员授权页面") }
+                    ) { Text("管理员登录 / 2FA（独立入口）") }
                 }
             }
             OutlinedTextField(
