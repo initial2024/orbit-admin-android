@@ -24,7 +24,10 @@ class OrbitFcmService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         if (!OrbitPushConfig.configured) return
-        if (!getSharedPreferences("orbit_push",MODE_PRIVATE).getBoolean("opt_in",false)) return
+        val consent = getSharedPreferences("orbit_push",MODE_PRIVATE)
+        if (!BackgroundPushConsent.mayDeliver(
+                consent.getBoolean("opt_in",false),
+                consent.getBoolean("revoke_pending",false))) return
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val manager=getSystemService(NOTIFICATION_SERVICE) as NotificationManager

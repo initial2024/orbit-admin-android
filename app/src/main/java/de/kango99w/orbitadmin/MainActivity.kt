@@ -240,6 +240,8 @@ class MainActivity : FragmentActivity() {
     private val notificationChannelId = "orbit_mail_notice"
     private var lastNewMailNoticeAtMs = 0L
     private var backgroundPushOptIn by mutableStateOf(false)
+    // Persist a pending server revocation across app restarts; never silently re-enable push.
+    private var backgroundPushRevokePending by mutableStateOf(false)
     private var backgroundPushStatus by mutableStateOf("未启用")
     private var lastPushAttemptAtMs = 0L
     private var lastNativeSnapshotRequestAtMs = 0L
@@ -314,10 +316,12 @@ class MainActivity : FragmentActivity() {
 
     private val pushPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
+            if (granted && BackgroundPushConsent.mayEnable(backgroundPushRevokePending)) {
                 setPushOptIn(true)
                 tryRegisterPush()
-            } else backgroundPushStatus = "未授予通知权限，设备未登记。"
+            } else backgroundPushStatus = if (backgroundPushRevokePending)
+                "服务器撤销尚未确认，不能重新开启推送。"
+                else "未授予通知权限，设备未登记。"
         }
 
     private val notificationPermission =
@@ -385,9 +389,13 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
-        backgroundPushOptIn = getSharedPreferences("orbit_push",MODE_PRIVATE)
-            .getBoolean("opt_in",false)
-        backgroundPushStatus = if (backgroundPushOptIn) "已授权，等待服务器确认" else "未启用"
+        val pushPrefs = getSharedPreferences("orbit_push",MODE_PRIVATE)
+        backgroundPushRevokePending = pushPrefs.getBoolean("revoke_pending",false)
+        backgroundPushOptIn = pushPrefs.getBoolean("opt_in",false)
+        if (backgroundPushRevokePending) setPushOptIn(false)
+        backgroundPushStatus = if (backgroundPushRevokePending)
+            "本机数据推送已关闭，服务器撤销尚未确认。"
+            else if (backgroundPushOptIn) "已授权，等待服务器确认" else "未启用"
 
         biometricPrompt = BiometricPrompt(
             this,
@@ -1201,6 +1209,12 @@ class MainActivity : FragmentActivity() {
         getSharedPreferences("orbit_push",MODE_PRIVATE).edit().putBoolean("opt_in",value).apply()
     }
 
+    private fun setPushRevokePending(value: Boolean) {
+        backgroundPushRevokePending = value
+        getSharedPreferences("orbit_push",MODE_PRIVATE).edit()
+            .putBoolean("revoke_pending",value).apply()
+    }
+
     private fun pushInstallationId(): String {
         val prefs = getSharedPreferences("orbit_push",MODE_PRIVATE)
         val current = prefs.getString("installation_id",null)
@@ -1229,8 +1243,9 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun tryRegisterPush() {
-        if (!backgroundPushOptIn || !OrbitPushConfig.configured ||
-            FirebaseApp.getApps(this).isEmpty() || !unlocked || !isCurrentPublicMailDocument()) return
+        if (!BackgroundPushConsent.mayDeliver(backgroundPushOptIn,backgroundPushRevokePending) ||
+            !OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty() ||
+            !unlocked || !isCurrentPublicMailDocument()) return
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val stamp = SystemClock.elapsedRealtime()
@@ -1238,7 +1253,9 @@ class MainActivity : FragmentActivity() {
         lastPushAttemptAtMs = stamp
         FirebaseMessaging.getInstance().token
             .addOnSuccessListener { token ->
-                if (!backgroundPushOptIn || !unlocked) return@addOnSuccessListener
+                if (!BackgroundPushConsent.mayDeliver(
+                    backgroundPushOptIn,backgroundPushRevokePending) || !unlocked)
+                    return@addOnSuccessListener
                 backgroundPushStatus = if (sendPushAction("push_register",token))
                     "设备登记已提交，等待服务器确认" else "需在已登录的普通收件箱登记设备"
             }
@@ -1248,6 +1265,10 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun requestBackgroundPush() {
+        if (!BackgroundPushConsent.mayEnable(backgroundPushRevokePending)) {
+            backgroundPushStatus = "服务端撤销尚未确认。请在普通邮箱完成撤销，避免旧令牌继续收信。"
+            return
+        }
         if (!OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty()) {
             backgroundPushStatus = "Firebase 项目未配置，暂不能启用后台通知。"
             return
@@ -1262,11 +1283,20 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun revokeBackgroundPush() {
-        if (!sendPushAction("push_revoke")) {
-            backgroundPushStatus = "请先进入已登录的普通收件箱，再撤销设备登记。"
-            return
-        }
-        backgroundPushStatus = "已请求服务器撤销，等待确认"
+        // Fail closed locally before any best-effort website/server request.
+        // FCM notification payloads may still be displayed by the OS until the server
+        // revokes the device; a local opt-out alone is not remote revocation.
+        setPushOptIn(false)
+        setPushRevokePending(true)
+        lastPushAttemptAtMs = 0L
+        retryServerPushRevocation()
+    }
+
+    private fun retryServerPushRevocation() {
+        if (!backgroundPushRevokePending) return
+        backgroundPushStatus = if (sendPushAction("push_revoke"))
+            "本机已停用数据消息提醒；已请求服务器撤销，等待确认。"
+            else "本机已停用数据消息提醒；请进入已登录的普通邮箱重试服务端撤销。"
     }
 
     private fun copyMailboxAddress(address: String) {
@@ -3305,7 +3335,13 @@ class MainActivity : FragmentActivity() {
                         style = MaterialTheme.typography.bodySmall)
                     Text(backgroundPushStatus,style = MaterialTheme.typography.bodySmall)
                     if (backgroundPushOptIn) {
-                        OutlinedButton(onClick = ::revokeBackgroundPush) { Text("撤销本机推送授权") }
+                        OutlinedButton(onClick = ::revokeBackgroundPush) { Text("撤销后台推送授权") }
+                    } else if (backgroundPushRevokePending) {
+                        Text("服务器撤销未确认前，不会自动重新登记。若服务端使用 FCM 通知消息，仍可能由系统直接显示，必须完成服务端撤销。",
+                            style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = ::retryServerPushRevocation) {
+                            Text("重试服务端撤销")
+                        }
                     } else {
                         Button(onClick = ::requestBackgroundPush,enabled = OrbitPushConfig.configured) {
                             Text(if (OrbitPushConfig.configured) "开启后台邮件提醒" else "Firebase 尚未配置")
@@ -3316,7 +3352,7 @@ class MainActivity : FragmentActivity() {
             OutlinedButton(onClick = { openSection(previousWebSection) }) { Text("返回邮箱") }
             OutlinedButton(onClick = ::lock) { Text("锁定应用") }
             HorizontalDivider()
-            Text("Orbit Mail / Admin · Android 测试版。无自动发信或离线后台收信能力。",
+            Text("Orbit Mail · Android 测试版。私人发信需独立授权；后台收信与推送尚未完成生产验收。",
                 style = MaterialTheme.typography.labelSmall)
         }
     }
@@ -3843,13 +3879,23 @@ class MainActivity : FragmentActivity() {
                         return@WebMessageListener
                     runOnUiThread {
                         when (data.data) {
-                            "registered" -> backgroundPushStatus = "服务器已登记本机后台提醒"
+                            "registered" -> {
+                                if (BackgroundPushConsent.mayDeliver(
+                                    backgroundPushOptIn,backgroundPushRevokePending))
+                                    backgroundPushStatus = "服务器已登记本机后台提醒"
+                            }
                             "revoked" -> {
-                                setPushOptIn(false)
-                                backgroundPushStatus = "服务器已撤销本机设备授权"
+                                if (backgroundPushRevokePending) {
+                                    setPushOptIn(false)
+                                    setPushRevokePending(false)
+                                    backgroundPushStatus = "服务器已确认撤销本机推送授权"
+                                }
                             }
                             "disabled" -> backgroundPushStatus = "服务器 FCM 推送尚未上线"
-                            "error" -> backgroundPushStatus = "服务器拒绝登记；检查账号与配置"
+                            "error" -> backgroundPushStatus =
+                                if (backgroundPushRevokePending)
+                                    "本机提醒已停用，但服务器撤销失败；请重试。"
+                                else "服务器拒绝登记；检查账号与配置"
                         }
                     }
                 }
