@@ -19,6 +19,9 @@ import javax.net.ssl.HttpsURLConnection
  * not a claim of independent WebView cookie-store/process isolation.
  */
 class NativeAdminClient {
+    private val cookieGate = AdminCookieCommitGate()
+    fun requestEpoch(): Long = cookieGate.snapshot()
+    fun invalidatePendingResponses() = cookieGate.invalidate()
     data class Reply(val status: Int, val value: JSONObject?, val error: String? = null)
     companion object {
         private const val ORIGIN = "https://inbox.kango99w.de"
@@ -78,11 +81,14 @@ class NativeAdminClient {
         }
     }
 
-    fun get(path: String): Reply = send("GET", path, null)
-    fun post(path: String, body: JSONObject = JSONObject()): Reply = send("POST", path, body)
+    fun get(path: String, epoch: Long): Reply = send("GET", path, null, epoch)
+    fun post(path: String, body: JSONObject = JSONObject(), epoch: Long): Reply =
+        send("POST", path, body, epoch)
 
-    private fun send(method: String, path: String, body: JSONObject?): Reply {
+    private fun send(method: String, path: String, body: JSONObject?, epoch: Long): Reply {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Admin HTTPS on main thread" }
+        if (!cookieGate.isCurrent(epoch))
+            return Reply(499, null, "ADMIN_NATIVE_REQUEST_CANCELLED")
         if (!allows(method, path)) return Reply(400, null, "ADMIN_NATIVE_ROUTE_DENIED")
         val bytes = body?.toString()?.toByteArray(Charsets.UTF_8)
         if (bytes != null && bytes.size > 16_384)
@@ -111,17 +117,20 @@ class NativeAdminClient {
             val code = connection.responseCode
             // Accept only the three administrator cookie names from the exact
             // pinned first-party HTTPS response; never copy arbitrary cookies.
-            var changed = false
-            for ((name, values) in connection.headerFields) {
-                if (!name.equals("Set-Cookie", ignoreCase = true)) continue
-                for (header in values.orEmpty()) {
-                    if (mayPersistCookie(header)) {
-                        CookieManager.getInstance().setCookie(address, header)
-                        changed = true
+            val headers = connection.headerFields
+            cookieGate.commitIfCurrent(epoch) {
+                var changed = false
+                for ((name, values) in headers) {
+                    if (!name.equals("Set-Cookie", ignoreCase = true)) continue
+                    for (header in values.orEmpty()) {
+                        if (mayPersistCookie(header)) {
+                            CookieManager.getInstance().setCookie(address, header)
+                            changed = true
+                        }
                     }
                 }
+                if (changed) CookieManager.getInstance().flush()
             }
-            if (changed) CookieManager.getInstance().flush()
             val stream = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?: return Reply(code, null, "HTTP_$code")
             val output = ByteArrayOutputStream()
