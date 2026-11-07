@@ -55,6 +55,38 @@ class NativeDeviceClientInstrumentedTest {
         } finally { native.clearLocalBinding() }
     }
 
+    @Test fun nativeLoginPacketIsAnExactSignedCookieFreeCredentialExchange() {
+        val client = NativeDeviceClient(context)
+        client.clearLocalBinding()
+        try {
+            val packet = client.createNativeLoginPayload(
+                "  User@Example.org  ", "synthetic-password", "123456", "Pixel"
+            )
+            assertEquals(
+                setOf("email", "public_key", "signature", "nonce", "stamp", "label",
+                    "totp_code", "current_password"),
+                packet.keys().asSequence().toSet()
+            )
+            assertEquals("user@example.org", packet.getString("email"))
+            assertFalse(packet.has("action"))
+            assertFalse(packet.has("v"))
+            assertFalse(packet.has("cookie"))
+            val pub = KeyFactory.getInstance("EC").generatePublic(
+                X509EncodedKeySpec(Base64.getUrlDecoder().decode(packet.getString("public_key")))
+            )
+            val canonical = "orbit-native-pair-v1\\n${packet.getString("nonce")}\\n${packet.getLong("stamp")}\\nPixel"
+                .replace("\\n", "\n")
+            val verifier = Signature.getInstance("SHA256withECDSA")
+            verifier.initVerify(pub)
+            verifier.update(canonical.toByteArray(Charsets.UTF_8))
+            val signature = Base64.getUrlDecoder().decode(packet.getString("signature"))
+            assertTrue(verifier.verify(asDer(signature)))
+            assertFalse(client.isBound())
+        } finally {
+            client.clearLocalBinding()
+        }
+    }
+
     @Test fun deviceGrantSurvivesClientRecreationButNotLocalUnbind() {
         val client = NativeDeviceClient(context)
         client.clearLocalBinding()
