@@ -59,39 +59,11 @@ class NativeDeviceClient(context: Context) {
 
     private fun nonce(): String = ByteArray(24).also { SecureRandom().nextBytes(it) }.let(::base64)
 
-    /**
-     * Java Signature SHA256withECDSA returns DER; Worker WebCrypto ECDSA expects
-     * exactly 64-byte IEEE-P1363 (32-byte r || 32-byte s). Reject unusual DER.
-     */
-    private fun derToP1363(der: ByteArray): ByteArray {
-        val data = der.map { it.toInt() and 0xff }
-        if (data.size !in 68..74 || data[0] != 0x30 || data[1] != data.size - 2) {
-            throw IOException("Invalid ECDSA DER envelope")
-        }
-        var position = 2
-        val result = ByteArray(64)
-        repeat(2) { component ->
-            if (data.getOrNull(position++) != 0x02) throw IOException("Invalid ECDSA INTEGER")
-            val len = data.getOrNull(position++) ?: throw IOException("Truncated ECDSA")
-            if (len !in 1..33 || position + len > data.size) throw IOException("ECDSA integer length")
-            val raw = der.copyOfRange(position, position + len)
-            position += len
-            val unsigned = if (len == 33) {
-                if (raw[0].toInt() != 0) throw IOException("ECDSA sign extension")
-                raw.copyOfRange(1, 33)
-            } else raw
-            if (unsigned.size > 32) throw IOException("ECDSA width")
-            System.arraycopy(unsigned, 0, result, 32 * component + 32 - unsigned.size, unsigned.size)
-        }
-        if (position != data.size) throw IOException("Trailing ECDSA data")
-        return result
-    }
-
     private fun sign(payload: String): String {
         val signer = Signature.getInstance("SHA256withECDSA")
         signer.initSign(getOrCreateKey().private)
         signer.update(payload.toByteArray(Charsets.UTF_8))
-        return base64(derToP1363(signer.sign()))
+        return base64(P256SignatureFormat.derToP1363(signer.sign()))
     }
 
     /**
@@ -119,7 +91,7 @@ class NativeDeviceClient(context: Context) {
     fun completePair(deviceId: String, expiresAt: Long): Boolean {
         if (!DEVICE_ID.matches(deviceId) || expiresAt <= System.currentTimeMillis() ||
             existingKey() == null) return false
-        return prefs.edit().putString("device_id", deviceId)
+        return prefs.edit().clear().putString("device_id", deviceId)
             .putLong("expires_at", expiresAt).commit()
     }
 
