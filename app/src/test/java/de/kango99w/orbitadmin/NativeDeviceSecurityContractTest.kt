@@ -70,6 +70,23 @@ class NativeDeviceSecurityContractTest {
         assertTrue(source.contains("if (nativeApiActive) {"))
     }
 
+    @Test fun signedSelfRevocationRequiresRealServerAcknowledgment() {
+        val client = source("NativeDeviceClient.kt")
+        val screen = source("MainActivity.kt")
+        assertTrue(client.contains("fun revokeSelf(): Response"))
+        assertTrue(client.contains("\"/api/account/native-device/revoke-self\", \"POST\""))
+        assertTrue(client.contains("instanceFollowRedirects = false"))
+        val body = screen.substringAfter("private fun revokeNativeDeviceOnServer() {")
+            .substringBefore("/** Explicit user action only: website performs")
+        assertTrue(body.contains("nativeDeviceClient.revokeSelf()"))
+        assertTrue(body.contains("response.status == 200"))
+        assertTrue(body.contains("optBoolean(\"revoked\") == true"))
+        assertTrue(body.contains("if (revoked)"))
+        assertTrue(body.contains("else \"服务器撤销失败"))
+        assertTrue(body.contains("nativeRequestGeneration.incrementAndGet()"))
+        assertFalse(body.contains("loadUrl("))
+    }
+
     @Test fun boundDeviceDoesNotCreateAHiddenWebview() {
         val source = source("MainActivity.kt")
         assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
