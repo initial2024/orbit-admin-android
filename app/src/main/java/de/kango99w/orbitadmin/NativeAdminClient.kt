@@ -58,14 +58,24 @@ class NativeAdminClient {
                 val cut = item.indexOf('=')
                 if (cut <= 0) null else {
                     val key = item.substring(0, cut).trim()
-                    if (key in ALLOWED_COOKIES) "$key=${item.substring(cut + 1).trim()}"
+                    val value = item.substring(cut + 1).trim()
+                    if (key in ALLOWED_COOKIES &&
+                        value.matches(Regex("^[A-Za-z0-9_%.-]{1,256}$")))
+                        "$key=$value"
                     else null
                 }
             }.distinctBy { it.substringBefore('=') }.joinToString("; ")
 
-        fun mayPersistCookie(header: String): Boolean =
-            header.substringBefore('=').trim() in ALLOWED_COOKIES &&
-                !header.contains('\n') && !header.contains('\r')
+        fun mayPersistCookie(header: String): Boolean {
+            val key = header.substringBefore('=').trim()
+            val attrs = header.split(';').drop(1).map { it.trim().lowercase() }
+            val path = if (key == "kango_admin_session") "path=/" else "path=/api/admin"
+            return key in ALLOWED_COOKIES &&
+                !header.contains('\n') && !header.contains('\r') &&
+                attrs.contains("secure") && attrs.contains("httponly") &&
+                attrs.contains("samesite=strict") && attrs.contains(path) &&
+                attrs.none { it.startsWith("domain=") }
+        }
     }
 
     fun get(path: String): Reply = send("GET", path, null)
