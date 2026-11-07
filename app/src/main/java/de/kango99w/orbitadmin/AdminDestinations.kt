@@ -6,6 +6,8 @@ package de.kango99w.orbitadmin
  */
 enum class AdminDestination(val title: String, val address: String) {
     OVERVIEW("总览", "https://inbox.kango99w.de/admin/"),
+    PUBLIC_MAIL("临时邮箱", "https://inbox.kango99w.de/"),
+    TRANSFER("文件传输", "https://inbox.kango99w.de/transfer/"),
     MAIL("邮箱", "https://inbox.kango99w.de/admin/?adminTab=tempMail"),
     DOMAINS("域名", "https://inbox.kango99w.de/admin/domain-control/"),
     RECORDS("记录", "https://inbox.kango99w.de/admin/records/"),

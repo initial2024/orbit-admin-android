@@ -1,6 +1,16 @@
 package de.kango99w.orbitadmin
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.os.Build
+import android.os.SystemClock
+import android.content.Context
+import android.content.pm.PackageManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -68,7 +78,24 @@ class MainActivity : FragmentActivity() {
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var allowMultipleFiles = false
     private var deferredFileUris: Array<Uri>? = null
+    private var pickerPending = false
+    private var pickerLaunchedAtMs = 0L
+    private val notificationChannelId = "orbit_mail_notice"
+
     private lateinit var biometricPrompt: BiometricPrompt
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+            if (allowed) sendTestNotification()
+            else message = "系统未授权通知；不会发送任何邮件内容。"
+        }
+
+    private fun pickerReturnAllowed(): Boolean {
+        val locked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
+        return PickerReturnPolicy.canResumeWithoutUnlock(
+            pickerLaunchedAtMs, SystemClock.elapsedRealtime(), locked
+        )
+    }
 
     private val singleFilePicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
@@ -81,6 +108,10 @@ class MainActivity : FragmentActivity() {
         }
 
     private fun finishFilePick(selected: List<Uri>) {
+        val safeReturn = pickerPending && pickerReturnAllowed()
+        pickerPending = false
+        pickerLaunchedAtMs = 0
+        if (!safeReturn) lock()
         val callback = pendingFileCallback ?: return
         val accepted = selected.take(if (allowMultipleFiles) selected.size else 1).toTypedArray()
         if (accepted.isEmpty()) {
@@ -102,6 +133,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        createNotificationChannel()
 
         biometricPrompt = BiometricPrompt(
             this,
@@ -109,7 +141,7 @@ class MainActivity : FragmentActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     unlocked = true
-                    message = "设备解锁完成；管理员身份仍由网站验证。"
+                    message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
                     deferredFileUris?.let { selection ->
@@ -241,14 +273,17 @@ class MainActivity : FragmentActivity() {
                     browser?.let { if (it.canGoForward()) it.goForward() }
                 }) { Text("前进") }
                 TextButton(onClick = { browser?.reload() }) { Text("刷新") }
+                TextButton(onClick = ::requestTestNotification) { Text("通知测试") }
                 TextButton(onClick = { showClearConfirm = true }) { Text("清理本机") }
             }
-            Text(
-                text = message,
-                maxLines = 2,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
-                style = MaterialTheme.typography.labelSmall
-            )
+            if (message.isNotBlank()) {
+                Text(
+                    text = message,
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 
@@ -328,7 +363,7 @@ class MainActivity : FragmentActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (url != null && AdminUrlPolicy.isTrustedMainFrame(url)) {
-                    message = "网站会话由服务器验证；2FA 和可信设备与网页版共用。"
+                    message = ""
                 }
             }
 
@@ -347,6 +382,8 @@ class MainActivity : FragmentActivity() {
                 pendingFileCallback?.onReceiveValue(null)
                 pendingFileCallback = null
                 deferredFileUris = null
+                pickerPending = false
+                pickerLaunchedAtMs = 0
                 browser = null
                 openedOnce = false
                 unlocked = false
@@ -373,12 +410,16 @@ class MainActivity : FragmentActivity() {
                     .ifEmpty { listOf("*/*") }
                     .toTypedArray()
                 return try {
+                    pickerPending = true
+                    pickerLaunchedAtMs = SystemClock.elapsedRealtime()
                     if (allowMultipleFiles) multipleFilePicker.launch(accepted)
                     else singleFilePicker.launch(accepted)
                     true
                 } catch (_: Exception) {
                     pendingFileCallback = null
                     deferredFileUris = null
+                    pickerPending = false
+                    pickerLaunchedAtMs = 0
                     filePathCallback.onReceiveValue(null)
                     false
                 }
@@ -395,15 +436,78 @@ class MainActivity : FragmentActivity() {
         return view
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Leaving through the trusted Android document picker is not a new login,
+        // unless the device was locked or the bounded return window has expired.
+        if (pickerPending && !pickerReturnAllowed()) lock()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pickerPending && !pickerReturnAllowed()) lock()
+        if (unlocked) {
+            browser?.resumeTimers()
+            browser?.onResume()
+        }
+    }
+
     override fun onStop() {
-        lock() // Lock even when device/app backgrounding; cookies remain website-managed.
+        if (pickerPending && pickerReturnAllowed()) {
+            browser?.onPause()
+            browser?.pauseTimers()
+        } else {
+            lock()
+        }
         super.onStop()
+    }
+
+    private fun createNotificationChannel() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            notificationChannelId, "Orbit 邮件提醒", NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "隐藏正文和验证码的邮件到达提醒"
+            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun requestTestNotification() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        sendTestNotification()
+    }
+
+    private fun sendTestNotification() {
+        // A visible test proves system permission and notification channel only.
+        // It does not claim that server push or new-mail detection is connected.
+        val open = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pi = PendingIntent.getActivity(
+            this, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notice = Notification.Builder(this, notificationChannelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentTitle("Orbit Admin · 通知测试")
+            .setContentText("系统通知通道已就绪；新邮件后台推送仍需服务器端接入。")
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(1001, notice)
+        message = "已发送测试通知；它不是新邮件提醒。"
     }
 
     override fun onDestroy() {
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
         deferredFileUris = null
+        pickerPending = false
+        pickerLaunchedAtMs = 0
         val current = browser
         browser = null
         (current?.parent as? ViewGroup)?.removeView(current)
