@@ -39,6 +39,13 @@ class NativeLoginFeedbackTest {
         assertTrue(result.contains("不要反复提交密码"))
     }
 
+    @Test fun preNetworkKeystoreFailureIsNotLabeledAsBadCredentials() {
+        val result = NativeLoginFeedback.describe(503, "NATIVE_KEYSTORE_UNAVAILABLE")
+        assertTrue(result.contains("Android Keystore"))
+        assertTrue(result.contains("尚未向服务器发送"))
+        assertFalse(result.contains("密码错误"))
+    }
+
     @Test fun allFailuresExplicitlyRemainUnbound() {
         for (status in listOf(400, 401, 403, 404, 405, 409, 503)) {
             val result = NativeLoginFeedback.describe(status, null)
