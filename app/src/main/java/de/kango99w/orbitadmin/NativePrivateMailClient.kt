@@ -34,6 +34,7 @@ class NativePrivateMailClient {
             return try {
                 val url = URI(value)
                 if (url.scheme != "https" || url.host != "mail.kango99w.de" ||
+                    url.rawUserInfo != null ||
                     (url.path != "/" && url.path != "") || url.port != -1 ||
                     url.rawQuery != null) null else {
                     val fragment = url.rawFragment
