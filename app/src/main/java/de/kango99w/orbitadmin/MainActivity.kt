@@ -172,6 +172,14 @@ class MainActivity : FragmentActivity() {
     private var adminPrivateDomainOptions by mutableStateOf<List<AdminCreateDomainOption>>(emptyList())
     private var adminOrdinaryDomainOptions by mutableStateOf<List<AdminCreateDomainOption>>(emptyList())
     private var adminMailboxFilter by mutableStateOf("全部")
+    private var adminMailboxFiltersExpanded by mutableStateOf(false)
+    private var adminDomainFiltersExpanded by mutableStateOf(false)
+    private var adminRecordFiltersExpanded by mutableStateOf(false)
+    private var adminRegistrationFiltersExpanded by mutableStateOf(false)
+    private var adminRegistrationSearch by mutableStateOf("")
+    private var adminRegistrationSourceFilter by mutableStateOf("全部")
+    private var adminRegisteredAccounts by mutableStateOf<List<AdminRegisteredAccount>>(emptyList())
+    private var adminSelectedRegistration by mutableStateOf<AdminRegisteredAccount?>(null)
     private var adminDomainSearch by mutableStateOf("")
     private var adminDomainSourceFilter by mutableStateOf("全部")
     private var adminDomainStateFilter by mutableStateOf("全部")
@@ -2522,6 +2530,8 @@ class MainActivity : FragmentActivity() {
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
+        adminRegisteredAccounts = emptyList()
+        adminSelectedRegistration = null
                     adminDeleteTarget = null
                     adminRevokeTrustedTarget = null
                     adminTotpRequired = false
@@ -2533,8 +2543,9 @@ class MainActivity : FragmentActivity() {
 
     private fun openAdminNativePane(pane: String) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
-            pane !in setOf("mailboxes", "domains", "records", "security")) return
+            pane !in setOf("mailboxes", "domains", "records", "security", "users")) return
         adminPane = pane
+        adminSelectedRegistration = null
         adminSelectedMailbox = null
         adminSelectedMessageId = null
         adminSelectedMessage = null
@@ -2560,6 +2571,11 @@ class MainActivity : FragmentActivity() {
                     primary = nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses", epoch)
                     secondary = null
                 }
+                "users" -> {
+                    primary = nativeAdminClient.get(
+                        "/api/admin/account-registry/registrations?limit=100", epoch)
+                    secondary = null
+                }
                 else -> {
                     primary = nativeAdminClient.get("/api/admin/2fa/status", epoch)
                     secondary = nativeAdminClient.get("/api/admin/trusted-devices", epoch)
@@ -2573,6 +2589,8 @@ class MainActivity : FragmentActivity() {
                 AdminManagementModels.recordedAddresses(primary.value) else emptyList()
             val security = if (pane == "security" && valid)
                 AdminManagementModels.security(primary.value, secondary?.value) else null
+            val registrations = if (pane == "users" && valid)
+                AdminRegistrationModels.parse(primary.value) else emptyList()
             runOnUiThread {
                 if (!unlocked || generation != adminGeneration.get() || adminPane != pane)
                     return@runOnUiThread
@@ -2583,6 +2601,8 @@ class MainActivity : FragmentActivity() {
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
+        adminRegisteredAccounts = emptyList()
+        adminSelectedRegistration = null
                     adminPane = "mailboxes"
                     adminDeleteTarget = null
                     adminRevokeTrustedTarget = null
@@ -2590,12 +2610,13 @@ class MainActivity : FragmentActivity() {
                     return@runOnUiThread
                 }
                 if (!valid) {
-                    adminError = "原生管理员${when(pane){"domains"->"域名";"records"->"记录";else->"安全"}}数据加载失败，HTTP ${primary.status}/${secondary?.status ?: "-"}；未回退网页。"
+                    adminError = "原生管理员${when(pane){"domains"->"域名";"records"->"记录";"users"->"登记账户";else->"安全"}}数据加载失败，HTTP ${primary.status}/${secondary?.status ?: "-"}；未回退网页。"
                     return@runOnUiThread
                 }
                 when (pane) {
                     "domains" -> adminManagedDomains = domains
                     "records" -> adminRecordedAddresses = records
+                    "users" -> adminRegisteredAccounts = registrations
                     else -> adminSecurityState = security
                 }
             }
@@ -3836,6 +3857,8 @@ class MainActivity : FragmentActivity() {
         adminManagedDomains = emptyList()
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
+        adminRegisteredAccounts = emptyList()
+        adminSelectedRegistration = null
         adminDeleteTarget = null
         adminRevokeTrustedTarget = null
         // Website CookieManager and native Keystore grants are separate auth realms.
@@ -3890,6 +3913,8 @@ class MainActivity : FragmentActivity() {
         adminManagedDomains = emptyList()
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
+        adminRegisteredAccounts = emptyList()
+        adminSelectedRegistration = null
         adminDeleteTarget = null
         adminRevokeTrustedTarget = null
         showAdminCreateDialog = false
