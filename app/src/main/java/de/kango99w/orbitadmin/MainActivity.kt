@@ -83,6 +83,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -1450,6 +1451,8 @@ class MainActivity : FragmentActivity() {
 
     /** Stay in Compose, even when the server-side native reader is not yet deployed. */
     private fun openNativeMessage(id: String) {
+        // A fast second tap must not enqueue a duplicate signed read.
+        if (pendingNativeMessageId == id && nativeMailDetail == null) return
         if (!unlocked || !NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true ||
             nativeInbox?.messages?.none { it.id == id } != false) return
         pendingNativeMessageId = id
@@ -1564,6 +1567,8 @@ class MainActivity : FragmentActivity() {
                 pendingNativeMessageId=null
                 nativeMailDetail=null
             }) { Text("‹ 返回收件箱") }
+            if (!nativeReadCommandUnavailable)
+                LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
             Text(if (nativeReadCommandUnavailable) "原生邮件阅读暂不可用"
                 else "正在从已授权的邮箱读取正文…",
                 style=MaterialTheme.typography.titleMedium)
@@ -1708,7 +1713,7 @@ class MainActivity : FragmentActivity() {
                     contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
                     verticalArrangement=Arrangement.spacedBy(8.dp)
                 ) {
-                    items(mails,key={it.id}) { mail ->
+                    items(mails,key={it.id},contentType={ "mail" }) { mail ->
                         Card(
                             modifier=Modifier.fillMaxWidth()
                                 .clickable { openNativeMessage(mail.id) },
@@ -2422,7 +2427,7 @@ class MainActivity : FragmentActivity() {
 
     private fun openNativeAdminMessage(id: String) {
         val mailbox = adminSelectedMailbox ?: return
-        if (!unlocked || !adminAuthenticated || adminBusy ||
+        if (!unlocked || !adminAuthenticated ||
             !AdminNativeModels.validId(id) ||
             adminMessages.none { it.id == id }) return
         val generation = adminGeneration.incrementAndGet()
@@ -3053,6 +3058,8 @@ class MainActivity : FragmentActivity() {
                     }
                 } else if (adminSelectedMessageId != null) {
                     Column(modifier=Modifier.padding(20.dp)) {
+                        if (adminMessageLoading)
+                            LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                         Text(if (adminMessageLoading) "正在读取管理员邮件…" else "邮件暂不可读取",
                             style=MaterialTheme.typography.titleMedium)
                         if (!adminMessageLoading) TextButton(onClick={
@@ -3081,10 +3088,10 @@ class MainActivity : FragmentActivity() {
                         contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
                         verticalArrangement=Arrangement.spacedBy(8.dp)
                     ) {
-                        items(messages,key={it.id}) { item ->
+                        items(messages,key={it.id},contentType={ "mail" }) { item ->
                             Card(
                                 modifier=Modifier.fillMaxWidth()
-                                    .clickable(enabled=!adminBusy) {
+                                    .clickable(enabled=adminAuthenticated) {
                                         openNativeAdminMessage(item.id)
                                     },
                                 shape=RoundedCornerShape(18.dp),
@@ -3618,8 +3625,7 @@ class MainActivity : FragmentActivity() {
                                 Spacer(Modifier.padding(horizontal=5.dp))
                                 Column {
                                     Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
-                                    Text((if(nativeTab)"原生 Android" else "网页授权") +
-                                        " · "+BuildConfig.VERSION_NAME,
+                                    Text(if(nativeTab)"原生邮箱 · 隐私优先" else "网页登录 · 独立授权",
                                         style=MaterialTheme.typography.labelSmall,
                                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -3632,6 +3638,11 @@ class MainActivity : FragmentActivity() {
                         }
                         // A compact, collapsed-by-default workspace selector keeps the inbox tall.
                         // It is UI-only: neither account's credentials nor session are shared.
+                        Surface(
+                            modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=5.dp),
+                            color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.55f),
+                            shape=RoundedCornerShape(16.dp)
+                        ) {
                         Row(modifier=Modifier.fillMaxWidth()
                             .padding(horizontal=12.dp),
                             verticalAlignment=Alignment.CenterVertically) {
@@ -3653,6 +3664,7 @@ class MainActivity : FragmentActivity() {
                                 color=MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines=1
                             )
+                        }
                         }
                         if(workspaceSwitcherExpanded) {
                             Row(modifier=Modifier.fillMaxWidth()
