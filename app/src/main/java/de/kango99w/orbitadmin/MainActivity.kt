@@ -147,6 +147,7 @@ class MainActivity : FragmentActivity() {
     private var nativeLoginError by mutableStateOf("")
     private var pendingPairNonce: String? = null
     private var showNativeMail by mutableStateOf(true)
+    private var showNativeAccountDetails by mutableStateOf(false)
     // All regular tabs are Compose surfaces. Website views are explicit fallback only.
     private var showNativeToolsPanel by mutableStateOf(true)
     private var adminSearchQuery by mutableStateOf("")
@@ -1603,6 +1604,28 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
+    private fun NativeAccountDetailDialog(snapshot: NativeInboxSnapshot) {
+        AlertDialog(
+            onDismissRequest={showNativeAccountDetails=false},
+            title={Text("普通邮箱 · 当前账户")},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Text("本机原生授权："+if(nativeDeviceClient.isBound()) "已绑定" else "未绑定")
+                    Text("当前邮箱："+snapshot.currentAddress.ifBlank{"无"})
+                    Text("可访问邮箱："+snapshot.mailboxes.size+" 个")
+                    Text("当前收件箱："+snapshot.messages.size+" 封")
+                    Text("原生邮件阅读："+if(snapshot.nativeReadSupported)"服务端已声明支持" else "尚未确认")
+                    Text("这不是网站全部个人资料；只有服务端返回的当前邮箱信息会显示。"+
+                        "服务器的账户详情、订阅及其他设备记录仍需独立受权接口。",
+                        style=MaterialTheme.typography.bodySmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton={TextButton(onClick={showNativeAccountDetails=false}) { Text("关闭") }}
+        )
+    }
+
+    @Composable
     private fun NativeInboxContent(snapshot: NativeInboxSnapshot, showMailboxes: Boolean) {
         val query = nativeSearchQuery.trim()
         val mailboxes = if (query.isEmpty()) snapshot.mailboxes else
@@ -1621,6 +1644,10 @@ class MainActivity : FragmentActivity() {
                     Text(snapshot.currentAddress.ifBlank { "尚未选择邮箱" },
                         maxLines=1,style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("账户详情 ›",
+                        modifier=Modifier.clickable { showNativeAccountDetails=true },
+                        style=MaterialTheme.typography.labelSmall,
+                        color=MaterialTheme.colorScheme.primary)
                 }
                 TextButton(onClick={
                     if (nativeApiActive) refreshNativeApi()
@@ -1656,27 +1683,35 @@ class MainActivity : FragmentActivity() {
             }
             HorizontalDivider()
             if (showMailboxes) {
-                LazyColumn(modifier=Modifier.fillMaxSize()) {
+                LazyColumn(modifier=Modifier.fillMaxSize(),
+                    contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+                    verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     items(mailboxes,key={it.id}) { mailbox ->
-                        Row(modifier=Modifier.fillMaxWidth()
-                            .clickable { openNativeMailbox(mailbox.id) }
-                            .padding(horizontal=16.dp,vertical=11.dp),
-                            verticalAlignment=Alignment.CenterVertically) {
-                            MailAvatar(mailbox.address,44)
-                            Spacer(Modifier.padding(horizontal=7.dp))
-                            Column(modifier=Modifier.weight(1f)) {
-                                Text(mailbox.address,maxLines=1,style=MaterialTheme.typography.titleSmall)
-                                Text(when {
-                                    mailbox.id==snapshot.currentId -> "当前邮箱"
-                                    mailbox.isProtected -> "受保护邮箱"
-                                    else -> "点击切换到此邮箱"
-                                },style=MaterialTheme.typography.labelSmall,
-                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Card(modifier=Modifier.fillMaxWidth()
+                            .clickable { openNativeMailbox(mailbox.id) },
+                            shape=RoundedCornerShape(16.dp),
+                            colors=CardDefaults.cardColors(
+                                containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.46f))) {
+                            Row(modifier=Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment=Alignment.CenterVertically) {
+                                MailAvatar(mailbox.address,38)
+                                Spacer(Modifier.padding(horizontal=6.dp))
+                                Column(modifier=Modifier.weight(1f),
+                                    verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                                    Text(mailbox.address,maxLines=1,
+                                        style=MaterialTheme.typography.titleSmall)
+                                    Text(when {
+                                        mailbox.id==snapshot.currentId -> "当前邮箱"
+                                        mailbox.isProtected -> "受保护邮箱"
+                                        else -> "点击打开"
+                                    },style=MaterialTheme.typography.labelSmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                TextButton(onClick={copyMailboxAddress(mailbox.address)}) {
+                                    Text("复制")
+                                }
                             }
-                            TextButton(onClick={copyMailboxAddress(mailbox.address)}) { Text("复制") }
-                            TextButton(onClick={openNativeMailbox(mailbox.id)}) { Text("查看") }
                         }
-                        HorizontalDivider()
                     }
                     item {
                         Column(modifier=Modifier.fillMaxWidth().padding(16.dp),
@@ -3577,6 +3612,8 @@ class MainActivity : FragmentActivity() {
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
             NativeGlyphBuyDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
+        if (showNativeAccountDetails && nativeInbox != null && workspace == MailWorkspace.ORDINARY)
+            NativeAccountDetailDialog(nativeInbox!!)
         Scaffold(
             topBar = {
                 val nativeMailTab = (activeSection == MailSection.INBOX ||
@@ -3877,6 +3914,7 @@ class MainActivity : FragmentActivity() {
         adminDeleteTarget = null
         adminRevokeTrustedTarget = null
         showAdminCreateDialog = false
+        showNativeAccountDetails = false
         nativeRequestGeneration.incrementAndGet()
         nativeApiLoading = false
         showNativePairDialog = false
