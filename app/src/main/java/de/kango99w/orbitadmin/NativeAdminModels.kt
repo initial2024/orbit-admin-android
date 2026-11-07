@@ -9,7 +9,9 @@ data class AdminNativeMailbox(
     val privateMailbox: Boolean,
     val unread: Int = 0,
     val messageCount: Int = 0,
-    val status: String = "active"
+    val status: String = "active",
+    val expiresAt: Long = 0,
+    val starred: Boolean = false
 )
 
 data class AdminNativeMessage(
@@ -56,7 +58,9 @@ object AdminNativeModels {
                 id, address, privateMailbox,
                 o.optInt("unread_count").coerceIn(0, 100_000),
                 o.optInt("message_count").coerceIn(0, 100_000),
-                o.optString("status").take(24)
+                o.optString("status").take(24),
+                o.optLong("expires_at"),
+                o.optInt("is_starred") == 1 || o.optBoolean("is_starred", false)
             )
         }
     }
