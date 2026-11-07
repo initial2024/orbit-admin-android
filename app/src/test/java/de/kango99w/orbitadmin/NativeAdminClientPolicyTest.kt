@@ -17,6 +17,8 @@ class NativeAdminClientPolicyTest {
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/2fa/status"))
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/trusted-devices"))
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/account-registry/registrations"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/account-registry/registrations?limit=100"))
+        assertFalse(NativeAdminClient.allows("POST", "/api/admin/account-registry/registrations?limit=100"))
         assertFalse(NativeAdminClient.allows("POST", "/api/admin/account-registry/registrations"))
         assertFalse(NativeAdminClient.allows("GET", "/api/admin/account-registry/registrations?limit=500"))
         assertFalse(NativeAdminClient.allows("GET", "/api/admin/account-registry/registrations/secret"))

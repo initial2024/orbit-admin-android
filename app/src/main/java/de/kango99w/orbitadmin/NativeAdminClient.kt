@@ -58,6 +58,10 @@ class NativeAdminClient {
         )
 
         fun allows(method: String, path: String): Boolean {
+            // An exact, bounded, read-only registry query; never expose arbitrary
+            // user-supplied URLs or open-ended list sizes to the admin cookie.
+            if (method == "GET" && path == "/api/admin/account-registry/registrations?limit=100")
+                return true
             if (path.any { it == '?' || it == '#' || it == '%' || it == '\\' ||
                     it == '\n' || it == '\r' }) return false
             return when (method) {
