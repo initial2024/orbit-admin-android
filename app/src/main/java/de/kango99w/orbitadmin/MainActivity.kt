@@ -709,6 +709,10 @@ class MainActivity : FragmentActivity() {
         pendingNativeMessageId = id
         nativeMailDetail = null
         showNativeMail = true
+        if (nativeApiActive) {
+            readMessageViaNativeApi(id)
+            return
+        }
         nativeReadCommandUnavailable = nativeInbox?.nativeReadSupported != true ||
             !sendNativeMailboxCommand("read_message",id)
         if (nativeReadCommandUnavailable) {
@@ -719,6 +723,19 @@ class MainActivity : FragmentActivity() {
     /** Reuse the authorized mailbox-selection command. Never force a WebView navigation. */
     private fun openNativeMailbox(id: String) {
         if (!unlocked || !NativeInboxPolicy.isSafeId(id)) return
+        if (nativeApiActive) {
+            val item = nativeInbox?.mailboxes?.firstOrNull { it.id == id } ?: return
+            getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE).edit()
+                .putString("selected_mailbox_id", id).apply()
+            nativeInbox = nativeInbox?.copy(currentId = id, currentAddress = item.address,
+                locked = item.isProtected, messages = emptyList())
+            pendingNativeMessageId = null
+            nativeMailDetail = null
+            showNativeMail = true
+            openSection(MailSection.INBOX)
+            refreshNativeApi()
+            return
+        }
         if (sendNativeMailboxCommand("select_mailbox",id)) {
             pendingNativeMessageId = null
             nativeMailDetail = null
@@ -823,7 +840,10 @@ class MainActivity : FragmentActivity() {
                         maxLines=1,style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick={ sendNativeMailboxCommand("refresh") }) {
+                TextButton(onClick={
+                    if (nativeApiActive) refreshNativeApi()
+                    else sendNativeMailboxCommand("refresh")
+                }) {
                     Icon(painterResource(R.drawable.ic_refresh),contentDescription="刷新")
                     Text("刷新")
                 }
@@ -912,7 +932,10 @@ class MainActivity : FragmentActivity() {
                     Text("暂无邮件",style=MaterialTheme.typography.titleLarge)
                     Text("邮件将显示在这里。可刷新或切换邮箱。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick={sendNativeMailboxCommand("refresh")}) {
+                    OutlinedButton(onClick={
+                        if (nativeApiActive) refreshNativeApi()
+                        else sendNativeMailboxCommand("refresh")
+                    }) {
                         Text("检查新邮件")
                     }
                 }
@@ -973,7 +996,10 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    Text("尚未取得当前邮箱数据", style = MaterialTheme.typography.titleMedium)
+                    Text(if (nativeDeviceClient.isBound()) "已绑定设备，等待原生接口"
+                        else "尚未取得当前邮箱数据", style = MaterialTheme.typography.titleMedium)
+                    if (nativeApiNotice.isNotBlank())
+                        Text(nativeApiNotice, style = MaterialTheme.typography.bodySmall)
                     Text("需要先在安全的官网登录页面完成账号和 2FA 验证；"
                         + "若已经登录，可刷新页面重新同步。",
                         style = MaterialTheme.typography.bodySmall)
