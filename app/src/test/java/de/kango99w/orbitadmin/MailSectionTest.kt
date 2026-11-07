@@ -6,7 +6,7 @@ import org.junit.Test
 
 class MailSectionTest {
     @Test fun everyRemoteSectionUsesTheTrustedOrigin() {
-        assertEquals(5, MailSection.entries.size)
+        assertEquals(7, MailSection.entries.size)
         for (section in MailSection.entries) {
             if (section.address != null) assertTrue(AdminUrlPolicy.isTrustedMainFrame(section.address))
         }
