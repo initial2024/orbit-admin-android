@@ -44,9 +44,17 @@ class NativeDeviceSecurityContractTest {
         assertFalse(listener.contains("CookieManager"))
     }
 
+    @Test fun websiteBridgeCannotOverwriteBoundNativeMailData() {
+        val source = source("MainActivity.kt")
+        assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound()) return@runOnUiThread"))
+        assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound() ||"))
+        assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
+        assertFalse(source.contains("if (!nativeDeviceClient.isBound() || !nativeVisible ||"))
+    }
+
     @Test fun boundDeviceDoesNotCreateAHiddenWebview() {
         val source = source("MainActivity.kt")
-        assertTrue(source.contains("if (!nativeDeviceClient.isBound() || !nativeVisible ||"))
+        assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
         assertTrue(source.contains("NativeInboxSnapshot("))
         assertTrue(source.contains("readMessageViaNativeApi("))
         assertTrue(source.contains("nativeIo.execute"))
