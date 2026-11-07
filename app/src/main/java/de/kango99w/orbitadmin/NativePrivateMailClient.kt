@@ -29,17 +29,21 @@ class NativePrivateMailClient {
         private val tokenRegex = Regex("^pmh1\\.[A-Za-z0-9_-]{32,120}$")
         private val emailRegex = Regex("^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$")
 
-        fun extractHandoffToken(value: String?): String? = try {
-            val url = URI(value ?: return null)
-            if (url.scheme != "https" || url.host != "mail.kango99w.de" ||
-                (url.path != "/" && url.path != "") || url.port != -1 ||
-                url.rawQuery != null) null else {
-                val fragment = url.rawFragment ?: return null
-                if (!fragment.startsWith("handoff=") || fragment.contains('&')) null
-                else URLDecoder.decode(fragment.removePrefix("handoff="),
-                    StandardCharsets.UTF_8).takeIf { tokenRegex.matches(it) }
-            }
-        } catch (_: Exception) { null }
+        fun extractHandoffToken(value: String?): String? {
+            if (value == null) return null
+            return try {
+                val url = URI(value)
+                if (url.scheme != "https" || url.host != "mail.kango99w.de" ||
+                    (url.path != "/" && url.path != "") || url.port != -1 ||
+                    url.rawQuery != null) null else {
+                    val fragment = url.rawFragment
+                    if (fragment == null || !fragment.startsWith("handoff=") ||
+                        fragment.contains('&')) null
+                    else URLDecoder.decode(fragment.removePrefix("handoff="),
+                        StandardCharsets.UTF_8).takeIf { tokenRegex.matches(it) }
+                }
+            } catch (_: Exception) { null }
+        }
 
         fun validEmailList(value: String, required: Boolean = false): Boolean {
             val parts = value.split(',', ';', '\n').map { it.trim() }.filter { it.isNotBlank() }
