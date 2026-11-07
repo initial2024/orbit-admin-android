@@ -1561,7 +1561,7 @@ class MainActivity : FragmentActivity() {
                     if (data.type != WebMessageCompat.TYPE_STRING ||
                         !NativeInboxPolicy.acceptsSource(
                             origin.scheme,origin.host,origin.port,mainFrame,sender.url
-                        ) || data.data.length > 512) return@WebMessageListener
+                        ) || (data.data?.length ?: 513) > 512) return@WebMessageListener
                     val event = try { JSONObject(data.data) } catch (_: Exception) { return@WebMessageListener }
                     if (event.optInt("v") != 1 ||
                         event.keys().asSequence().toSet() !=
