@@ -12,8 +12,8 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.0-dev"
+        versionCode = 6
+        versionName = "0.3.1-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -41,7 +41,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.fragment:fragment:1.8.6")
     implementation("androidx.biometric:biometric:1.1.0")

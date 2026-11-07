@@ -2,7 +2,7 @@
 
 Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
 
-**Status: experimental debug build; not a production release. Android v0.3.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
+**Status: experimental debug build; not a production release. Android v0.3.1-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
 ## Authentication
 
@@ -11,6 +11,10 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 - Local unlock is not server login. It does not bypass a TOTP challenge. The website sets its normal cookies in the app-private WebView profile.
 - App UI locks again when the activity is no longer visible. WebView state is preserved during an ordinary in-app lock; a process kill/restart may reload the website.
 - If Android has no secure lock configured, the app fails closed and directs users to device security settings.
+
+## Android size optimization
+
+v0.3.1 removes the full Compose material-icons-extended dependency and uses nine small local vector drawables instead. This avoids tens of megabytes of unused debug DEX resources while keeping the same mail-first navigation.
 
 ## Android v0.3 mail-first layout
 

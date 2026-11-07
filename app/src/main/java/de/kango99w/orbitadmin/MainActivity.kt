@@ -60,16 +60,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -305,7 +296,7 @@ class MainActivity : FragmentActivity() {
                     Text("当前只支持应用使用期间的提醒；应用完全关闭后不保证送达。通知不包含邮箱、验证码或正文。",
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = ::requestTestNotification) {
-                        Icon(Icons.Default.Notifications, contentDescription = null)
+                        Icon(painterResource(R.drawable.ic_bell), contentDescription = null)
                         Spacer(Modifier.padding(horizontal = 3.dp))
                         Text("测试系统通知")
                     }
@@ -315,7 +306,7 @@ class MainActivity : FragmentActivity() {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("账户与安全", style = MaterialTheme.typography.titleMedium)
                     OutlinedButton(onClick = { navigateTo(AdminDestination.SECURITY.address) }) {
-                        Icon(Icons.Default.Shield, contentDescription = null)
+                        Icon(painterResource(R.drawable.ic_shield), contentDescription = null)
                         Spacer(Modifier.padding(horizontal = 3.dp))
                         Text("网站 2FA / 可信设备")
                     }
@@ -375,11 +366,11 @@ class MainActivity : FragmentActivity() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (activeSection != MailSection.SETTINGS) {
                             TextButton(onClick = { browser?.reload() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "刷新当前邮箱页面")
+                                Icon(painterResource(R.drawable.ic_refresh), contentDescription = "刷新当前邮箱页面")
                             }
                         }
                         TextButton(onClick = { showTools = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "打开管理工具")
+                            Icon(painterResource(R.drawable.ic_more), contentDescription = "打开管理工具")
                         }
                         TextButton(onClick = ::lock) { Text("锁定") }
                     }
@@ -393,13 +384,13 @@ class MainActivity : FragmentActivity() {
                             onClick = { openSection(section) },
                             icon = {
                                 Icon(
-                                    imageVector = when (section) {
-                                        MailSection.INBOX -> Icons.Default.Email
-                                        MailSection.MAILBOXES -> Icons.Default.Folder
-                                        MailSection.TRANSFER -> Icons.Default.AttachFile
-                                        MailSection.ADMIN -> Icons.Default.AdminPanelSettings
-                                        MailSection.SETTINGS -> Icons.Default.Settings
-                                    },
+                                    painter = painterResource(when (section) {
+                                        MailSection.INBOX -> R.drawable.ic_mail
+                                        MailSection.MAILBOXES -> R.drawable.ic_folder
+                                        MailSection.TRANSFER -> R.drawable.ic_file
+                                        MailSection.ADMIN -> R.drawable.ic_admin
+                                        MailSection.SETTINGS -> R.drawable.ic_settings
+                                    }),
                                     contentDescription = null
                                 )
                             },
