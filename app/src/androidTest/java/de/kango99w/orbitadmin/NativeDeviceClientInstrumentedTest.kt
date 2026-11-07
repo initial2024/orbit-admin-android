@@ -102,6 +102,21 @@ class NativeDeviceClientInstrumentedTest {
         } finally { client.clearLocalBinding() }
     }
 
+    @Test fun malformedDeviceLabelFailsLocallyBeforeAnyLoginRequest() {
+        val native = NativeDeviceClient(context)
+        val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val result = worker.submit<NativeDeviceClient.Response> {
+                native.login("person@example.org", "synthetic-password", "", "Android\\nInjected")
+            }.get(8, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(400, result.status)
+            assertEquals("NATIVE_LOGIN_INPUT_INVALID", result.error)
+            assertFalse(native.isBound())
+        } finally {
+            worker.shutdownNow()
+        }
+    }
+
     @Test fun expiredDeviceGrantCannotRemainBound() {
         val client=NativeDeviceClient(context)
         client.clearLocalBinding()
