@@ -65,6 +65,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -2736,6 +2737,46 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
+    private fun AdminRegistrationDetailDialog() {
+        val entry=adminSelectedRegistration ?: return
+        AlertDialog(
+            onDismissRequest={adminSelectedRegistration=null},
+            title={Text("账户登记详情")},
+            text={
+                Column(
+                    modifier=Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement=Arrangement.spacedBy(9.dp)
+                ) {
+                    Text(entry.service.ifBlank{"未命名服务"},
+                        style=MaterialTheme.typography.titleLarge)
+                    Text("账户标签："+entry.accountLabel.ifBlank{"未设置"})
+                    SelectionContainer { Text("关联邮箱："+entry.address) }
+                    Text("邮箱类型："+if(entry.source=="pieterj")"固定邮箱" else "临时邮箱")
+                    Text("状态："+entry.status+" · 阶段："+entry.lifecycle)
+                    if(entry.registeredAt>0) Text("登记时间："+formatNativeMessageTime(entry.registeredAt),
+                        style=MaterialTheme.typography.bodySmall)
+                    if(entry.reviewedAt>0) Text("最近复核："+formatNativeMessageTime(entry.reviewedAt),
+                        style=MaterialTheme.typography.bodySmall)
+                    if(entry.note.isNotBlank()) {
+                        Text("登记备注",style=MaterialTheme.typography.titleSmall)
+                        SelectionContainer { Text(entry.note) }
+                    }
+                    Text("本页是已登记账户信息；平台用户总数、密码、令牌及恢复码不会在此展示。",
+                        style=MaterialTheme.typography.labelSmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton={
+                TextButton(onClick={
+                    val clipboard=getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("登记邮箱",entry.address))
+                }) { Text("复制邮箱") }
+            },
+            dismissButton={TextButton(onClick={adminSelectedRegistration=null}) { Text("关闭") }}
+        )
+    }
+
+    @Composable
     private fun NativeAdminManagementContent() {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -2746,6 +2787,7 @@ class MainActivity : FragmentActivity() {
                 Text(when(adminPane) {
                     "domains" -> "域名管理"
                     "records" -> "邮箱使用记录"
+                    "users" -> "用户与登记详情"
                     else -> "管理员安全中心"
                 }, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
@@ -2755,125 +2797,33 @@ class MainActivity : FragmentActivity() {
             }
             HorizontalDivider()
             when (adminPane) {
-                "domains" -> {
-                    Text("域名库存 · 仅显示服务端登记状态",
-                        modifier=Modifier.padding(horizontal=14.dp,vertical=8.dp),
-                        style=MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value=adminDomainSearch,
-                        onValueChange={adminDomainSearch=it.take(100)},
-                        singleLine=true,
-                        label={Text("搜索域名、来源或接入方式")},
-                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp))
-                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
-                        .padding(horizontal=10.dp,vertical=5.dp),
-                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        listOf("全部","管理员邮箱","网站域名","域名申请","临时邮箱").forEach { source ->
-                            OutlinedButton(onClick={adminDomainSourceFilter=source}) {
-                                Text((if(adminDomainSourceFilter==source) "✓ " else "") + source)
-                            }
-                        }
-                    }
-                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
-                        .padding(horizontal=10.dp,vertical=5.dp),
-                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        val statuses = listOf("全部") +
-                            adminManagedDomains.map{it.state}.distinct().sorted()
-                        statuses.forEach { state ->
-                            OutlinedButton(onClick={adminDomainStateFilter=state}) {
-                                Text((if(adminDomainStateFilter==state) "✓ " else "") + state)
-                            }
-                        }
-                    }
-                    val q=adminDomainSearch.trim()
-                    val filtered=adminManagedDomains.filter { domain ->
-                        (q.isBlank() || listOf(domain.domain,domain.source,domain.ingress)
-                            .any { it.contains(q,ignoreCase=true) }) &&
-                        (adminDomainSourceFilter=="全部" ||
-                            domain.source==adminDomainSourceFilter) &&
-                        (adminDomainStateFilter=="全部" ||
-                            domain.state==adminDomainStateFilter)
-                    }
-                    Text("匹配域名 ${filtered.size} / ${adminManagedDomains.size}",
-                        modifier=Modifier.padding(14.dp),
-                        style=MaterialTheme.typography.labelMedium)
-                    if(filtered.isEmpty() && !adminBusy)
-                        Text("没有匹配的域名，清除搜索或筛选条件后重试。",
-                            modifier=Modifier.padding(16.dp))
-                    LazyColumn(modifier=Modifier.fillMaxSize()) {
-                        items(filtered) { domain ->
-                            Row(modifier=Modifier.fillMaxWidth().padding(12.dp),
-                                verticalAlignment=Alignment.CenterVertically) {
-                                MailAvatar(domain.domain,38)
-                                Spacer(Modifier.padding(horizontal=5.dp))
-                                Column(modifier=Modifier.weight(1f)) {
-                                    Text(domain.domain,
-                                        style=MaterialTheme.typography.titleSmall)
-                                    Text(domain.source+" · "+domain.state,
-                                        style=MaterialTheme.typography.labelMedium)
-                                    if(domain.ingress.isNotBlank())
-                                        Text(domain.ingress,
-                                            style=MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
-                "records" -> {
-                    Text("邮箱使用记录 · 登记不等于域名可收件",
-                        modifier=Modifier.padding(horizontal=14.dp,vertical=8.dp),
-                        style=MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(value=adminRecordSearch,
-                        onValueChange={adminRecordSearch=it.take(100)},
-                        label={Text("搜索邮箱地址或来源")},
-                        singleLine=true,
-                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp))
-                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
-                        .padding(horizontal=10.dp,vertical=6.dp),
-                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        listOf("全部","已保留","已释放").forEach { state ->
-                            OutlinedButton(onClick={adminRecordStateFilter=state}) {
-                                Text((if(adminRecordStateFilter==state) "✓ " else "")+state)
-                            }
-                        }
-                    }
-                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
-                        .padding(horizontal=10.dp,vertical=3.dp),
-                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        val sources = listOf("全部") +
-                            adminRecordedAddresses.map { it.source }.filter{it.isNotBlank()}.distinct()
-                        sources.forEach { source ->
-                            OutlinedButton(onClick={adminRecordSourceFilter=source}) {
-                                Text((if(adminRecordSourceFilter==source) "✓ " else "") + source)
-                            }
-                        }
-                    }
-                    val q=adminRecordSearch.trim()
-                    val filtered=adminRecordedAddresses.filter { record ->
-                        (q.isBlank() || record.address.contains(q,ignoreCase=true) ||
-                            record.source.contains(q,ignoreCase=true)) &&
-                        (adminRecordSourceFilter=="全部" ||
-                            record.source==adminRecordSourceFilter) &&
-                        (adminRecordStateFilter=="全部" ||
-                            (adminRecordStateFilter=="已保留" && record.reserved) ||
-                            (adminRecordStateFilter=="已释放" && !record.reserved))
-                    }
-                    Text("匹配记录 ${filtered.size} / ${adminRecordedAddresses.size}",
-                        modifier=Modifier.padding(14.dp),
-                        style=MaterialTheme.typography.labelMedium)
-                    LazyColumn(modifier=Modifier.fillMaxSize()) {
-                        items(filtered) { record ->
-                            Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text(record.address,style=MaterialTheme.typography.titleSmall)
-                                Text(record.source + " · " +
-                                    (if(record.reserved) "已保留" else "已释放"),
-                                    style=MaterialTheme.typography.bodySmall)
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
+                "domains" -> AdminDomainManagement(
+                    rows=adminManagedDomains,
+                    search=adminDomainSearch,setSearch={adminDomainSearch=it},
+                    source=adminDomainSourceFilter,setSource={adminDomainSourceFilter=it},
+                    state=adminDomainStateFilter,setState={adminDomainStateFilter=it},
+                    expanded=adminDomainFiltersExpanded,
+                    onExpand={adminDomainFiltersExpanded=!adminDomainFiltersExpanded},
+                    busy=adminBusy
+                )
+                "records" -> AdminAddressRecords(
+                    rows=adminRecordedAddresses,
+                    search=adminRecordSearch,setSearch={adminRecordSearch=it},
+                    source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
+                    state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
+                    expanded=adminRecordFiltersExpanded,
+                    onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
+                    busy=adminBusy
+                )
+                "users" -> AdminAccountRegistrations(
+                    rows=adminRegisteredAccounts,
+                    admin=adminUsername,
+                    search=adminRegistrationSearch,setSearch={adminRegistrationSearch=it},
+                    source=adminRegistrationSourceFilter,setSource={adminRegistrationSourceFilter=it},
+                    expanded=adminRegistrationFiltersExpanded,
+                    onExpand={adminRegistrationFiltersExpanded=!adminRegistrationFiltersExpanded},
+                    busy=adminBusy,onSelect={adminSelectedRegistration=it}
+                )
                 else -> {
                     val state = adminSecurityState
                     Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -2922,10 +2872,14 @@ class MainActivity : FragmentActivity() {
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary)
                     Text(if (adminAuthenticated)
-                        "管理员：${adminUsername.ifBlank { "已验证" }}"
+                        "用户详情 › "+adminUsername.ifBlank { "已验证管理员" }
                         else "独立管理员身份验证",
+                        modifier=Modifier.clickable(enabled=adminAuthenticated) {
+                            openAdminNativePane("users")
+                        },
+                        maxLines=1,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = MaterialTheme.colorScheme.primary)
                 }
                 if (adminAuthenticated) {
                     TextButton(enabled = !adminBusy, onClick = ::refreshNativeAdmin) {
@@ -3173,12 +3127,16 @@ class MainActivity : FragmentActivity() {
                     singleLine=true,
                     modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp)
                 )
-                Row(modifier=Modifier.horizontalScroll(rememberScrollState())
-                    .padding(horizontal=12.dp,vertical=3.dp),
-                    horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-                    listOf("全部","固定邮箱","临时邮箱").forEach { scope ->
-                        OutlinedButton(onClick={adminMailboxFilter=scope}) {
-                            Text((if(adminMailboxFilter==scope) "✓ " else "")+scope)
+                AdminFilterFold(
+                    label="管理员邮箱筛选",expanded=adminMailboxFiltersExpanded,
+                    activeSummary="类型："+adminMailboxFilter,
+                    onToggle={adminMailboxFiltersExpanded=!adminMailboxFiltersExpanded}
+                ) {
+                    Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        listOf("全部","固定邮箱","临时邮箱").forEach { scope ->
+                            FilterChip(selected=adminMailboxFilter==scope,
+                                onClick={adminMailboxFilter=scope},
+                                label={Text(scope,maxLines=1)})
                         }
                     }
                 }
@@ -3613,6 +3571,7 @@ class MainActivity : FragmentActivity() {
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
+        if (adminSelectedRegistration != null && adminAuthenticated) AdminRegistrationDetailDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
