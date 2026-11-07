@@ -119,7 +119,7 @@ class MainActivity : FragmentActivity() {
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
     private var appearanceMode by mutableStateOf(OrbitAppearanceMode.SYSTEM)
-    private fun setAppearanceMode(next: OrbitAppearanceMode) {
+    private fun chooseAppearanceMode(next: OrbitAppearanceMode) {
         appearanceMode=next
         getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
             .edit().putString("mode",next.name).apply()
@@ -3326,7 +3326,7 @@ class MainActivity : FragmentActivity() {
                             pair.forEach { mode ->
                                 FilterChip(
                                     selected=appearanceMode==mode,
-                                    onClick={setAppearanceMode(mode)},
+                                    onClick={chooseAppearanceMode(mode)},
                                     label={Text(mode.title)},
                                     modifier=Modifier.weight(1f)
                                 )
