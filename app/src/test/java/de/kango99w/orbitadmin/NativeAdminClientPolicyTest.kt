@@ -12,6 +12,14 @@ class NativeAdminClientPolicyTest {
         assertTrue(NativeAdminClient.allows("POST", "/api/admin/login/totp"))
         assertTrue(NativeAdminClient.allows("POST", "/api/admin/pieterj-mail/mailboxes"))
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/ordinary-inbox/mailboxes"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/ordinary-inbox/recorded-addresses"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/pieterj-mail/status"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/2fa/status"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/trusted-devices"))
+        assertTrue(NativeAdminClient.allows("PATCH", "/api/admin/pieterj-mail/mailboxes/11111111-1111-4111-8111-111111111111"))
+        assertTrue(NativeAdminClient.allows("POST", "/api/admin/ordinary-inbox/mailboxes/11111111-1111-4111-8111-111111111111/renew"))
+        assertTrue(NativeAdminClient.allows("DELETE", "/api/admin/ordinary-inbox/mailboxes/11111111-1111-4111-8111-111111111111"))
+        assertTrue(NativeAdminClient.allows("DELETE", "/api/admin/pieterj-mail/mailboxes/11111111-1111-4111-8111-111111111111"))
         assertTrue(NativeAdminClient.allows("GET",
             "/api/admin/pieterj-mail/mailboxes/11111111-1111-4111-8111-111111111111/messages"))
         assertTrue(NativeAdminClient.allows("GET",
@@ -23,6 +31,11 @@ class NativeAdminClientPolicyTest {
         assertFalse(NativeAdminClient.allows("GET", "/api/admin/%2e%2e/status"))
         assertFalse(NativeAdminClient.allows("POST", "/api/admin/login/anything"))
         assertFalse(NativeAdminClient.allows("DELETE", "/api/admin/pieterj-mail/mailboxes"))
+        assertFalse(NativeAdminClient.allows("DELETE", "/api/admin/2fa/status"))
+        assertFalse(NativeAdminClient.allows("DELETE", "/api/account/native-device/revoke-self"))
+        assertFalse(NativeAdminClient.allows("POST", "/api/admin/credentials"))
+        assertFalse(NativeAdminClient.allows("PATCH", "/api/admin/pieterj-mail/mailboxes/%2e%2e"))
+        assertFalse(NativeAdminClient.allows("POST", "/api/admin/ordinary-inbox/mailboxes/11111111-1111-4111-8111-111111111111/renew?minutes=999"))
     }
 
     @Test fun ordinaryAccountCookiesCannotEnterAdminRequests() {
