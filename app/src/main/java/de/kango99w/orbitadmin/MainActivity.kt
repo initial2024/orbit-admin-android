@@ -157,6 +157,7 @@ class MainActivity : FragmentActivity() {
     private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
     private var adminDeleteTarget by mutableStateOf<AdminNativeMailbox?>(null)
     private var adminDeleteError by mutableStateOf("")
+    private var adminRevokeTrustedTarget by mutableStateOf<AdminTrustedDevice?>(null)
     private var showAdminCreateDialog by mutableStateOf(false)
     private var adminCreatePrivate by mutableStateOf(true)
     private var adminCreateLocal by mutableStateOf("")
@@ -1780,6 +1781,53 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun revokeNativeAdminTrustedDevice() {
+        val target = adminRevokeTrustedTarget ?: return
+        if (!unlocked || !adminAuthenticated || adminBusy || adminPane != "security" ||
+            !AdminNativeModels.validId(target.id) ||
+            adminSecurityState?.trustedDevices?.none { it.id == target.id } != false) return
+        val generation = adminGeneration.incrementAndGet()
+        val epoch = nativeAdminClient.requestEpoch()
+        adminBusy = true
+        adminError = ""
+        adminIo.execute {
+            val reply = nativeAdminClient.post(
+                "/api/admin/trusted-devices/${target.id}/revoke", JSONObject(), epoch)
+            runOnUiThread {
+                if (!unlocked || generation != adminGeneration.get()) return@runOnUiThread
+                adminBusy = false
+                if (reply.status == 200 && reply.value?.optBoolean("revoked") == true) {
+                    adminRevokeTrustedTarget = null
+                    openAdminNativePane("security")
+                } else adminError = "可信设备撤销失败（HTTP ${reply.status} / ${reply.error ?: "UNKNOWN"}）；不会声称已撤销。"
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeAdminTrustedRevokeDialog() {
+        val target = adminRevokeTrustedTarget ?: return
+        AlertDialog(
+            onDismissRequest = {
+                if (!adminBusy) adminRevokeTrustedTarget = null
+            },
+            title = { Text("撤销管理员可信设备？") },
+            text = {
+                Text("设备：${target.label.ifBlank{"未命名设备"}}。撤销后该设备将无法继续凭可信设备令牌跳过 2FA。此操作不修改普通账号设备授权。")
+            },
+            confirmButton = {
+                Button(enabled = !adminBusy, onClick = ::revokeNativeAdminTrustedDevice) {
+                    Text(if(adminBusy) "正在等待服务器…" else "确认撤销")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !adminBusy, onClick = {
+                    adminRevokeTrustedTarget = null
+                }) { Text("取消") }
+            }
+        )
+    }
+
     @Composable
     private fun NativeAdminManagementContent() {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -1849,6 +1897,10 @@ class MainActivity : FragmentActivity() {
                                         Text(device.label.ifBlank{"未命名设备"})
                                         Text("有效期：" + formatNativeMessageTime(device.expiresAt),
                                             style=MaterialTheme.typography.labelSmall)
+                                        OutlinedButton(enabled=!adminBusy,
+                                            onClick={adminRevokeTrustedTarget=device}) {
+                                            Text("撤销此设备")
+                                        }
                                     }
                                 }
                             }
@@ -2434,6 +2486,7 @@ class MainActivity : FragmentActivity() {
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
+        if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
