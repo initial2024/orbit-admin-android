@@ -9,7 +9,9 @@ data class NativeMailDetail(
     val recipient: String,
     val subject: String,
     val receivedAt: String,
-    val textBody: String
+    val textBody: String,
+    // HTML-only signed API response is already sanitized. Display as inert native text.
+    val htmlBody: String = ""
 )
 
 sealed interface NativeMailDetailEvent {
