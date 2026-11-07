@@ -1598,6 +1598,220 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun openAdminNativePane(pane: String) {
+        if (!unlocked || !adminAuthenticated || adminBusy ||
+            pane !in setOf("mailboxes", "domains", "records", "security")) return
+        adminPane = pane
+        adminSelectedMailbox = null
+        adminSelectedMessageId = null
+        adminSelectedMessage = null
+        adminMessages = emptyList()
+        adminError = ""
+        if (pane == "mailboxes") {
+            refreshNativeAdmin()
+            return
+        }
+        val generation = adminGeneration.incrementAndGet()
+        val epoch = nativeAdminClient.requestEpoch()
+        adminBusy = true
+        adminIo.execute {
+            val primary: NativeAdminClient.Reply
+            val secondary: NativeAdminClient.Reply?
+            when (pane) {
+                "domains" -> {
+                    primary = nativeAdminClient.get("/api/admin/pieterj-mail/status", epoch)
+                    secondary = nativeAdminClient.get("/api/admin/ordinary-inbox/domains", epoch)
+                }
+                "records" -> {
+                    primary = nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses", epoch)
+                    secondary = null
+                }
+                else -> {
+                    primary = nativeAdminClient.get("/api/admin/2fa/status", epoch)
+                    secondary = nativeAdminClient.get("/api/admin/trusted-devices", epoch)
+                }
+            }
+            val valid = primary.status == 200 &&
+                (secondary == null || secondary.status == 200)
+            val domains = if (pane == "domains" && valid)
+                AdminManagementModels.domains(primary.value, secondary?.value) else emptyList()
+            val records = if (pane == "records" && valid)
+                AdminManagementModels.recordedAddresses(primary.value) else emptyList()
+            val security = if (pane == "security" && valid)
+                AdminManagementModels.security(primary.value, secondary?.value) else null
+            runOnUiThread {
+                if (!unlocked || generation != adminGeneration.get() || adminPane != pane)
+                    return@runOnUiThread
+                adminBusy = false
+                if (primary.status == 401 || secondary?.status == 401) {
+                    adminAuthenticated = false
+                    adminMailboxes = emptyList()
+                    adminManagedDomains = emptyList()
+                    adminRecordedAddresses = emptyList()
+                    adminSecurityState = null
+                    adminError = "管理员会话已过期，需要独立管理员验证。"
+                    return@runOnUiThread
+                }
+                if (!valid) {
+                    adminError = "原生管理员${when(pane){"domains"->"域名";"records"->"记录";else->"安全"}}数据加载失败，HTTP ${primary.status}/${secondary?.status ?: "-"}；未回退网页。"
+                    return@runOnUiThread
+                }
+                when (pane) {
+                    "domains" -> adminManagedDomains = domains
+                    "records" -> adminRecordedAddresses = records
+                    else -> adminSecurityState = security
+                }
+            }
+        }
+    }
+
+    private fun updateNativeAdminMailbox(mailbox: AdminNativeMailbox, mode: String) {
+        if (!unlocked || !adminAuthenticated || adminBusy ||
+            !AdminNativeModels.validId(mailbox.id) ||
+            adminSelectedMailbox?.id != mailbox.id) return
+        if (mode !in setOf("star", "renew")) return
+        if ((mode == "star") != mailbox.privateMailbox) return
+        val generation = adminGeneration.incrementAndGet()
+        val epoch = nativeAdminClient.requestEpoch()
+        adminBusy = true
+        adminError = ""
+        adminIo.execute {
+            val reply = if (mode == "star") nativeAdminClient.patch(
+                "/api/admin/pieterj-mail/mailboxes/${mailbox.id}",
+                JSONObject().put("is_starred", !mailbox.starred), epoch
+            ) else nativeAdminClient.post(
+                "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/renew",
+                JSONObject().put("minutes", 30), epoch
+            )
+            runOnUiThread {
+                if (!unlocked || generation != adminGeneration.get()) return@runOnUiThread
+                adminBusy = false
+                if (reply.status == 200 && reply.value?.optJSONObject("mailbox") != null) {
+                    adminSelectedMailbox = null
+                    adminSelectedMessageId = null
+                    adminSelectedMessage = null
+                    adminMessages = emptyList()
+                    refreshNativeAdmin()
+                } else adminError = "邮箱管理操作失败：HTTP ${reply.status} / ${reply.error ?: "UNKNOWN"}"
+            }
+        }
+    }
+
+    private fun deleteNativeAdminMailbox() {
+        val target = adminDeleteTarget ?: return
+        if (!unlocked || !adminAuthenticated || adminBusy ||
+            !AdminNativeModels.validId(target.id) ||
+            adminMailboxes.none { it.id == target.id && it.privateMailbox == target.privateMailbox }) return
+        val generation = adminGeneration.incrementAndGet()
+        val epoch = nativeAdminClient.requestEpoch()
+        val route = if (target.privateMailbox)
+            "/api/admin/pieterj-mail/mailboxes/${target.id}" else
+            "/api/admin/ordinary-inbox/mailboxes/${target.id}"
+        adminBusy = true
+        adminDeleteError = ""
+        adminIo.execute {
+            val reply = nativeAdminClient.delete(route, epoch)
+            runOnUiThread {
+                if (!unlocked || generation != adminGeneration.get()) return@runOnUiThread
+                adminBusy = false
+                if (reply.status == 200 && reply.value?.optBoolean("deleted") == true) {
+                    adminDeleteTarget = null
+                    adminSelectedMailbox = null
+                    adminSelectedMessageId = null
+                    adminSelectedMessage = null
+                    adminMessages = emptyList()
+                    refreshNativeAdmin()
+                } else {
+                    adminDeleteError = if (reply.value?.optBoolean("cleanup_pending") == true)
+                        "服务器尚未完成邮箱路由清理。请稍后核实，不能声称删除成功。"
+                    else "删除未获服务器确认：HTTP ${reply.status} / ${reply.error ?: "UNKNOWN"}"
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeAdminManagementContent() {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { openAdminNativePane("mailboxes") }) {
+                    Text("‹ 邮箱")
+                }
+                Text(when(adminPane) {
+                    "domains" -> "域名管理"
+                    "records" -> "邮箱使用记录"
+                    else -> "管理员安全中心"
+                }, style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f))
+                TextButton(enabled = !adminBusy, onClick = { openAdminNativePane(adminPane) }) {
+                    Text("刷新")
+                }
+            }
+            HorizontalDivider()
+            when (adminPane) {
+                "domains" -> {
+                    Text("管理员邮箱域名、网站域名与已申请域名（服务端实时状态）",
+                        modifier = Modifier.padding(15.dp),
+                        style = MaterialTheme.typography.bodyMedium)
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(adminManagedDomains, key={it.source+":"+it.domain+":"+it.state}) { domain ->
+                            Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
+                                Text(domain.domain, style=MaterialTheme.typography.titleMedium)
+                                Text(domain.source + " · " + domain.state +
+                                    (if(domain.ingress.isNotBlank()) " · " + domain.ingress else ""),
+                                    style=MaterialTheme.typography.bodySmall)
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+                "records" -> {
+                    Text("地址登记记录仅供审计；并非域名可创建或能收信的证明。",
+                        modifier=Modifier.padding(15.dp),
+                        style=MaterialTheme.typography.bodySmall)
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(adminRecordedAddresses, key={it.address}) { record ->
+                            Column(modifier=Modifier.fillMaxWidth().padding(14.dp)) {
+                                Text(record.address,style=MaterialTheme.typography.titleSmall)
+                                Text(record.source + " · " +
+                                    (if(record.reserved) "已保留" else "已释放"),
+                                    style=MaterialTheme.typography.bodySmall)
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+                else -> {
+                    val state = adminSecurityState
+                    Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                        .padding(17.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("管理员安全状态",style=MaterialTheme.typography.titleLarge)
+                        if (state == null) Text("尚未取得安全中心数据；不会猜测配置。")
+                        else {
+                            Text("双重验证：" + if (state.totpEnabled) "已启用" else "未启用")
+                            Text("剩余恢复码数量：${state.recoveryCodesRemaining}")
+                            Text("可信设备数量：${state.trustedDevices.size}",
+                                style=MaterialTheme.typography.titleMedium)
+                            state.trustedDevices.forEach { device ->
+                                Card(modifier=Modifier.fillMaxWidth()) {
+                                    Column(modifier=Modifier.padding(12.dp)) {
+                                        Text(device.label.ifBlank{"未命名设备"})
+                                        Text("有效期：" + formatNativeMessageTime(device.expiresAt),
+                                            style=MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                            Text("2FA 重置、恢复码重签、设备撤销属于高风险操作。" +
+                                "需在原生界面加入独立密码/验证码二次确认后才开放，当前不提供误导性快捷按钮。",
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Composable
     private fun NativeAdminContent() {
         Column(modifier = Modifier.fillMaxSize()) {
