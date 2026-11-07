@@ -11,7 +11,7 @@ import javax.net.ssl.HttpsURLConnection
  * First-party administrator HTTPS client for real Compose screens.
  *
  * Administrator and ordinary account authentication are DISTINCT realms:
- * only the admin HttpOnly cookies are presented to /api/admin/*, never the
+ * only administrator HttpOnly cookies are presented to the /api/admin/ path, never the
  * ordinary kango_site_access cookie or ordinary native P-256 device grant.
  *
  * Cookies stay in the existing first-party Android WebView CookieManager so
