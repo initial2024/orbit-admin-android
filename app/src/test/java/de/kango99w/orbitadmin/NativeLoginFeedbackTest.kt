@@ -32,6 +32,13 @@ class NativeLoginFeedbackTest {
         assertFalse(result.contains("已获得管理员"))
     }
 
+    @Test fun credentialLoginFlagIsDistinctFromDeviceReadFlag() {
+        val result = NativeLoginFeedback.describe(503, "NATIVE_CREDENTIAL_LOGIN_DISABLED")
+        assertTrue(result.contains("独立上线门禁"))
+        assertTrue(result.contains("普通账号"))
+        assertTrue(result.contains("不要反复提交密码"))
+    }
+
     @Test fun allFailuresExplicitlyRemainUnbound() {
         for (status in listOf(400, 401, 403, 404, 405, 409, 503)) {
             val result = NativeLoginFeedback.describe(status, null)
