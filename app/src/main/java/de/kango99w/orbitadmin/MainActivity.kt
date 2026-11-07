@@ -1631,8 +1631,10 @@ class MainActivity : FragmentActivity() {
         if (!unlocked || !adminAuthenticated || adminBusy) return
         val local = adminCreateLocal.trim()
         val domain = adminCreateDomain.trim().lowercase(java.util.Locale.ROOT)
+        val allowed = if (adminCreatePrivate) adminPrivateDomainOptions
+            else adminOrdinaryDomainOptions
         if (!local.matches(Regex("^[a-zA-Z0-9._-]{0,64}$")) ||
-            !domain.matches(Regex("^[a-z0-9.-]{3,150}$"))) {
+            allowed.none { it.domain == domain }) {
             adminError = "邮箱前缀或域名格式无效。"
             return
         }
@@ -2184,7 +2186,9 @@ class MainActivity : FragmentActivity() {
                     Button(enabled=!adminBusy,onClick={
                         adminCreateLocal=""
                         adminCreatePrivate=true
-                        adminCreateDomain="pieterj.nl.eu.org"
+                        adminCreateDomain=adminPrivateDomainOptions.firstOrNull()?.domain.orEmpty()
+                        adminCreateDomainQuery=""
+                        adminCreateDomainExpanded=false
                         showAdminCreateDialog=true
                     }) { Text("＋ 新建邮箱") }
                 }
@@ -2281,47 +2285,106 @@ class MainActivity : FragmentActivity() {
 
     @Composable
     private fun NativeAdminCreateDialog() {
+        val options = if (adminCreatePrivate) adminPrivateDomainOptions
+            else adminOrdinaryDomainOptions
+        val displayed = AdminDomainSelection.filter(options, adminCreateDomainQuery)
         AlertDialog(
-            onDismissRequest={if(!adminBusy) showAdminCreateDialog=false},
-            title={Text("新建管理员邮箱")},
+            onDismissRequest={ if(!adminBusy) {
+                showAdminCreateDialog=false
+                adminCreateDomainExpanded=false
+            }},
+            title={ Text("新建邮箱", style=MaterialTheme.typography.titleLarge) },
             text={
-                Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Column(modifier=Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Text("选择用途", style=MaterialTheme.typography.labelMedium)
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick={
+                        OutlinedButton(enabled=!adminBusy,onClick={
                             adminCreatePrivate=true
-                            adminCreateDomain="pieterj.nl.eu.org"
+                            adminCreateDomain=adminPrivateDomainOptions.firstOrNull()?.domain.orEmpty()
+                            adminCreateDomainQuery=""
+                            adminCreateDomainExpanded=false
                         }) { Text(if(adminCreatePrivate) "✓ 固定邮箱" else "固定邮箱") }
-                        OutlinedButton(onClick={
+                        OutlinedButton(enabled=!adminBusy,onClick={
                             adminCreatePrivate=false
-                            adminCreateDomain=adminOrdinaryDomains.firstOrNull().orEmpty()
+                            adminCreateDomain=adminOrdinaryDomainOptions.firstOrNull()?.domain.orEmpty()
+                            adminCreateDomainQuery=""
+                            adminCreateDomainExpanded=false
                         }) { Text(if(!adminCreatePrivate) "✓ 临时邮箱" else "临时邮箱") }
                     }
-                    OutlinedTextField(value=adminCreateLocal,
+                    Text(if(adminCreatePrivate) "使用已启用的管理员专用收信域名。"
+                        else "使用服务器登记的临时邮箱域名。",
+                        style=MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value=adminCreateLocal,
                         onValueChange={adminCreateLocal=it.take(64)},
-                        label={Text("邮箱前缀（留空自动生成）")},
+                        label={Text("邮箱前缀（留空随机生成）")},
                         singleLine=true,modifier=Modifier.fillMaxWidth())
-                    OutlinedTextField(value=adminCreateDomain,
-                        onValueChange={adminCreateDomain=it.lowercase().take(150)},
-                        label={Text("邮箱域名")},
-                        singleLine=true,modifier=Modifier.fillMaxWidth())
-                    if(!adminCreatePrivate && adminOrdinaryDomains.isNotEmpty()) {
-                        Text("可用临时域名：${adminOrdinaryDomains.take(4).joinToString("、")}",
-                            style=MaterialTheme.typography.labelSmall)
+                    Text("选择邮箱域名 · ${options.size} 个",
+                        style=MaterialTheme.typography.labelMedium)
+                    Box(modifier=Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            modifier=Modifier.fillMaxWidth(),
+                            enabled=options.isNotEmpty() && !adminBusy,
+                            onClick={adminCreateDomainExpanded=true}
+                        ) {
+                            Text(adminCreateDomain.ifBlank{"暂无已验证域名"},
+                                maxLines=1,modifier=Modifier.weight(1f))
+                            Icon(painterResource(R.drawable.ic_more),contentDescription="展开域名")
+                        }
+                        DropdownMenu(
+                            expanded=adminCreateDomainExpanded,
+                            onDismissRequest={adminCreateDomainExpanded=false},
+                            modifier=Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(value=adminCreateDomainQuery,
+                                onValueChange={adminCreateDomainQuery=it.take(60)},
+                                label={Text("搜索或筛选域名")},
+                                singleLine=true,
+                                modifier=Modifier.padding(horizontal=10.dp))
+                            if(displayed.isEmpty()) {
+                                Text("未找到符合条件的域名",
+                                    modifier=Modifier.padding(14.dp))
+                            }
+                            displayed.forEach { option ->
+                                DropdownMenuItem(
+                                    text={
+                                        Column {
+                                            Text(option.domain)
+                                            Text(option.category + " · " +
+                                                option.ingress.ifBlank{"已登记"},
+                                                style=MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    onClick={
+                                        adminCreateDomain=option.domain
+                                        adminCreateDomainExpanded=false
+                                        adminCreateDomainQuery=""
+                                    }
+                                )
+                            }
+                        }
                     }
-                    Text("只有服务器确认创建成功后才会更新列表。",
+                    if(options.isEmpty()) Text(
+                        "没有可创建的域名。需要先在服务端完成域名验证和接入，不能通过手填绕过。",
+                        color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+                    Text("创建前核对域名。只有服务器确认创建成功后才会刷新邮箱列表。",
                         style=MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton={
-                Button(enabled=!adminBusy && adminCreateDomain.isNotBlank(),
+                Button(enabled=!adminBusy &&
+                    options.any{it.domain==adminCreateDomain},
                     onClick=::createNativeAdminMailbox) {
-                    Text(if (adminBusy) "正在创建…" else "创建邮箱")
+                    Text(if(adminBusy) "创建中…" else "创建邮箱")
                 }
             },
             dismissButton={
-                TextButton(enabled=!adminBusy,onClick={showAdminCreateDialog=false}) {
-                    Text("取消")
-                }
+                TextButton(enabled=!adminBusy,onClick={
+                    showAdminCreateDialog=false
+                    adminCreateDomainExpanded=false
+                }) { Text("取消") }
             }
         )
     }
