@@ -1560,69 +1560,305 @@ class MainActivity : FragmentActivity() {
 
     @Composable
     private fun NativeAdminContent() {
-        val destinations = AdminDestination.entries.filter {
-            it != AdminDestination.PUBLIC_MAIL && it != AdminDestination.TRANSFER
-        }.filter {
-            adminSearchQuery.isBlank() || it.title.contains(adminSearchQuery.trim(), ignoreCase = true)
-        }
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("管理中心", style = MaterialTheme.typography.headlineMedium)
-            Text("Orbit Mail · 管理员工作台",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium)
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("管理员权限", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "管理员身份必须单独登录并通过管理员 2FA；普通账号的原生设备授权不能访问管理员数据。当前管理操作仍需进入受保护的网站。应用内网页共享 Cookie 存储，尚未实现管理员网站会话的独立进程隔离。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    OutlinedButton(
-                        onClick = { navigateTo(AdminDestination.OVERVIEW.address) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("管理员登录 / 2FA（独立入口）") }
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 11.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("管理员邮箱", style = MaterialTheme.typography.headlineSmall)
+                    Text(if (adminAuthenticated)
+                        "管理员：${adminUsername.ifBlank { "已验证" }}"
+                        else "独立管理员身份验证",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-            OutlinedTextField(
-                value = adminSearchQuery,
-                onValueChange = { adminSearchQuery = it.take(50) },
-                label = { Text("搜索管理功能") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text("功能入口", style = MaterialTheme.typography.titleMedium)
-            destinations.forEach { entry ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                            .clickable { navigateTo(entry.address) }
-                            .padding(horizontal = 16.dp, vertical = 13.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            painterResource(
-                                if (entry == AdminDestination.SECURITY) R.drawable.ic_shield
-                                else R.drawable.ic_admin
-                            ), contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 9.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(entry.title, style = MaterialTheme.typography.titleMedium)
-                            Text("网站授权操作",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Text("›", style = MaterialTheme.typography.titleLarge)
+                if (adminAuthenticated) {
+                    TextButton(enabled = !adminBusy, onClick = ::refreshNativeAdmin) {
+                        Text("刷新")
+                    }
+                    TextButton(enabled = !adminBusy, onClick = ::logoutNativeAdmin) {
+                        Text("退出")
                     }
                 }
             }
-            Text("管理员 API 接入前，以上按钮只打开对应的真实功能，不会假装已执行管理操作。",
-                style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            if (adminError.isNotBlank()) {
+                Text(adminError.take(240),
+                    modifier=Modifier.fillMaxWidth().padding(14.dp),
+                    color=MaterialTheme.colorScheme.error,
+                    style=MaterialTheme.typography.bodySmall)
+            }
+            if (!adminAuthenticated) {
+                Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(if (adminTotpRequired) "验证管理员 2FA" else "管理员原生登录",
+                        style=MaterialTheme.typography.titleLarge)
+                    Text("这里直接请求管理员专用 API，不打开网站。普通账号密码和原生设备授权不能用作管理员登录。",
+                        style=MaterialTheme.typography.bodyMedium)
+                    if (adminTotpRequired) {
+                        OutlinedTextField(
+                            value=adminTotpCode,
+                            onValueChange={adminTotpCode=it.filter(Char::isDigit).take(6)},
+                            label={Text("管理员动态验证码")},
+                            singleLine=true,modifier=Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            enabled=!adminBusy && adminTotpCode.length==6,
+                            onClick=::submitAdminNativeTotp,
+                            modifier=Modifier.fillMaxWidth()
+                        ) { Text(if (adminBusy) "正在验证…" else "验证并进入管理中心") }
+                        TextButton(onClick={
+                            adminTotpRequired=false
+                            adminTotpCode=""
+                            adminError=""
+                        }) { Text("返回管理员密码登录") }
+                    } else {
+                        OutlinedTextField(
+                            value=adminSignInUsername,
+                            onValueChange={adminSignInUsername=it.take(32)},
+                            label={Text("管理员用户名")},
+                            singleLine=true,modifier=Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value=adminSignInPassword,
+                            onValueChange={adminSignInPassword=it.take(128)},
+                            label={Text("管理员密码")},
+                            visualTransformation=PasswordVisualTransformation(),
+                            singleLine=true,modifier=Modifier.fillMaxWidth()
+                        )
+                        Button(enabled=!adminBusy && adminSignInPassword.isNotBlank(),
+                            onClick=::submitAdminNativeLogin,
+                            modifier=Modifier.fillMaxWidth()) {
+                            Text(if (adminBusy) "正在验证…" else "原生管理员登录")
+                        }
+                        TextButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
+                            Text("检测当前已登录的管理员会话")
+                        }
+                    }
+                    OutlinedButton(onClick={navigateTo(AdminDestination.OVERVIEW.address)}) {
+                        Text("使用现有网站登录（手动备用入口）")
+                    }
+                    Text("网站和原生管理页使用同一服务器管理员会话；尚未实现独立 Cookie 存储。管理员 TOTP 不会跳过。",
+                        style=MaterialTheme.typography.bodySmall)
+                }
+                return@Column
+            }
+            val selected = adminSelectedMailbox
+            val detail = adminSelectedMessage
+            if (selected != null) {
+                Row(modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=5.dp),
+                    verticalAlignment=Alignment.CenterVertically) {
+                    TextButton(onClick={
+                        if (adminSelectedMessageId != null) {
+                            adminSelectedMessageId = null
+                            adminSelectedMessage = null
+                        } else {
+                            adminSelectedMailbox = null
+                            adminMessages = emptyList()
+                        }
+                        adminError=""
+                    }) { Text("‹ 返回") }
+                    Column(modifier=Modifier.weight(1f)) {
+                        Text(selected.address.take(38),
+                            maxLines=1,style=MaterialTheme.typography.titleSmall)
+                        Text(if (selected.privateMailbox) "管理员固定邮箱" else "管理员临时邮箱",
+                            style=MaterialTheme.typography.labelSmall)
+                    }
+                    if (adminBusy) Text("加载中…",style=MaterialTheme.typography.labelSmall)
+                }
+                HorizontalDivider()
+                if (detail != null && adminSelectedMessageId == detail.id) {
+                    Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                        .padding(18.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                        Text(detail.subject.ifBlank{"（无主题）"},
+                            style=MaterialTheme.typography.titleLarge)
+                        Text("发件人：${detail.sender}",
+                            style=MaterialTheme.typography.bodyMedium)
+                        Text("收件人：${detail.recipient}",
+                            style=MaterialTheme.typography.bodySmall)
+                        Text(formatNativeMessageTime(detail.time),
+                            style=MaterialTheme.typography.labelSmall)
+                        HorizontalDivider()
+                        if (detail.possibleCode.matches(Regex("^[A-Za-z0-9-]{4,16}$")))
+                            Card(modifier=Modifier.fillMaxWidth()) {
+                                Column(modifier=Modifier.padding(14.dp)) {
+                                    Text("可能的验证码",style=MaterialTheme.typography.labelSmall)
+                                    SelectionContainer {
+                                        Text(detail.possibleCode,
+                                            style=MaterialTheme.typography.headlineMedium)
+                                    }
+                                }
+                            }
+                        SelectionContainer {
+                            Text((detail.text.ifBlank{detail.htmlText}).ifBlank{
+                                "此邮件没有可显示的纯文本正文。高级 HTML 和附件需使用受保护的网站功能。"
+                            },style=MaterialTheme.typography.bodyLarge)
+                        }
+                        Text("原生视图只显示文本，不加载邮件 HTML、脚本或远程图片。",
+                            style=MaterialTheme.typography.labelSmall)
+                    }
+                } else if (adminSelectedMessageId != null) {
+                    Column(modifier=Modifier.padding(20.dp)) {
+                        Text(if (adminBusy) "正在读取管理员邮件…" else "邮件暂不可读取",
+                            style=MaterialTheme.typography.titleMedium)
+                        if (!adminBusy) TextButton(onClick={
+                            adminSelectedMessageId=null
+                            adminSelectedMessage=null
+                        }) { Text("返回邮件列表") }
+                    }
+                } else {
+                    val query=adminSearchQuery.trim()
+                    val messages=if (query.isBlank()) adminMessages else
+                        adminMessages.filter { it.subject.contains(query,ignoreCase=true) ||
+                            it.sender.contains(query,ignoreCase=true) }
+                    OutlinedTextField(value=adminSearchQuery,
+                        onValueChange={adminSearchQuery=it.take(70)},
+                        label={Text("搜索发件人或主题")},
+                        singleLine=true,
+                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp))
+                    Text("邮件 · ${messages.size}",
+                        modifier=Modifier.padding(horizontal=16.dp,vertical=5.dp),
+                        style=MaterialTheme.typography.labelLarge)
+                    if (messages.isEmpty() && !adminBusy)
+                        Text("暂无可显示邮件。",modifier=Modifier.padding(20.dp))
+                    LazyColumn(modifier=Modifier.fillMaxSize()) {
+                        items(messages,key={it.id}) { item ->
+                            Row(modifier=Modifier.fillMaxWidth()
+                                .clickable(enabled=!adminBusy) { openNativeAdminMessage(item.id) }
+                                .padding(horizontal=16.dp,vertical=12.dp),
+                                verticalAlignment=Alignment.CenterVertically) {
+                                MailAvatar(item.sender)
+                                Spacer(Modifier.padding(horizontal=7.dp))
+                                Column(modifier=Modifier.weight(1f)) {
+                                    Text(item.sender.ifBlank{"未知发件人"},maxLines=1,
+                                        style=MaterialTheme.typography.titleSmall)
+                                    Text(item.subject.ifBlank{"（无主题）"},maxLines=2,
+                                        style=MaterialTheme.typography.bodyMedium)
+                                    Text(formatNativeMessageTime(item.time),
+                                        style=MaterialTheme.typography.labelSmall)
+                                }
+                                Text("›")
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            } else {
+                Row(modifier=Modifier.fillMaxWidth()
+                    .padding(horizontal=14.dp,vertical=8.dp),
+                    horizontalArrangement=Arrangement.SpaceBetween,
+                    verticalAlignment=Alignment.CenterVertically) {
+                    Text("邮箱列表 · ${adminMailboxes.size}",
+                        style=MaterialTheme.typography.titleMedium)
+                    Button(enabled=!adminBusy,onClick={
+                        adminCreateLocal=""
+                        adminCreatePrivate=true
+                        adminCreateDomain="pieterj.nl.eu.org"
+                        showAdminCreateDialog=true
+                    }) { Text("＋ 新建邮箱") }
+                }
+                OutlinedTextField(
+                    value=adminSearchQuery,
+                    onValueChange={adminSearchQuery=it.take(70)},
+                    label={Text("搜索邮箱地址")},
+                    singleLine=true,
+                    modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp)
+                )
+                val query=adminSearchQuery.trim()
+                val boxes=if (query.isBlank()) adminMailboxes else
+                    adminMailboxes.filter { it.address.contains(query,ignoreCase=true) }
+                if (boxes.isEmpty() && !adminBusy) Text(
+                    "暂无管理员邮箱，或尚未获得列表权限。",
+                    modifier=Modifier.padding(20.dp))
+                LazyColumn(modifier=Modifier.weight(1f)) {
+                    items(boxes,key={"${if(it.privateMailbox) "p" else "o"}:${it.id}"}) { box ->
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .clickable(enabled=!adminBusy && box.status=="active") {
+                                openNativeAdminMailbox(box)
+                            }
+                            .padding(horizontal=16.dp,vertical=12.dp),
+                            verticalAlignment=Alignment.CenterVertically) {
+                            MailAvatar(box.address)
+                            Spacer(Modifier.padding(horizontal=8.dp))
+                            Column(modifier=Modifier.weight(1f)) {
+                                Text(box.address,maxLines=1,
+                                    style=MaterialTheme.typography.titleSmall)
+                                Text((if(box.privateMailbox) "固定邮箱" else "临时邮箱") +
+                                    " · " + (if(box.status=="active") "已启用" else box.status),
+                                    style=MaterialTheme.typography.labelSmall)
+                            }
+                            if (box.unread > 0) Text("${box.unread} 未读",
+                                style=MaterialTheme.typography.labelMedium)
+                            Text("  ›")
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                // Advanced domains/security still use the reviewed website until
+                // dedicated, permissioned native endpoints are available.
+                Row(modifier=Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement=Arrangement.SpaceEvenly) {
+                    TextButton(onClick={navigateTo(AdminDestination.DOMAINS.address)}) {
+                        Text("域名（网页）")
+                    }
+                    TextButton(onClick={navigateTo(AdminDestination.RECORDS.address)}) {
+                        Text("记录（网页）")
+                    }
+                    TextButton(onClick={navigateTo(AdminDestination.SECURITY.address)}) {
+                        Text("安全（网页）")
+                    }
+                }
+            }
         }
+    }
+
+    @Composable
+    private fun NativeAdminCreateDialog() {
+        AlertDialog(
+            onDismissRequest={if(!adminBusy) showAdminCreateDialog=false},
+            title={Text("新建管理员邮箱")},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick={
+                            adminCreatePrivate=true
+                            adminCreateDomain="pieterj.nl.eu.org"
+                        }) { Text(if(adminCreatePrivate) "✓ 固定邮箱" else "固定邮箱") }
+                        OutlinedButton(onClick={
+                            adminCreatePrivate=false
+                            adminCreateDomain=adminOrdinaryDomains.firstOrNull().orEmpty()
+                        }) { Text(if(!adminCreatePrivate) "✓ 临时邮箱" else "临时邮箱") }
+                    }
+                    OutlinedTextField(value=adminCreateLocal,
+                        onValueChange={adminCreateLocal=it.take(64)},
+                        label={Text("邮箱前缀（留空自动生成）")},
+                        singleLine=true,modifier=Modifier.fillMaxWidth())
+                    OutlinedTextField(value=adminCreateDomain,
+                        onValueChange={adminCreateDomain=it.lowercase().take(150)},
+                        label={Text("邮箱域名")},
+                        singleLine=true,modifier=Modifier.fillMaxWidth())
+                    if(!adminCreatePrivate && adminOrdinaryDomains.isNotEmpty()) {
+                        Text("可用临时域名：${adminOrdinaryDomains.take(4).joinToString("、")}",
+                            style=MaterialTheme.typography.labelSmall)
+                    }
+                    Text("只有服务器确认创建成功后才会更新列表。",
+                        style=MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton={
+                Button(enabled=!adminBusy && adminCreateDomain.isNotBlank(),
+                    onClick=::createNativeAdminMailbox) {
+                    Text(if (adminBusy) "正在创建…" else "创建邮箱")
+                }
+            },
+            dismissButton={
+                TextButton(enabled=!adminBusy,onClick={showAdminCreateDialog=false}) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     @Composable
@@ -1793,6 +2029,7 @@ class MainActivity : FragmentActivity() {
         }
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
+        if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
