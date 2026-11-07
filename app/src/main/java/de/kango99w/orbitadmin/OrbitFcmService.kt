@@ -23,6 +23,8 @@ class OrbitFcmService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        // Unrelated FCM events must not manufacture a new-mail notification.
+        if (message.notification != null || message.data != mapOf("kind" to "new_mail")) return
         if (!OrbitPushConfig.configured) return
         val consent = getSharedPreferences("orbit_push",MODE_PRIVATE)
         if (!BackgroundPushConsent.mayDeliver(

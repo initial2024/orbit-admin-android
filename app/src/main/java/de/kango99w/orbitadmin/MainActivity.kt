@@ -316,7 +316,8 @@ class MainActivity : FragmentActivity() {
 
     private val pushPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted && BackgroundPushConsent.mayEnable(backgroundPushRevokePending)) {
+            if (granted && nativeDeviceClient.isBound() &&
+                BackgroundPushConsent.mayEnable(backgroundPushRevokePending)) {
                 setPushOptIn(true)
                 tryRegisterPush()
             } else backgroundPushStatus = if (backgroundPushRevokePending)
@@ -1244,8 +1245,13 @@ class MainActivity : FragmentActivity() {
 
     private fun tryRegisterPush() {
         if (!BackgroundPushConsent.mayDeliver(backgroundPushOptIn,backgroundPushRevokePending) ||
-            !OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty() ||
-            !unlocked || !isCurrentPublicMailDocument()) return
+            !OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty() || !unlocked)
+            return
+        // Never open a hidden WebView to acquire a site cookie for native mail push.
+        if (!nativeDeviceClient.isBound()) {
+            backgroundPushStatus = "请先完成普通账号原生登录，才能登记邮件提醒。"
+            return
+        }
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val stamp = SystemClock.elapsedRealtime()
@@ -1256,8 +1262,20 @@ class MainActivity : FragmentActivity() {
                 if (!BackgroundPushConsent.mayDeliver(
                     backgroundPushOptIn,backgroundPushRevokePending) || !unlocked)
                     return@addOnSuccessListener
-                backgroundPushStatus = if (sendPushAction("push_register",token))
-                    "设备登记已提交，等待服务器确认" else "需在已登录的普通收件箱登记设备"
+                val installation = pushInstallationId()
+                nativeIo.execute {
+                    if (!BackgroundPushConsent.mayDeliver(
+                        backgroundPushOptIn,backgroundPushRevokePending)) return@execute
+                    val response = nativeDeviceClient.registerPush(installation,token)
+                    runOnUiThread {
+                        if (!BackgroundPushConsent.mayDeliver(
+                            backgroundPushOptIn,backgroundPushRevokePending)) return@runOnUiThread
+                        backgroundPushStatus =
+                            if (response.status == 201 && response.value?.optBoolean("registered") == true)
+                                "服务器已确认原生设备登记；等待真实邮件验证投递。"
+                            else "后台推送尚未接通：HTTP " + response.status + "；未确认设备登记。"
+                    }
+                }
             }
             .addOnFailureListener {
                 backgroundPushStatus = "设备令牌暂不可用；检查 Google Play 服务与网络。"
@@ -1265,6 +1283,10 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun requestBackgroundPush() {
+        if (!nativeDeviceClient.isBound()) {
+            backgroundPushStatus = "先完成普通邮箱原生登录，网页会话不会代替设备授权。"
+            return
+        }
         if (!BackgroundPushConsent.mayEnable(backgroundPushRevokePending)) {
             backgroundPushStatus = "服务端撤销尚未确认。请在普通邮箱完成撤销，避免旧令牌继续收信。"
             return
@@ -1294,9 +1316,24 @@ class MainActivity : FragmentActivity() {
 
     private fun retryServerPushRevocation() {
         if (!backgroundPushRevokePending) return
-        backgroundPushStatus = if (sendPushAction("push_revoke"))
-            "本机已停用数据消息提醒；已请求服务器撤销，等待确认。"
-            else "本机已停用数据消息提醒；请进入已登录的普通邮箱重试服务端撤销。"
+        if (!nativeDeviceClient.isBound()) {
+            backgroundPushStatus = "本机已停用提醒；设备授权已失效，请从账号安全设置撤销旧设备。"
+            return
+        }
+        backgroundPushStatus = "本机提醒已停用，正在通过设备签名撤销服务器登记。"
+        val installation = pushInstallationId()
+        nativeIo.execute {
+            val response = nativeDeviceClient.revokePush(installation)
+            runOnUiThread {
+                if (!backgroundPushRevokePending) return@runOnUiThread
+                if (response.status == 200 && response.value?.optBoolean("revoked") == true) {
+                    setPushRevokePending(false)
+                    backgroundPushStatus = "服务器已确认撤销；不会自动重新登记。"
+                } else {
+                    backgroundPushStatus = "本机提醒已停用，但服务器撤销未确认；可重试或进入账号安全设置。"
+                }
+            }
+        }
     }
 
     private fun copyMailboxAddress(address: String) {
