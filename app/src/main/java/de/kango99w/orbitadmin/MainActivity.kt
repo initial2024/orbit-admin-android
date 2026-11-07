@@ -382,6 +382,14 @@ class MainActivity : FragmentActivity() {
         if (sendNativeMailboxCommand("refresh")) lastNativeSnapshotRequestAtMs = stamp
     }
 
+    /** Format server Unix-millisecond timestamps using the device's local time. */
+    private fun formatNativeMessageTime(value: Long): String {
+        if (value < 946684800000L || value > 4102444800000L) return ""
+        return java.text.DateFormat.getDateTimeInstance(
+            java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
+        ).format(java.util.Date(value))
+    }
+
     /** Signed, cookie-free native API reads. Only account-owned and unlocked data is displayed. */
     private fun refreshNativeApi() {
         if (!unlocked || !nativeDeviceClient.isBound() || nativeApiLoading) return
@@ -436,7 +444,7 @@ class MainActivity : FragmentActivity() {
                     if (!NativeInboxPolicy.isSafeId(id)) continue
                     mail.add(NativeMailRow(id, item.optString("sender").take(160),
                         item.optString("subject").take(160),
-                        item.optString("received_at").take(48)))
+                        formatNativeMessageTime(item.optLong("received_at", 0L))))
                 }
             }
             val snapshot = NativeInboxSnapshot(
@@ -492,7 +500,7 @@ class MainActivity : FragmentActivity() {
                     item.optString("sender").take(160),
                     item.optString("recipient").take(254),
                     item.optString("subject").take(240),
-                    item.optString("received_at").take(48),
+                    formatNativeMessageTime(item.optLong("received_at", 0L)),
                     item.optString("text_body").take(8000))
                 showNativeMail = true
             }
