@@ -2,7 +2,7 @@
 
 Public Android administrator client for the existing [Orbit temporary-mail admin website](https://inbox.kango99w.de/admin/).
 
-**Status: experimental debug build; not a production release.** The existing Cloudflare backend is unchanged.
+**Status: experimental debug build; not a production release. Android v0.2.0-dev adds an adaptive Orbit Admin launcher icon and six website shortcuts.** The existing Cloudflare backend is unchanged.
 
 ## Authentication
 
@@ -11,6 +11,12 @@ Public Android administrator client for the existing [Orbit temporary-mail admin
 - Local unlock is not server login. It does not bypass a TOTP challenge. The website sets its normal cookies in the app-private WebView profile.
 - App UI locks again when the activity is no longer visible. WebView state is preserved during an ordinary in-app lock; a process kill/restart may reload the website.
 - If Android has no secure lock configured, the app fails closed and directs users to device security settings.
+
+## Existing website functions
+
+The APK displays the current server-hosted administrator website; no second frontend, mailbox database or 2FA flow is created. Six native shortcuts open **总览, 邮箱, 域名, 记录, 安全, 更多** and bottom controls provide **返回, 前进, 刷新**. All administrator mailbox, code/link extraction, domain, and security features are the original website implementations. A user-confirmed **清理本机** command clears only this APK's cookies/site storage (it does not revoke server sessions). A separate compact adaptive launcher icon follows the teal/cyan orbital mailbox design. See [docs/feature-map.md](docs/feature-map.md).
+
+On leaving the app for the document picker, the app relocks. The selected file is not delivered into the web form until the local unlock succeeds again. Native attachment downloads are disabled in this experimental build.
 
 ## Mobile design and safety
 
@@ -25,5 +31,7 @@ JDK 17, Android SDK API 36, Android Gradle Plugin 8.11.1 and Gradle 8.13 are use
 ```bash
 gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 ```
+
+**Debug APK upgrade warning:** GitHub-hosted builds use ephemeral debug-signing keys. If Android refuses to install an updated test build over a previous debug version, uninstall the previous test build first; that clears the APK's local login session. Production signing must later use privately controlled persistent keys.
 
 After CI passes, use the **Android debug build** Actions workflow artifact `orbit-admin-unsigned-debug` for an installable **debug/test APK only**. It is not production-signed. Review the source and perform real-device security checks before distributing it. Never upload signing keys, TOTP seeds, admin passwords, or cookie values to a public repository.

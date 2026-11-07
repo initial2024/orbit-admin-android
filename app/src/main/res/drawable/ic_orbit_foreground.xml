@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A simplified small-size mark based on the original blue-green orbit + inbox icon concept. -->
+    <path android:fillColor="#10314A" android:pathData="M31,31 Q31,25 37,25 L70,25 Q76,25 76,31 L76,58 L31,58 Z"/>
+    <path android:fillColor="#24668A" android:pathData="M35,31 L72,31 L72,35 L35,35 Z"/>
+    <path android:fillColor="#B5F1FA" android:pathData="M39,29 A2,2 0,1 0,39.1 29 Z"/>
+    <path android:fillColor="#B5F1FA" android:pathData="M45,29 A2,2 0,1 0,45.1 29 Z"/>
+    <path android:fillColor="#B5F1FA" android:pathData="M51,29 A2,2 0,1 0,51.1 29 Z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#21E2CD" android:strokeWidth="4"
+          android:strokeLineCap="round" android:pathData="M18,63 C25,83 77,81 92,48"/>
+    <path android:fillColor="#00000000" android:strokeColor="#54C8FF" android:strokeWidth="2.8"
+          android:strokeLineCap="round" android:pathData="M20,55 C31,30 73,29 89,41"/>
+    <path android:fillColor="#DAF8FF" android:pathData="M29,43 Q29,39 34,39 L74,39 Q79,39 79,44 L79,69 Q79,74 74,74 L34,74 Q29,74 29,69 Z"/>
+    <path android:fillColor="#50CFF0" android:pathData="M29,45 L54,61 L79,45 L79,68 L54,55 L29,68 Z"/>
+    <path android:fillColor="#1255C8" android:pathData="M29,69 L48,55 L54,60 L60,55 L79,69 L79,70 Q79,74 74,74 L34,74 Q29,74 29,70 Z"/>
+    <path android:fillColor="#9AEAFD" android:pathData="M70,64 L74,62 L77,65 L82,64 L83,69 L87,71 L85,76 L87,80 L83,83 L82,87 L77,87 L74,91 L70,88 L66,91 L63,87 L58,87 L57,83 L53,80 L55,76 L53,71 L57,69 L58,64 L63,65 L66,62 Z"/>
+    <path android:fillColor="#071D37" android:pathData="M70,69 A7,7 0,1 0,70.1 69 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M90,28 L92,34 L98,36 L92,38 L90,44 L88,38 L82,36 L88,34 Z"/>
+</vector>

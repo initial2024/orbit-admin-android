@@ -17,6 +17,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebStorage
 import android.net.http.SslError
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -28,13 +29,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,21 +62,42 @@ class MainActivity : FragmentActivity() {
 
     private var unlocked by mutableStateOf(false)
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
+    private var showClearConfirm by mutableStateOf(false)
     private var browser: WebView? = null
     private var openedOnce = false
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var allowMultipleFiles = false
+    private var deferredFileUris: Array<Uri>? = null
     private lateinit var biometricPrompt: BiometricPrompt
 
-    private val filePicker =
-        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { selected ->
-            val callback = pendingFileCallback
-            pendingFileCallback = null
-            callback?.onReceiveValue(
-                selected.take(if (allowMultipleFiles) selected.size else 1)
-                    .takeIf { it.isNotEmpty() }?.toTypedArray()
-            )
+    private val singleFilePicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
+            finishFilePick(listOfNotNull(selected))
         }
+
+    private val multipleFilePicker =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { selected ->
+            finishFilePick(selected)
+        }
+
+    private fun finishFilePick(selected: List<Uri>) {
+        val callback = pendingFileCallback ?: return
+        val accepted = selected.take(if (allowMultipleFiles) selected.size else 1).toTypedArray()
+        if (accepted.isEmpty()) {
+            pendingFileCallback = null
+            deferredFileUris = null
+            callback.onReceiveValue(null)
+        } else if (unlocked) {
+            pendingFileCallback = null
+            deferredFileUris = null
+            callback.onReceiveValue(accepted)
+        } else {
+            // A document picker can background the app. The file is only sent
+            // to the website after the device has been unlocked again.
+            deferredFileUris = accepted
+            message = "已选择文件；请重新解锁以继续上传。"
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +112,12 @@ class MainActivity : FragmentActivity() {
                     message = "设备解锁完成；管理员身份仍由网站验证。"
                     browser?.resumeTimers()
                     browser?.onResume()
+                    deferredFileUris?.let { selection ->
+                        val callback = pendingFileCallback
+                        deferredFileUris = null
+                        pendingFileCallback = null
+                        callback?.onReceiveValue(selection)
+                    }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -152,28 +184,90 @@ class MainActivity : FragmentActivity() {
             if (current?.canGoBack() == true) current.goBack()
             else lock()
         }
+        if (showClearConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearConfirm = false },
+                title = { Text("清除本机网站数据？") },
+                text = {
+                    Text("将清除 APK 内的网站 Cookie 和本地存储，并要求重新登录。"
+                        + "这不会撤销服务器上的管理员会话或可信设备授权；请在网站安全中心撤销。")
+                },
+                confirmButton = {
+                    TextButton(onClick = ::clearLocalSession) { Text("清除并锁定") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+                }
+            )
+        }
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Orbit Admin", style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = { browser?.loadUrl(AdminUrlPolicy.HOME) }) {
-                    Text("管理首页")
-                }
+                OutlinedButton(onClick = {
+                    browser?.loadUrl(AdminUrlPolicy.HOME)
+                }) { Text("首页") }
                 OutlinedButton(onClick = ::lock) { Text("锁定") }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AdminDestination.entries.forEach { entry ->
+                    OutlinedButton(onClick = {
+                        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(entry.address)) {
+                            browser?.loadUrl(entry.address)
+                        }
+                    }) { Text(entry.title) }
+                }
             }
             AndroidView(
                 factory = { obtainBrowser() },
                 modifier = Modifier.weight(1f).fillMaxWidth()
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                TextButton(onClick = {
+                    browser?.let { if (it.canGoBack()) it.goBack() }
+                }) { Text("返回") }
+                TextButton(onClick = {
+                    browser?.let { if (it.canGoForward()) it.goForward() }
+                }) { Text("前进") }
+                TextButton(onClick = { browser?.reload() }) { Text("刷新") }
+                TextButton(onClick = { showClearConfirm = true }) { Text("清理本机") }
+            }
             Text(
                 text = message,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+                maxLines = 2,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
                 style = MaterialTheme.typography.labelSmall
             )
         }
+    }
+
+    private fun clearLocalSession() {
+        showClearConfirm = false
+        val current = browser
+        current?.stopLoading()
+        WebStorage.getInstance().deleteAllData()
+        CookieManager.getInstance().removeAllCookies {
+            CookieManager.getInstance().flush()
+            runOnUiThread {
+                if (browser === current) {
+                    current?.clearHistory()
+                    current?.loadUrl(AdminUrlPolicy.HOME)
+                }
+                message = "本机网站数据已清除。重新登录仍需要服务器授权与 2FA。"
+            }
+        }
+        lock()
     }
 
     private fun lock() {
@@ -250,6 +344,9 @@ class MainActivity : FragmentActivity() {
             override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
                 (view?.parent as? ViewGroup)?.removeView(view)
                 view?.destroy()
+                pendingFileCallback?.onReceiveValue(null)
+                pendingFileCallback = null
+                deferredFileUris = null
                 browser = null
                 openedOnce = false
                 unlocked = false
@@ -276,10 +373,12 @@ class MainActivity : FragmentActivity() {
                     .ifEmpty { listOf("*/*") }
                     .toTypedArray()
                 return try {
-                    filePicker.launch(accepted)
+                    if (allowMultipleFiles) multipleFilePicker.launch(accepted)
+                    else singleFilePicker.launch(accepted)
                     true
                 } catch (_: Exception) {
                     pendingFileCallback = null
+                    deferredFileUris = null
                     filePathCallback.onReceiveValue(null)
                     false
                 }
@@ -304,6 +403,7 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
+        deferredFileUris = null
         val current = browser
         browser = null
         (current?.parent as? ViewGroup)?.removeView(current)
