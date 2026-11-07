@@ -372,10 +372,28 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Only a deliberate "website" action opens first-party HTML. */
+    /** Advanced administrator functions always open OUTSIDE the native APK.
+     * The in-app ADMIN tab is exclusively a Compose screen, never a WebView.
+     */
+    private fun openAdvancedAdminWebsite(url: String) {
+        if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url) ||
+            NativeSectionRouting.explicitWebsiteTarget(url) != MailSection.ADMIN) return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (_: ActivityNotFoundException) {
+            message = "无法打开系统浏览器；管理员原生界面保持不变。"
+        }
+    }
+
+    /** Only a deliberate website action opens first-party HTML. */
     private fun navigateTo(url: String) {
         if (!unlocked) return
         val target = NativeSectionRouting.explicitWebsiteTarget(url) ?: return
+        if (target == MailSection.ADMIN) {
+            openAdvancedAdminWebsite(url)
+            return
+        }
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
         adminBusy = false
@@ -1657,8 +1675,8 @@ class MainActivity : FragmentActivity() {
                             Text("检测当前已登录的管理员会话")
                         }
                     }
-                    OutlinedButton(onClick={navigateTo(AdminDestination.OVERVIEW.address)}) {
-                        Text("使用现有网站登录（手动备用入口）")
+                    OutlinedButton(onClick={openAdvancedAdminWebsite(AdminDestination.OVERVIEW.address)}) {
+                        Text("备用：在系统浏览器打开旧后台（非应用页面）")
                     }
                     Text("网站和原生管理页使用同一服务器管理员会话；尚未实现独立 Cookie 存储。管理员 TOTP 不会跳过。",
                         style=MaterialTheme.typography.bodySmall)
@@ -1820,14 +1838,14 @@ class MainActivity : FragmentActivity() {
                 // dedicated, permissioned native endpoints are available.
                 Row(modifier=Modifier.fillMaxWidth().padding(8.dp),
                     horizontalArrangement=Arrangement.SpaceEvenly) {
-                    TextButton(onClick={navigateTo(AdminDestination.DOMAINS.address)}) {
-                        Text("域名（网页）")
+                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.DOMAINS.address)}) {
+                        Text("域名·外部浏览器")
                     }
-                    TextButton(onClick={navigateTo(AdminDestination.RECORDS.address)}) {
-                        Text("记录（网页）")
+                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.RECORDS.address)}) {
+                        Text("记录·外部浏览器")
                     }
-                    TextButton(onClick={navigateTo(AdminDestination.SECURITY.address)}) {
-                        Text("安全（网页）")
+                    TextButton(onClick={openAdvancedAdminWebsite(AdminDestination.SECURITY.address)}) {
+                        Text("安全·外部浏览器")
                     }
                 }
             }
@@ -1950,7 +1968,7 @@ class MainActivity : FragmentActivity() {
                             message = "仅本机密钥已清除；须进入网站设备管理撤销服务器授权。"
                         }) { Text("只清除本机设备凭据") }
                     }
-                    OutlinedButton(onClick = { navigateTo(AdminDestination.SECURITY.address) }) {
+                    OutlinedButton(onClick = { openAdvancedAdminWebsite(AdminDestination.SECURITY.address) }) {
                         Icon(painterResource(R.drawable.ic_shield), contentDescription = null)
                         Spacer(Modifier.padding(horizontal = 3.dp))
                         Text("网站 2FA / 可信设备")
@@ -2160,7 +2178,6 @@ class MainActivity : FragmentActivity() {
                     activeSection == MailSection.MAILBOXES
                 val nativeVisible = publicSelected && showNativeMail
                 val transferWebVisible = activeSection == MailSection.TRANSFER && !showNativeToolsPanel
-                val adminWebVisible = activeSection == MailSection.ADMIN && !showNativeToolsPanel
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Each WebView is mounted only after the section's first visit,
                     // then remains attached and retains its DOM/session across tabs.
@@ -2181,17 +2198,6 @@ class MainActivity : FragmentActivity() {
                             },
                             modifier = Modifier.fillMaxSize().alpha(
                                 if (transferWebVisible) 1f else 0f
-                            )
-                        )
-                    }
-                    if (adminWebVisible) {
-                        AndroidView(
-                            factory = { obtainBrowser(MailSection.ADMIN) },
-                            update = {
-                                it.visibility = if (adminWebVisible) View.VISIBLE else View.INVISIBLE
-                            },
-                            modifier = Modifier.fillMaxSize().alpha(
-                                if (adminWebVisible) 1f else 0f
                             )
                         )
                     }
