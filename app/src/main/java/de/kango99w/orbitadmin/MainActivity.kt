@@ -1640,6 +1640,7 @@ class MainActivity : FragmentActivity() {
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
                     adminDeleteTarget = null
+                    adminRevokeTrustedTarget = null
                     adminTotpRequired = false
                     adminError = "已退出管理员会话。普通账号授权未更改。"
                 } else adminError = "管理员退出失败：HTTP ${response.status}，未声称退出成功。"
@@ -1700,6 +1701,7 @@ class MainActivity : FragmentActivity() {
                     adminSecurityState = null
                     adminPane = "mailboxes"
                     adminDeleteTarget = null
+                    adminRevokeTrustedTarget = null
                     adminError = "管理员会话已过期，需要独立管理员验证。"
                     return@runOnUiThread
                 }
@@ -2647,6 +2649,7 @@ class MainActivity : FragmentActivity() {
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
         adminDeleteTarget = null
+        adminRevokeTrustedTarget = null
         // Website CookieManager and native Keystore grants are separate auth realms.
         // Do not revoke or erase the account grant merely because website data
         // (including the administrator WebView session) was cleared.
@@ -2687,6 +2690,7 @@ class MainActivity : FragmentActivity() {
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
         adminDeleteTarget = null
+        adminRevokeTrustedTarget = null
         showAdminCreateDialog = false
         nativeRequestGeneration.incrementAndGet()
         nativeApiLoading = false
