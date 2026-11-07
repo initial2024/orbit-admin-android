@@ -85,3 +85,43 @@ object AdminManagementModels {
             list)
     }
 }
+
+
+/** Provider labels and evidence are informational only, not mail/DNS authorization. */
+data class AdminInventoryDomain(
+    val domain:String,val registrar:String,val dnsProvider:String,
+    val websiteHost:String,val emailProvider:String,val notes:String,
+    val evidenceSource:String,val evidenceStatus:String,val evidenceNote:String,
+    val pagesStatus:String,val zoneStatus:String,val mailConfigured:Boolean,
+    val observedAt:Long
+)
+object AdminDomainInventoryModels {
+    private val domainPattern=Regex("^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9-]{2,63}$")
+    private fun safe(o:JSONObject,k:String,max:Int):String=
+        o.optString(k).trim().filter { !it.isISOControl() }.take(max)
+    fun parse(json:JSONObject?):List<AdminInventoryDomain>{
+        val array=json?.optJSONArray("domains") ?: return emptyList()
+        val seen=HashSet<String>()
+        return (0 until minOf(array.length(),500)).mapNotNull { i ->
+            val o=array.optJSONObject(i) ?: return@mapNotNull null
+            val domain=safe(o,"domain",253).lowercase()
+            if(!domainPattern.matches(domain)||!seen.add(domain))return@mapNotNull null
+            AdminInventoryDomain(domain,safe(o,"registrar_provider",60),
+                safe(o,"dns_provider",60),safe(o,"website_host",60),
+                safe(o,"email_provider",60),safe(o,"notes",250),
+                safe(o,"evidence_source",48),safe(o,"evidence_status",48),
+                safe(o,"evidence_note",160),safe(o,"pages_status",48),
+                safe(o,"zone_status",48),o.optBoolean("mail_configured",false),
+                o.optLong("observed_at"))
+        }
+    }
+    fun combine(known:List<AdminManagedDomain>,inventory:List<AdminInventoryDomain>):List<AdminManagedDomain>{
+        val providerRows=inventory.map {
+            AdminManagedDomain(it.domain,"托管库存",
+                it.evidenceStatus.ifBlank{"unverified"},
+                if(it.dnsProvider.isNotBlank())"DNS："+it.dnsProvider else "服务商未登记")
+        }
+        return (known+providerRows)
+            .distinctBy { it.source+"|"+it.domain+"|"+it.state }.take(750)
+    }
+}
