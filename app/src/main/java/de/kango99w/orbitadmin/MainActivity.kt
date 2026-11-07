@@ -702,6 +702,18 @@ class MainActivity : FragmentActivity() {
         )
     }
 
+    /** Creating account-owned mailboxes still requires the existing server's CSRF/Turnstile checks. */
+    private fun requestMailboxCreation(snapshot: NativeInboxSnapshot) {
+        if (nativeApiActive || nativeDeviceClient.isBound()) {
+            navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+            message = "创建邮箱暂由网站验证配额及人机验证；成功后返回原生邮箱点击刷新。"
+            return
+        }
+        nativeCreateDomain = snapshot.selectedDomain
+        nativeCreateLocal = ""
+        showCreateMailbox = true
+    }
+
     /** Stay in Compose, even when the server-side native reader is not yet deployed. */
     private fun openNativeMessage(id: String) {
         if (!unlocked || !NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true ||
@@ -848,9 +860,7 @@ class MainActivity : FragmentActivity() {
                     Text("刷新")
                 }
                 if (showMailboxes) TextButton(onClick={
-                    nativeCreateDomain=snapshot.selectedDomain
-                    nativeCreateLocal=""
-                    showCreateMailbox=true
+                    requestMailboxCreation(snapshot)
                 }) { Text("＋ 新建") }
             }
             OutlinedTextField(
@@ -879,10 +889,8 @@ class MainActivity : FragmentActivity() {
                 LazyColumn(modifier=Modifier.fillMaxSize()) {
                     items(mailboxes,key={it.id}) { mailbox ->
                         Row(modifier=Modifier.fillMaxWidth()
-                            .clickable {
-                                if (sendNativeMailboxCommand("select_mailbox",mailbox.id))
-                                    openSection(MailSection.INBOX)
-                            }.padding(horizontal=16.dp,vertical=11.dp),
+                            .clickable { openNativeMailbox(mailbox.id) }
+                            .padding(horizontal=16.dp,vertical=11.dp),
                             verticalAlignment=Alignment.CenterVertically) {
                             MailAvatar(mailbox.address,44)
                             Spacer(Modifier.padding(horizontal=7.dp))
@@ -903,14 +911,13 @@ class MainActivity : FragmentActivity() {
                     item {
                         Column(modifier=Modifier.fillMaxWidth().padding(16.dp),
                             verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                            Button(onClick={
-                                nativeCreateDomain=snapshot.selectedDomain
-                                nativeCreateLocal=""
-                                showCreateMailbox=true
-                            },modifier=Modifier.fillMaxWidth()) { Text("＋ 创建邮箱") }
+                            Button(onClick={ requestMailboxCreation(snapshot) },
+                                modifier=Modifier.fillMaxWidth()) {
+                                Text(if (nativeApiActive) "＋ 网页授权创建邮箱"
+                                     else "＋ 创建邮箱")
+                            }
                             TextButton(onClick={
-                                showNativeMail=false
-                                publicWebView()?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+                                navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
                             }) { Text("受保护设置及高级管理（网页授权）") }
                         }
                     }
@@ -1005,19 +1012,25 @@ class MainActivity : FragmentActivity() {
                         style = MaterialTheme.typography.bodySmall)
                     Button(
                         onClick = {
-                            webLoginInProgress = true
-                            showNativeMail = false
+                            navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-inbox")
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("登录 / 同步现有邮箱") }
+                    ) { Text(if (nativeDeviceClient.isBound()) "打开网站授权功能"
+                        else "首次登录 / 绑定设备") }
                     OutlinedButton(
                         onClick = {
-                            val home = MailSection.INBOX.address ?: return@OutlinedButton
-                            val public = publicWebView()
-                            if (public?.url != home) public?.loadUrl(home) else public.reload()
+                            if (nativeDeviceClient.isBound()) refreshNativeApi()
+                            else {
+                                val home = MailSection.INBOX.address ?: return@OutlinedButton
+                                val public = publicWebView()
+                                if (public == null) navigateTo(home)
+                                else if (public.url != home) public.loadUrl(home)
+                                else public.reload()
+                            }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("重新检查邮箱") }
+                    ) { Text(if (nativeDeviceClient.isBound()) "重试原生 API"
+                        else "重新检查邮箱") }
                 }
             }
             Text("管理员管理会话与普通邮箱账号会话独立；登录一个不代表自动获得另一个的权限。",
