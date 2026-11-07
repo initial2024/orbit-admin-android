@@ -460,9 +460,24 @@ class MainActivity : FragmentActivity() {
         glyphBusy = true
         glyphError = ""
         glyphIo.execute {
-            val status = glyphClient.get("/api/lucky-glyphs/status",epoch)
+            fun readGlyph(suffix: String): NativeGlyphClient.Reply {
+                if(nativeDeviceClient.isBound()) {
+                    // Keystore-bound P-256 account data first. Native-device
+                    // glyph reads are in the guarded Worker PR, not production
+                    // until its security acceptance gate is approved.
+                    val native=nativeDeviceClient.fetch(
+                        "/api/account/native-device/glyphs/$suffix")
+                    if(native.status==200)
+                        return NativeGlyphClient.Reply(native.status,native.value,native.error)
+                    if(native.status !in setOf(404,503) ||
+                        !glyphClient.hasOrdinarySiteSession())
+                        return NativeGlyphClient.Reply(native.status,native.value,native.error)
+                }
+                return glyphClient.get("/api/lucky-glyphs/$suffix",epoch)
+            }
+            val status = readGlyph("status")
             val collections = if(status.status == 200)
-                glyphClient.get("/api/lucky-glyphs/collections",epoch) else null
+                readGlyph("collections") else null
             val parsed = if(status.status == 200 && status.value != null)
                 try { NativeGlyphModels.read(
                     status.value,collections?.value?.takeIf{collections.status==200})
@@ -560,6 +575,12 @@ class MainActivity : FragmentActivity() {
                 Text(glyphNotice,modifier=Modifier.padding(horizontal=16.dp),
                     color=MaterialTheme.colorScheme.primary,
                     style=MaterialTheme.typography.bodySmall)
+            if(data!=null && !glyphClient.hasOrdinarySiteSession())
+                Text("原生设备授权当前仅支持读取装扮图鉴；" +
+                    "签到、抽取和兑换需由服务端扩展签名交易协议后开放。",
+                    modifier=Modifier.padding(horizontal=16.dp,vertical=4.dp),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(data==null) {
                 Column(modifier=Modifier.fillMaxSize().padding(20.dp),
                     horizontalAlignment=Alignment.CenterHorizontally,
@@ -603,11 +624,13 @@ class MainActivity : FragmentActivity() {
                             style=MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Button(onClick={performNativeGlyphAction("checkin")},
-                                enabled=!glyphBusy && !data.checkedIn) {
+                                enabled=!glyphBusy && !data.checkedIn &&
+                                    glyphClient.hasOrdinarySiteSession()) {
                                 Text(if(data.checkedIn) "今日已签到" else "每日签到")
                             }
                             OutlinedButton(onClick={performNativeGlyphAction("draw")},
-                                enabled=!glyphBusy && data.draws>0) {
+                                enabled=!glyphBusy && data.draws>0 &&
+                                    glyphClient.hasOrdinarySiteSession()) {
                                 Text("抽取 · ${data.draws} 次")
                             }
                         }
@@ -676,12 +699,14 @@ class MainActivity : FragmentActivity() {
                                 }
                                 if(glyphTab=="每日商店") {
                                     OutlinedButton(enabled=!glyphBusy && !item.owned &&
-                                        item.price>0 && data.points>=item.price,
+                                        item.price>0 && data.points>=item.price &&
+                                        glyphClient.hasOrdinarySiteSession(),
                                         onClick={glyphBuyTarget=item}) {
                                         Text(if(item.owned) "已拥有" else "${item.price}积分")
                                     }
                                 } else if(item.owned) {
-                                    TextButton(enabled=!glyphBusy && !item.equipped,
+                                    TextButton(enabled=!glyphBusy && !item.equipped &&
+                                        glyphClient.hasOrdinarySiteSession(),
                                         onClick={performNativeGlyphAction("equip",item)}) {
                                         Text(if(item.equipped) "已佩戴" else "佩戴")
                                     }
