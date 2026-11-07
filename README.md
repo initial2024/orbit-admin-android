@@ -59,3 +59,11 @@ After CI passes, use the **Android debug build** Actions workflow artifact `orbi
 ## Android v0.5 native mailbox creation/management
 
 Compose supports create-random / custom local-prefix forms, allowlisted-domain selection, mailbox switching, copy address, local filtering and refresh. Commands use `WebViewCompat.postWebMessage` targeting only the currently open first-party page. **Only the website's existing verified action handlers execute network requests**. Turnstile, quotas, account ownership, protected mailbox passwords and 2FA are never bypassed. Destructive delete and protected-mailbox unlock remain in the full website. Companion site PR #611 must be deployed before native actions work. No browser cookies or administrator API keys are exposed to native code.
+
+## v0.6.0-dev: native mailbox UI and session-preserving web scopes
+
+- Independent, retained WebView documents for public Inbox/Mailboxes, Admin and Transfer. Ordinary account/admin cookies remain website-owned and independent; **no app/browser cookie transfer** or implicit 2FA bypass. Switching tabs does not reload an unrelated website document or erase a React mailbox state.
+- Inbox UI follows a mail-client pattern: mailbox selection, search, sender initials/avatar, subject and receive time, and full-row tapping; native mailbox creation and address copying remain.
+- Select an existing message with a bounded first-party action. The site reuses its previously authorized per-mailbox message fetch, then emits only a text-only, max 8KB preview to memory-only Compose. No HTML rendering, download, cookies or tokens in the native detail bridge. Native app validates exact origin/main frame and the pending message/mailbox IDs, clears detail on lock and navigation.
+- Rich HTML/attachments, password-protected mailbox unlock and administrator operations stay in existing authenticated web UI.
+- Requires companion website PR #614 to be deployed for native body display; otherwise offers the original website fallback. FCM server remains separate Draft PR #612, not live. Real-device and regression tests are required before production-grade claims.

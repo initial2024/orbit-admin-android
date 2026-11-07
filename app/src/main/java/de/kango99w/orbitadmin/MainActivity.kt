@@ -931,31 +931,42 @@ class MainActivity : FragmentActivity() {
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("ORBIT MAIL", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary)
-                        Text(activeSection.label, style = MaterialTheme.typography.titleLarge)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) {
-                            TextButton(onClick = { showNativeMail = !showNativeMail; webLoginInProgress = false }) {
-                                Text(if (showNativeMail) "网页" else "原生")
+                val nativeMailTab = (activeSection == MailSection.INBOX ||
+                    activeSection == MailSection.MAILBOXES) && showNativeMail
+                Surface(shadowElevation=1.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp),
+                        horizontalArrangement=Arrangement.SpaceBetween,
+                        verticalAlignment=Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment=Alignment.CenterVertically) {
+                            Box(modifier=Modifier.size(35.dp)
+                                .background(MaterialTheme.colorScheme.primaryContainer,CircleShape),
+                                contentAlignment=Alignment.Center) {
+                                Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
+                                    tint=MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                            Spacer(Modifier.padding(horizontal=6.dp))
+                            Column {
+                                Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
+                                Text(if(nativeMailTab) "邮箱客户端" else activeSection.label,
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        if (activeSection != MailSection.SETTINGS) {
-                            TextButton(onClick = { browser?.reload() }) {
-                                Icon(painterResource(R.drawable.ic_refresh), contentDescription = "刷新当前邮箱页面")
+                        Row(verticalAlignment=Alignment.CenterVertically) {
+                            if (!nativeMailTab && activeSection != MailSection.SETTINGS) {
+                                TextButton(onClick={browser?.reload()}) {
+                                    Icon(painterResource(R.drawable.ic_refresh),
+                                        contentDescription="重新加载当前页面")
+                                }
                             }
+                            TextButton(onClick={showTools=true}) {
+                                Icon(painterResource(R.drawable.ic_more),
+                                    contentDescription="更多邮箱工具")
+                            }
+                            TextButton(onClick=::lock) { Text("锁定") }
                         }
-                        TextButton(onClick = { showTools = true }) {
-                            Icon(painterResource(R.drawable.ic_more), contentDescription = "打开管理工具")
-                        }
-                        TextButton(onClick = ::lock) { Text("锁定") }
                     }
                 }
             },
