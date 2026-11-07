@@ -47,6 +47,7 @@ class NativeAdminClient {
             "/api/admin/ordinary-inbox/domains",
             "/api/admin/ordinary-inbox/recorded-addresses",
             "/api/admin/pieterj-mail/status",
+            "/api/admin/domain-control/inventory",
             "/api/admin/trusted-devices",
             "/api/admin/2fa/status"
         )
