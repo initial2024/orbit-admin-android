@@ -516,7 +516,8 @@ class MainActivity : FragmentActivity() {
         pendingNativeMessageId = id
         nativeMailDetail = null
         showNativeMail = true
-        if (!sendNativeMailboxCommand("read_message",id)) {
+        if (nativeInbox?.nativeReadSupported != true ||
+            !sendNativeMailboxCommand("read_message",id)) {
             pendingNativeMessageId = null
             showNativeMail = false
             val base = MailSection.INBOX.address?.substringBefore("#") ?: return

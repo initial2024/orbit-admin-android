@@ -12,6 +12,7 @@ data class NativeInboxSnapshot(
     val selectedDomain: String,
     val availableDomains: List<String>,
     val canCreate: Boolean,
+    val nativeReadSupported: Boolean,
     val busy: Boolean,
     val statusText: String,
     val mailboxes: List<NativeMailboxRow>,
@@ -31,7 +32,7 @@ object NativeInboxPolicy {
     private val mailKeys = setOf("id", "sender", "subject", "receivedAt")
     private val snapshotKeys = setOf(
         "v", "kind", "scope", "current", "mailboxes", "messages",
-        "selectedDomain", "availableDomains", "canCreate", "busy", "statusText"
+        "selectedDomain", "availableDomains", "canCreate", "busy", "statusText", "nativeReadSupported"
     )
     private val domainPattern = Regex("^[a-z0-9](?:[a-z0-9.-]{0,86}[a-z0-9])?$")
 
@@ -66,8 +67,10 @@ object NativeInboxPolicy {
                 return if (exactFields(obj, setOf("v", "kind"))) NativeInboxEvent.Clear else null
             }
             if (obj.optString("kind") != "mail_snapshot" || obj.optString("scope") != "public" ||
-                !exactFields(obj, snapshotKeys)
+                !(exactFields(obj, snapshotKeys) ||
+                  exactFields(obj, snapshotKeys - "nativeReadSupported"))
             ) return null
+            if (obj.has("nativeReadSupported") && obj.opt("nativeReadSupported") !is Boolean) return null
             val active = obj.optJSONObject("current") ?: return null
             if (!exactFields(active, currentKeys)) return null
             val activeId = active.optString("id")
@@ -114,6 +117,7 @@ object NativeInboxPolicy {
                     selectedDomain,
                     availableDomains,
                     obj.optBoolean("canCreate"),
+                    obj.optBoolean("nativeReadSupported", false),
                     obj.optBoolean("busy"),
                     safeText(obj.optString("statusText"),160),
                     mailboxes,

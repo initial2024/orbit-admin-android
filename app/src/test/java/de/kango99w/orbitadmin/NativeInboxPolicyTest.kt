@@ -37,6 +37,9 @@ class NativeInboxPolicyTest {
         assertEquals(1,event.data.mailboxes.size)
         assertEquals("example.test",event.data.selectedDomain)
         assertTrue(event.data.canCreate)
+        assertFalse(event.data.nativeReadSupported)
+        val current = json.replace("\"canCreate\":true","\"canCreate\":true,\"nativeReadSupported\":true")
+        assertTrue((NativeInboxPolicy.parse(current) as NativeInboxEvent.Snapshot).data.nativeReadSupported)
     }
 
     @Test fun rejectsCommandsUnboundedDataAndCredentialFields() {
