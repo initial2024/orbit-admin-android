@@ -72,7 +72,7 @@ class NativeDeviceClient(context: Context) {
      * Password/TOTP fields are never stored by the APK.
      */
     fun createPairPayload(label: String, password: String, totp: String): JSONObject {
-        require(label.length in 1..60 && !label.contains('\n'))
+        require(label.length in 1..60 && !label.contains('\n') && !label.contains('\r'))
         val n = nonce()
         val stamp = System.currentTimeMillis()
         val body = "orbit-native-pair-v1\n$n\n$stamp\n$label"
@@ -106,11 +106,19 @@ class NativeDeviceClient(context: Context) {
         val trimmed = email.trim().lowercase(java.util.Locale.ROOT)
         if (!Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(trimmed) ||
             trimmed.length > 320 || password.length !in 8..128 ||
-            label.isBlank() || label.length > 60) {
+            label.isBlank() || label.length > 60 ||
+            label.contains('\n') || label.contains('\r')) {
             return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
         }
-        val packet = createNativeLoginPayload(trimmed, password, totp, label)
-        val body = packet.toString().toByteArray(Charsets.UTF_8)
+        // AndroidKeyStore can fail before any HTTPS request (e.g. secure hardware
+        // unavailable). Never leave the Compose login spinner stuck or misreport
+        // a local signer failure as a server authorization failure.
+        val body = try {
+            createNativeLoginPayload(trimmed, password, totp, label)
+                .toString().toByteArray(Charsets.UTF_8)
+        } catch (_: Exception) {
+            return Response(503, null, "NATIVE_KEYSTORE_UNAVAILABLE")
+        }
         if (body.size > 7000) return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
         var connection: HttpsURLConnection? = null
         return try {
