@@ -31,6 +31,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebStorage
+import org.json.JSONObject
+import java.util.concurrent.Executors
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.net.http.SslError
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -106,6 +109,16 @@ class MainActivity : FragmentActivity() {
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
+    private val nativeDeviceClient by lazy { NativeDeviceClient(applicationContext) }
+    private val nativeIo = Executors.newSingleThreadExecutor()
+    private var nativeApiActive by mutableStateOf(false)
+    private var nativeApiLoading by mutableStateOf(false)
+    private var nativeApiNotice by mutableStateOf("")
+    private var showNativePairDialog by mutableStateOf(false)
+    private var nativePairLabel by mutableStateOf("我的 Android 手机")
+    private var nativePairPassword by mutableStateOf("")
+    private var nativePairTotp by mutableStateOf("")
+    private var pendingPairNonce: String? = null
     private var showNativeMail by mutableStateOf(true)
     // All regular tabs are Compose surfaces. Website views are explicit fallback only.
     private var showNativeToolsPanel by mutableStateOf(true)
@@ -211,7 +224,8 @@ class MainActivity : FragmentActivity() {
                     message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
-                    requestMissingNativeSnapshot()
+                    if (nativeDeviceClient.isBound()) refreshNativeApi()
+                    else requestMissingNativeSnapshot()
                     tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
@@ -318,7 +332,8 @@ class MainActivity : FragmentActivity() {
         // Native tabs never loadUrl; any website state remains in its private scope.
         sectionBrowsers[nextKey]?.onResume()
         if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
-            requestMissingNativeSnapshot()
+            if (nativeDeviceClient.isBound()) refreshNativeApi()
+            else requestMissingNativeSnapshot()
         }
     }
 
@@ -363,6 +378,142 @@ class MainActivity : FragmentActivity() {
         if (lastNativeSnapshotRequestAtMs != 0L &&
             stamp - lastNativeSnapshotRequestAtMs < 15_000L) return
         if (sendNativeMailboxCommand("refresh")) lastNativeSnapshotRequestAtMs = stamp
+    }
+
+    /** Signed, cookie-free native API reads. Only account-owned and unlocked data is displayed. */
+    private fun refreshNativeApi() {
+        if (!unlocked || !nativeDeviceClient.isBound() || nativeApiLoading) return
+        nativeApiLoading = true
+        nativeIo.execute {
+            val mailboxes = nativeDeviceClient.fetch("/api/account/native-device/mailboxes")
+            if (mailboxes.status != 200 || mailboxes.value == null) {
+                runOnUiThread {
+                    nativeApiLoading = false
+                    if (unlocked) {
+                        nativeApiNotice = when (mailboxes.status) {
+                            401 -> "设备授权失效或被撤销，需要重新绑定。"
+                            503 -> "服务器原生接口尚未启用，现有数据未被更改。"
+                            else -> "原生邮箱同步失败：HTTP ${mailboxes.status}"
+                        }
+                        if (mailboxes.status == 401) {
+                            nativeApiActive = false
+                            nativeInbox = null
+                        }
+                    }
+                }
+                return@execute
+            }
+            val data = mailboxes.value.optJSONArray("mailboxes")
+            val rows = mutableListOf<NativeMailboxRow>()
+            if (data != null) {
+                for (i in 0 until minOf(data.length(), 25)) {
+                    val item = data.optJSONObject(i) ?: continue
+                    val id = item.optString("id")
+                    if (!NativeInboxPolicy.isSafeId(id)) continue
+                    rows.add(NativeMailboxRow(id, item.optString("address").take(254),
+                        item.optBoolean("protected", false)))
+                }
+            }
+            val prefs = getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE)
+            val selected = rows.firstOrNull { it.id == prefs.getString("selected_mailbox_id", "") }
+                ?: rows.firstOrNull()
+            val locked = selected?.isProtected == true
+            val messageResult = if (selected != null && !locked)
+                nativeDeviceClient.fetch("/api/account/native-device/mailboxes/${selected.id}/messages")
+                else null
+            val mail = mutableListOf<NativeMailRow>()
+            val messages = messageResult?.value?.optJSONArray("messages")
+            if (messageResult?.status == 200 && messages != null) {
+                for (i in 0 until minOf(messages.length(), 30)) {
+                    val item = messages.optJSONObject(i) ?: continue
+                    val id = item.optString("id")
+                    if (!NativeInboxPolicy.isSafeId(id)) continue
+                    mail.add(NativeMailRow(id, item.optString("sender").take(160),
+                        item.optString("subject").take(160),
+                        item.optString("received_at").take(48)))
+                }
+            }
+            val snapshot = NativeInboxSnapshot(
+                currentId = selected?.id.orEmpty(),
+                currentAddress = selected?.address.orEmpty(),
+                locked = locked,
+                selectedDomain = "",
+                availableDomains = emptyList(),
+                canCreate = false,
+                nativeReadSupported = true,
+                busy = false,
+                statusText = "使用 Android 设备授权 API（账号自有邮箱）",
+                mailboxes = rows,
+                messages = mail,
+            )
+            runOnUiThread {
+                nativeApiLoading = false
+                if (!unlocked || !nativeDeviceClient.isBound()) return@runOnUiThread
+                nativeApiActive = true
+                nativeApiNotice = if (selected != null && !locked && messageResult?.status != 200)
+                    "邮件列表暂不可用；请刷新重试。" else ""
+                if (nativeInbox?.currentId != snapshot.currentId) {
+                    pendingNativeMessageId = null
+                    nativeMailDetail = null
+                }
+                nativeInbox = snapshot
+                showNativeMail = true
+            }
+        }
+    }
+
+    private fun readMessageViaNativeApi(id: String) {
+        val mailbox = nativeInbox?.currentId ?: return
+        if (!unlocked || !nativeApiActive || !NativeInboxPolicy.isSafeId(mailbox) ||
+            !NativeInboxPolicy.isSafeId(id)) return
+        pendingNativeMessageId = id
+        nativeMailDetail = null
+        nativeReadCommandUnavailable = false
+        nativeIo.execute {
+            val result = nativeDeviceClient.fetch("/api/account/native-device/mailboxes/$mailbox/messages/$id")
+            runOnUiThread {
+                if (!unlocked || pendingNativeMessageId != id ||
+                    nativeInbox?.currentId != mailbox) return@runOnUiThread
+                val item = result.value
+                if (result.status != 200 || item == null ||
+                    item.optString("id") != id || item.optString("mailbox_id") != mailbox) {
+                    nativeReadCommandUnavailable = true
+                    nativeApiNotice = "该邮件暂不可通过原生接口读取（HTTP ${result.status}）。"
+                    return@runOnUiThread
+                }
+                nativeMailDetail = NativeMailDetail(mailbox, id,
+                    item.optString("sender").take(160),
+                    item.optString("recipient").take(254),
+                    item.optString("subject").take(240),
+                    item.optString("received_at").take(48),
+                    item.optString("text_body").take(8000))
+                showNativeMail = true
+            }
+        }
+    }
+
+    /** Explicit user action only: website performs session-bound password/TOTP verification. */
+    private fun submitNativePair() {
+        val web = publicWebView()
+        if (!unlocked || web == null || !isCurrentPublicMailDocument() ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) {
+            message = "请先在普通账号登录网站完成身份验证，再返回绑定设备。"
+            return
+        }
+        try {
+            val packet = nativeDeviceClient.createPairPayload(
+                nativePairLabel.trim(), nativePairPassword, nativePairTotp)
+            pendingPairNonce = packet.getString("nonce")
+            WebViewCompat.postWebMessage(web, WebMessageCompat(packet.toString()),
+                Uri.parse("https://inbox.kango99w.de"))
+            showNativePairDialog = false
+            message = "设备绑定请求已发送，等待服务器验证。"
+        } catch (_: Exception) {
+            message = "设备密钥创建或绑定请求失败。"
+        } finally {
+            nativePairPassword = ""
+            nativePairTotp = ""
+        }
     }
 
     /** Only a tap on the native UI can send a bounded action to the current site. */
@@ -1544,7 +1695,8 @@ class MainActivity : FragmentActivity() {
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
-            requestMissingNativeSnapshot()
+            if (nativeDeviceClient.isBound()) refreshNativeApi()
+            else requestMissingNativeSnapshot()
             tryRegisterPush()
         }
     }
