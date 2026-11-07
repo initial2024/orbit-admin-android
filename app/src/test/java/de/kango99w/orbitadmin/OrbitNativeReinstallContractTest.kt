@@ -17,7 +17,7 @@ class OrbitNativeReinstallContractTest {
         assertTrue(gradle.contains("applicationId = \"de.kango99w.orbitadmin\""))
         assertTrue(
             "Debug release must use a semantic prerelease version",
-            Regex("""versionName\\s*=\\s*"[0-9]+\\.[0-9]+\\.[0-9]+-dev" """.trim())
+            Regex("""versionName\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+-dev"(?=\s|$)""")
                 .containsMatchIn(gradle)
         )
         assertFalse("An unintended second Android application would confuse app upgrades",
