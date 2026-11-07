@@ -15,7 +15,7 @@ class OrbitNativeReinstallContractTest {
     @Test fun debugPackageIsTheOriginalOrbitMailIdentifier() {
         val gradle = content("app/build.gradle.kts", "build.gradle.kts")
         assertTrue(gradle.contains("applicationId = \"de.kango99w.orbitadmin\""))
-        assertTrue(gradle.contains("versionName = \"0.9.8-dev\""))
+        assertTrue(gradle.contains("versionName = \"0.9.9-dev\""))
         assertFalse("An unintended second Android application would confuse app upgrades",
             gradle.contains("applicationIdSuffix"))
         assertFalse(
