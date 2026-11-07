@@ -73,15 +73,15 @@ class NativeDeviceClient(context: Context) {
         repeat(2) { component ->
             if (data.getOrNull(position++) != 0x02) throw IOException("Invalid ECDSA INTEGER")
             val len = data.getOrNull(position++) ?: throw IOException("Truncated ECDSA")
-            if (len !in 32..33 || position + len > data.size) throw IOException("ECDSA integer length")
+            if (len !in 1..33 || position + len > data.size) throw IOException("ECDSA integer length")
             val raw = der.copyOfRange(position, position + len)
             position += len
             val unsigned = if (len == 33) {
                 if (raw[0].toInt() != 0) throw IOException("ECDSA sign extension")
                 raw.copyOfRange(1, 33)
             } else raw
-            if (unsigned.size != 32) throw IOException("ECDSA width")
-            System.arraycopy(unsigned, 0, result, 32 * component, 32)
+            if (unsigned.size > 32) throw IOException("ECDSA width")
+            System.arraycopy(unsigned, 0, result, 32 * component + 32 - unsigned.size, unsigned.size)
         }
         if (position != data.size) throw IOException("Trailing ECDSA data")
         return result
