@@ -18,6 +18,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -108,8 +109,10 @@ class MainActivity : FragmentActivity() {
     private var nativeCreateDomain by mutableStateOf("")
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var previousWebSection = MailSection.INBOX
-    private var browser: WebView? = null
-    private var openedOnce = false
+    private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
+    private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
+    private fun publicWebView(): WebView? = sectionBrowsers[MailSection.INBOX]
+    private var pendingAdminUrl: String? = null
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var allowMultipleFiles = false
     private var deferredFileUris: Array<Uri>? = null
@@ -261,7 +264,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun isCurrentPublicMailDocument(): Boolean =
-        browser?.url?.let { url ->
+        publicWebView()?.url?.let { url ->
             try {
                 val parsed = java.net.URI(url)
                 AdminUrlPolicy.isTrustedMainFrame(url) &&
@@ -273,51 +276,44 @@ class MainActivity : FragmentActivity() {
         showTools = false
         if (section == MailSection.SETTINGS) {
             if (activeSection != MailSection.SETTINGS) previousWebSection = activeSection
-            activeSection = section
             browser?.onPause()
-            browser?.pauseTimers()
+            activeSection = MailSection.SETTINGS
             return
         }
-        val wasSettings = activeSection == MailSection.SETTINGS
-        val sameSection = activeSection == section
-        activeSection = section
-        previousWebSection = section
+        val old = browser
+        val previousKey = BrowserSessionRouting.key(activeSection)
+        val nextKey = BrowserSessionRouting.key(section)
         if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
             showNativeMail = true
             webLoginInProgress = false
             nativeSearchQuery = ""
-        } else {
-            showNativeMail = false
-        }
-        browser?.resumeTimers()
-        browser?.onResume()
-        // Inbox and mailbox list are native views over ONE live public-mail
-        // page. Switching tabs must never reload that page or reset its React
-        // mailbox state and access session.
-        if ((section == MailSection.INBOX || section == MailSection.MAILBOXES) &&
-            isCurrentPublicMailDocument()) return
-        if (sameSection || (wasSettings && browser?.url == section.address)) return
-        section.address?.let { safe ->
-            if (unlocked && AdminUrlPolicy.isTrustedMainFrame(safe) && browser?.url != safe) {
-                browser?.loadUrl(safe)
-            }
-        }
+        } else showNativeMail = false
+        activeSection = section
+        previousWebSection = section
+        if (previousKey != nextKey) old?.onPause()
+        // No tab-triggered loadUrl: every scope keeps its own live DOM/history.
+        sectionBrowsers[nextKey]?.onResume()
     }
 
     private fun navigateTo(url: String) {
         if (!unlocked || !AdminUrlPolicy.isTrustedMainFrame(url)) return
-        webLoginInProgress = false
         showTools = false
+        webLoginInProgress = false
+        if (BrowserSessionRouting.key(activeSection) != MailSection.ADMIN) browser?.onPause()
         activeSection = MailSection.ADMIN
         previousWebSection = MailSection.ADMIN
-        browser?.resumeTimers()
-        browser?.onResume()
-        if (browser?.url != url) browser?.loadUrl(url)
+        showNativeMail = false
+        val admin = sectionBrowsers[MailSection.ADMIN]
+        if (admin == null) pendingAdminUrl = url
+        else {
+            admin.onResume()
+            if (admin.url != url) admin.loadUrl(url)
+        }
     }
 
     /** Only a tap on the native UI can send a bounded action to the current site. */
     private fun sendNativeMailboxCommand(action: String, value: String? = null): Boolean {
-        val web = browser ?: return false
+        val web = publicWebView() ?: return false
         if (!unlocked || !isCurrentPublicMailDocument() ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) return false
         if (action !in setOf("create_random","create_custom","select_mailbox",
@@ -360,7 +356,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun sendPushAction(action: String, token: String? = null): Boolean {
-        val web = browser ?: return false
+        val web = publicWebView() ?: return false
         if (!unlocked || !isCurrentPublicMailDocument() ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) return false
         if (action !in setOf("push_register","push_revoke")) return false
@@ -501,7 +497,7 @@ class MainActivity : FragmentActivity() {
         showNativeMail = false
         val base = MailSection.INBOX.address?.substringBefore("#") ?: return
         val url = "${base}#orbit-message-${id}"
-        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) browser?.loadUrl(url)
+        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
     }
 
     private fun openNativeMailbox(id: String) {
@@ -509,7 +505,7 @@ class MainActivity : FragmentActivity() {
         showNativeMail = false
         val base = MailSection.MAILBOXES.address?.substringBefore("#") ?: return
         val url = "${base}#orbit-mailbox-${id}"
-        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) browser?.loadUrl(url)
+        if (unlocked && AdminUrlPolicy.isTrustedMainFrame(url)) publicWebView()?.loadUrl(url)
     }
 
     @Composable
@@ -606,7 +602,7 @@ class MainActivity : FragmentActivity() {
                         TextButton(onClick = {
                             webLoginInProgress = false
                             showNativeMail = false
-                            browser?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+                            publicWebView()?.loadUrl("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
                         }) { Text("受保护邮箱 / 高级设置") }
                     }
                 }
@@ -692,7 +688,8 @@ class MainActivity : FragmentActivity() {
                     OutlinedButton(
                         onClick = {
                             val home = MailSection.INBOX.address ?: return@OutlinedButton
-                            if (browser?.url != home) browser?.loadUrl(home) else browser?.reload()
+                            val public = publicWebView()
+                            if (public?.url != home) public?.loadUrl(home) else public.reload()
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("重新检查邮箱") }
@@ -791,6 +788,10 @@ class MainActivity : FragmentActivity() {
             when {
                 showTools -> showTools = false
                 activeSection == MailSection.SETTINGS -> openSection(previousWebSection)
+                (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) && showNativeMail -> {
+                    if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
+                    else lock()
+                }
                 browser?.canGoBack() == true -> browser?.goBack()
                 activeSection != MailSection.INBOX -> openSection(MailSection.INBOX)
                 else -> lock()
