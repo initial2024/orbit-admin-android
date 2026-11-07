@@ -41,6 +41,14 @@ class NativeNoReloginNavigationTest {
         assertFalse(section.contains("orbit-message-"))
     }
 
+    @Test fun clearingWebDataNeverErasesOrdinaryAccountKeystoreGrant() {
+        val section = method("private fun clearLocalSession()", "private fun lock()")
+        assertTrue(section.contains("CookieManager.getInstance().removeAllCookies"))
+        assertTrue(section.contains("WebStorage.getInstance().deleteAllData()"))
+        assertFalse(section.contains("nativeDeviceClient.clearLocalBinding()"))
+        assertFalse(section.contains("nativeDeviceClient.revokeSelf()"))
+    }
+
     @Test fun failuresHaveExplicitUserControlledWebsiteFallback() {
         val loading = method("private fun NativeMailLoadingContent(", "private fun MailAvatar(")
         assertTrue(loading.contains("nativeReadCommandUnavailable"))
