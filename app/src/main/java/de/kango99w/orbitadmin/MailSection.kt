@@ -1,8 +1,8 @@
 package de.kango99w.orbitadmin
 
 /**
- * Native mail-first navigation on top of the single website-owned login session.
- * Only the website owns inbox state, storage and all administrator permissions.
+ * Five native-first Android destinations; site-only operations use explicit website fallback.
+ * The existing server remains authoritative for account and admin permission checks.
  */
 enum class MailSection(val label: String, val address: String?) {
     INBOX("收件箱", "https://inbox.kango99w.de/?orbit_app=android#orbit-inbox"),
