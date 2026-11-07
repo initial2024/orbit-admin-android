@@ -77,6 +77,6 @@ jobs:
           gh release create "$TAG" "$APK" "$CHECKSUM" \
             --target "$GITHUB_SHA" \
             --title "Orbit Mail $TAG (debug test)" \
-            --notes "DEBUG / PRERELEASE ONLY. Not production-signed. The debug signing may prevent upgrades; uninstall clears local login. Native device API still needs server security review." \
+            --notes "v0.8.1-dev DEBUG / PRERELEASE ONLY. Native-first mail routing and P-256 signature tests. Not production-signed; debug signing may prevent in-place upgrades, and uninstall clears local login. Native Worker API + D1 still disabled, awaiting controlled deployment, security review and real-device acceptance." \
             --prerelease
           echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
