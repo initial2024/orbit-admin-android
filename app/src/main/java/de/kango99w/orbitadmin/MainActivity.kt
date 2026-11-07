@@ -1703,33 +1703,45 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             } else {
-                LazyColumn(modifier=Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier=Modifier.fillMaxSize(),
+                    contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+                    verticalArrangement=Arrangement.spacedBy(8.dp)
+                ) {
                     items(mails,key={it.id}) { mail ->
-                        Row(modifier=Modifier.fillMaxWidth()
-                            .clickable { openNativeMessage(mail.id) }
-                            .padding(horizontal=16.dp,vertical=13.dp),
-                            verticalAlignment=Alignment.Top) {
-                            MailAvatar(mail.sender,45)
-                            Spacer(Modifier.padding(horizontal=7.dp))
-                            Column(modifier=Modifier.weight(1f),
-                                verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                                Row(modifier=Modifier.fillMaxWidth(),
-                                    horizontalArrangement=Arrangement.SpaceBetween) {
-                                    Text(mail.sender.ifBlank{"未知发件人"},maxLines=1,
-                                        style=MaterialTheme.typography.titleSmall,
-                                        modifier=Modifier.weight(1f))
-                                    Text(mail.receivedAt.take(16),
+                        Card(
+                            modifier=Modifier.fillMaxWidth()
+                                .clickable { openNativeMessage(mail.id) },
+                            shape=RoundedCornerShape(18.dp),
+                            colors=CardDefaults.cardColors(
+                                containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.46f))
+                        ) {
+                            Row(modifier=Modifier.fillMaxWidth()
+                                .padding(horizontal=14.dp,vertical=14.dp),
+                                verticalAlignment=Alignment.CenterVertically) {
+                                MailAvatar(mail.sender,44)
+                                Spacer(Modifier.padding(horizontal=7.dp))
+                                Column(modifier=Modifier.weight(1f),
+                                    verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                                    Row(modifier=Modifier.fillMaxWidth(),
+                                        horizontalArrangement=Arrangement.SpaceBetween) {
+                                        Text(mail.sender.ifBlank{"未知发件人"},maxLines=1,
+                                            style=MaterialTheme.typography.titleSmall,
+                                            modifier=Modifier.weight(1f))
+                                        Text(mail.receivedAt.take(16),
+                                            style=MaterialTheme.typography.labelSmall,
+                                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(mail.subject.ifBlank{"（无主题）"},maxLines=2,
+                                        style=MaterialTheme.typography.bodyMedium)
+                                    Text("查看正文、验证码与邮件链接",
                                         style=MaterialTheme.typography.labelSmall,
                                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(mail.subject.ifBlank{"（无主题）"},maxLines=2,
-                                    style=MaterialTheme.typography.bodyMedium)
-                                Text("点击阅读邮件",
-                                    style=MaterialTheme.typography.labelSmall,
-                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("›",style=MaterialTheme.typography.titleLarge,
+                                    color=MaterialTheme.colorScheme.primary)
                             }
                         }
-                        HorizontalDivider()
                     }
                 }
             }
@@ -3064,25 +3076,49 @@ class MainActivity : FragmentActivity() {
                         style=MaterialTheme.typography.labelLarge)
                     if (messages.isEmpty() && !adminBusy)
                         Text("暂无可显示邮件。",modifier=Modifier.padding(20.dp))
-                    LazyColumn(modifier=Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier=Modifier.fillMaxSize(),
+                        contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
+                        verticalArrangement=Arrangement.spacedBy(8.dp)
+                    ) {
                         items(messages,key={it.id}) { item ->
-                            Row(modifier=Modifier.fillMaxWidth()
-                                .clickable(enabled=!adminBusy) { openNativeAdminMessage(item.id) }
-                                .padding(horizontal=16.dp,vertical=12.dp),
-                                verticalAlignment=Alignment.CenterVertically) {
-                                MailAvatar(item.sender)
-                                Spacer(Modifier.padding(horizontal=7.dp))
-                                Column(modifier=Modifier.weight(1f)) {
-                                    Text(item.sender.ifBlank{"未知发件人"},maxLines=1,
-                                        style=MaterialTheme.typography.titleSmall)
-                                    Text(item.subject.ifBlank{"（无主题）"},maxLines=2,
-                                        style=MaterialTheme.typography.bodyMedium)
-                                    Text(formatNativeMessageTime(item.time),
-                                        style=MaterialTheme.typography.labelSmall)
+                            Card(
+                                modifier=Modifier.fillMaxWidth()
+                                    .clickable(enabled=!adminBusy) {
+                                        openNativeAdminMessage(item.id)
+                                    },
+                                shape=RoundedCornerShape(18.dp),
+                                colors=CardDefaults.cardColors(
+                                    containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.46f))
+                            ) {
+                                Row(modifier=Modifier.fillMaxWidth()
+                                    .padding(horizontal=14.dp,vertical=14.dp),
+                                    verticalAlignment=Alignment.CenterVertically) {
+                                    MailAvatar(item.sender,44)
+                                    Spacer(Modifier.padding(horizontal=7.dp))
+                                    Column(modifier=Modifier.weight(1f),
+                                        verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                                        Row(verticalAlignment=Alignment.CenterVertically) {
+                                            Text(item.sender.ifBlank{"未知发件人"},maxLines=1,
+                                                style=if(item.read) MaterialTheme.typography.bodyMedium
+                                                else MaterialTheme.typography.titleSmall,
+                                                modifier=Modifier.weight(1f))
+                                            if(!item.read) {
+                                                Box(Modifier.size(8.dp)
+                                                    .background(MaterialTheme.colorScheme.primary,CircleShape))
+                                            }
+                                        }
+                                        Text(item.subject.ifBlank{"（无主题）"},maxLines=2,
+                                            style=MaterialTheme.typography.bodyMedium)
+                                        Text(formatNativeMessageTime(item.time),
+                                            style=MaterialTheme.typography.labelSmall,
+                                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Spacer(Modifier.padding(horizontal=4.dp))
+                                    Text("›",style=MaterialTheme.typography.titleLarge,
+                                        color=MaterialTheme.colorScheme.primary)
                                 }
-                                Text("›")
                             }
-                            HorizontalDivider()
                         }
                     }
                 }
