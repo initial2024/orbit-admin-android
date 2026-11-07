@@ -558,7 +558,10 @@ class MainActivity : FragmentActivity() {
                     item.optString("subject").take(240),
                     formatNativeMessageTime(item.optLong("received_at", 0L)),
                     item.optString("text_body").take(8000),
-                    item.optString("html_body").take(12000))
+                    item.optString("html_body").take(12000),
+                    item.optString("possible_code").takeIf {
+                        Regex("^[A-Za-z0-9-]{4,16}$").matches(it)
+                    }.orEmpty())
                 showNativeMail = true
             }
         }
@@ -886,6 +889,28 @@ class MainActivity : FragmentActivity() {
                 }
             }
             HorizontalDivider()
+            if (detail.possibleCode.isNotBlank()) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("识别到的验证码", style = MaterialTheme.typography.labelMedium)
+                            Text(detail.possibleCode, style = MaterialTheme.typography.headlineMedium)
+                        }
+                        TextButton(onClick = {
+                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE)
+                                as ClipboardManager
+                            clipboard.setPrimaryClip(
+                                ClipData.newPlainText("验证码", detail.possibleCode)
+                            )
+                            message = "验证码已复制；请注意系统剪贴板的隐私保护。"
+                        }) { Text("复制") }
+                    }
+                }
+            }
             if (detail.textBody.isNotBlank()) {
                 SelectionContainer {
                     Text(detail.textBody,style=MaterialTheme.typography.bodyLarge)
