@@ -150,6 +150,13 @@ class MainActivity : FragmentActivity() {
     private var adminSelectedMessage by mutableStateOf<AdminNativeDetail?>(null)
     private var adminSelectedMessageId by mutableStateOf<String?>(null)
     private var adminOrdinaryDomains by mutableStateOf<List<String>>(emptyList())
+    // All administrator management panes are native Compose, never website links.
+    private var adminPane by mutableStateOf("mailboxes")
+    private var adminManagedDomains by mutableStateOf<List<AdminManagedDomain>>(emptyList())
+    private var adminRecordedAddresses by mutableStateOf<List<AdminRecordedAddress>>(emptyList())
+    private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
+    private var adminDeleteTarget by mutableStateOf<AdminNativeMailbox?>(null)
+    private var adminDeleteError by mutableStateOf("")
     private var showAdminCreateDialog by mutableStateOf(false)
     private var adminCreatePrivate by mutableStateOf(true)
     private var adminCreateLocal by mutableStateOf("")
