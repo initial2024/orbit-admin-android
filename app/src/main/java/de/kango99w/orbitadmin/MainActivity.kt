@@ -211,6 +211,18 @@ class MainActivity : FragmentActivity() {
     private var nativePickedFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var workspace by mutableStateOf(MailWorkspace.ORDINARY)
+    private val glyphClient by lazy { NativeGlyphClient() }
+    private val glyphIo = Executors.newSingleThreadExecutor()
+    private val glyphGeneration = AtomicLong(0)
+    private var glyphSnapshot by mutableStateOf<NativeGlyphSnapshot?>(null)
+    private var glyphBusy by mutableStateOf(false)
+    private var glyphError by mutableStateOf("")
+    private var glyphNotice by mutableStateOf("")
+    private var glyphTab by mutableStateOf("图鉴")
+    private var glyphSearch by mutableStateOf("")
+    private var glyphScope by mutableStateOf("全部")
+    private var glyphDrawId by mutableStateOf(UUID.randomUUID().toString())
+    private var glyphBuyTarget by mutableStateOf<NativeGlyphItem?>(null)
     private var previousWebSection = MailSection.INBOX
     private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
     private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
@@ -506,6 +518,8 @@ class MainActivity : FragmentActivity() {
             refreshNativeAdmin()
         } else if (section == MailSection.PRIVATE) {
             privateMailReady = privateMailClient.hasLocalSession()
+        } else if (section == MailSection.DECOR) {
+            refreshNativeGlyphs()
         }
     }
 
@@ -3238,6 +3252,10 @@ class MainActivity : FragmentActivity() {
         privateMailBusy = false
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
+        glyphGeneration.incrementAndGet()
+        glyphClient.invalidate()
+        glyphSnapshot = null
+        glyphBusy = false
         adminBusy = false
         adminAuthenticated = false
         adminMailboxes = emptyList()
@@ -3284,6 +3302,10 @@ class MainActivity : FragmentActivity() {
         privateMailText = ""
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
+        glyphGeneration.incrementAndGet()
+        glyphClient.invalidate()
+        glyphSnapshot = null
+        glyphBusy = false
         adminBusy = false
         adminAuthenticated = false
         adminSignInPassword = ""
@@ -3728,6 +3750,9 @@ class MainActivity : FragmentActivity() {
         privateMailGeneration.incrementAndGet()
         privateMailClient.invalidate()
         privateMailIo.shutdownNow()
+        glyphGeneration.incrementAndGet()
+        glyphClient.invalidate()
+        glyphIo.shutdownNow()
         nativeRequestGeneration.incrementAndGet()
         nativeIo.shutdownNow()
         pendingFileCallback?.onReceiveValue(null)
