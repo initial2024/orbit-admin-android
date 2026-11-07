@@ -6,7 +6,8 @@ This is a **public source** repository for a client that will access a private a
 
 - AndroidX BiometricPrompt unlocks only local app UI. It never authorizes a Cloudflare Worker request and never replaces password/TOTP or server-side session validation.
 - The app opens only `https://inbox.kango99w.de` inside its WebView. External HTTPS links are handed to the device browser only after a user-initiated navigation; blocked schemes are never executed.
-- No `addJavascriptInterface`, `postWebMessage`, JavaScript evaluation bridge, Cloudflare secrets, signing keys, static admin tokens, or hard-coded account passwords.
+- No `addJavascriptInterface`, JavaScript evaluation, Cloudflare secrets, signing keys, static admin tokens, or hard-coded account passwords.
+- **Narrow exception:** `WebViewCompat.addWebMessageListener` is limited to `https://inbox.kango99w.de`, main frames only, and the exact constant `new_mail`. It never accepts arbitrary commands, values, file contents, OTPs, addresses, credentials or tokens; the sole effect is a generic, throttled local notification while the app is unlocked. No server-side authority is delegated.
 - Cookies remain in the Android application's private WebView storage and are established by existing website authentication. Do not read or log cookie values.
 - The app is locked again when it is no longer visible. Screenshots and non-secure recent-app thumbnails are disabled through `FLAG_SECURE`.
 - There is no remote biometric enrollment, fingerprint template collection, or biometric database.

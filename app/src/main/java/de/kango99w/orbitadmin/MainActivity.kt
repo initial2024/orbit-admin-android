@@ -60,6 +60,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import androidx.webkit.WebMessageCompat
 
 /**
  * Local device authentication gates visibility. The existing website, and only the
@@ -81,6 +84,7 @@ class MainActivity : FragmentActivity() {
     private var pickerPending = false
     private var pickerLaunchedAtMs = 0L
     private val notificationChannelId = "orbit_mail_notice"
+    private var lastNewMailNoticeAtMs = 0L
 
     private lateinit var biometricPrompt: BiometricPrompt
 
@@ -336,6 +340,29 @@ class MainActivity : FragmentActivity() {
             mediaPlaybackRequiresUserGesture = true
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
+        // The only website→Android channel carries one constant event, never
+        // administrator identity, cookies, TOTP, message content or native commands.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                view,
+                "orbitAdminMailNotice",
+                setOf("https://inbox.kango99w.de"),
+                WebViewCompat.WebMessageListener { sender, data, origin, mainFrame, _ ->
+                    if (data.type != WebMessageCompat.TYPE_STRING ||
+                        !MailNoticePolicy.accepts(
+                            origin.scheme, origin.host, origin.port, mainFrame, data.data
+                        ) ||
+                        !AdminUrlPolicy.isTrustedMainFrame(sender.url ?: "")
+                    ) return@WebMessageListener
+                    runOnUiThread {
+                        if (!unlocked) return@runOnUiThread
+                        val stamp = SystemClock.elapsedRealtime()
+                        if (!MailNoticePolicy.canDeliver(stamp, lastNewMailNoticeAtMs)) return@runOnUiThread
+                        if (showMailNotification()) lastNewMailNoticeAtMs = stamp
+                    }
+                }
+            )
+        }
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
@@ -460,6 +487,29 @@ class MainActivity : FragmentActivity() {
             lock()
         }
         super.onStop()
+    }
+
+    private fun showMailNotification(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        val open = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pi = PendingIntent.getActivity(
+            this, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notice = Notification.Builder(this, notificationChannelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentTitle("Orbit Admin · 收到新邮件")
+            .setContentText("请解锁应用查看，通知不会显示邮件地址、正文或验证码。")
+            .setContentIntent(pi)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(1002, notice)
+        return true
     }
 
     private fun createNotificationChannel() {

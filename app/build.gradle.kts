@@ -12,8 +12,8 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.1-dev"
+        versionCode = 4
+        versionName = "0.2.2-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -44,5 +44,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.fragment:fragment:1.8.6")
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.webkit:webkit:1.18.0")
     testImplementation("junit:junit:4.13.2")
 }

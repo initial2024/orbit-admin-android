@@ -24,3 +24,9 @@ Only top-level HTTPS `inbox.kango99w.de` navigation stays in the embedded view. 
 4. No app-private cookie or token leaks into logs, exported files, or GitHub artifacts.
 5. URL allowlist negative tests pass; unknown deep links are not accepted.
 6. Signed distribution uses controlled, private signing keys only after review.
+
+## Local new-mail notifications (experimental)
+
+The trusted website may emit a constant `new_mail` notification signal after observing a new message ID compared with its previous successful poll. AndroidX WebKit provides an **origin allowlisted, main-frame only**, one-way web message listener. The native listener refuses any other payload and enforces a throttle. It does not expose authentication state or privileged native actions to JavaScript. On Android 13+ the app must receive the user's notification permission. All notices hide addresses, subject lines, codes, login links, and content.
+
+This is **not background push**: the WebView polls only while the page is active. When Android suspends or terminates the app there is no reliable mailbox signal. A future push service must have server-authorized per-device registration, revocation, payload minimization, rate limits, and a Firebase/FCM or equivalent delivery configuration. Do not describe this build as capable of guaranteed delivery in the background.
