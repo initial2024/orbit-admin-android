@@ -835,6 +835,7 @@ class MainActivity : FragmentActivity() {
         // Clear overlays before switching security realms; never display admin
         // registration detail on an ordinary-account screen.
         adminSelectedRegistration = null
+        adminSelectedDomain = null
         showNativeAccountDetails = false
         // Selecting even the active workspace closes the menu without reloading mail.
         workspaceSwitcherExpanded = false
