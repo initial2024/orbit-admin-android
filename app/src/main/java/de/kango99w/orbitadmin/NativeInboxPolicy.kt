@@ -9,6 +9,11 @@ data class NativeInboxSnapshot(
     val currentId: String,
     val currentAddress: String,
     val locked: Boolean,
+    val selectedDomain: String,
+    val availableDomains: List<String>,
+    val canCreate: Boolean,
+    val busy: Boolean,
+    val statusText: String,
     val mailboxes: List<NativeMailboxRow>,
     val messages: List<NativeMailRow>
 )
@@ -24,7 +29,11 @@ object NativeInboxPolicy {
     private val currentKeys = setOf("id", "address", "locked")
     private val mailboxKeys = setOf("id", "address", "protected")
     private val mailKeys = setOf("id", "sender", "subject", "receivedAt")
-    private val snapshotKeys = setOf("v", "kind", "scope", "current", "mailboxes", "messages")
+    private val snapshotKeys = setOf(
+        "v", "kind", "scope", "current", "mailboxes", "messages",
+        "selectedDomain", "availableDomains", "canCreate", "busy", "statusText"
+    )
+    private val domainPattern = Regex("^[a-z0-9](?:[a-z0-9.-]{0,86}[a-z0-9])?$")
 
     fun isSafeId(id: String): Boolean = safeId.matches(id)
 
@@ -62,7 +71,19 @@ object NativeInboxPolicy {
             val active = obj.optJSONObject("current") ?: return null
             if (!exactFields(active, currentKeys)) return null
             val activeId = active.optString("id")
-            if (!isSafeId(activeId)) return null
+            if (activeId.isNotEmpty() && !isSafeId(activeId)) return null
+            val availableDomainJson = obj.optJSONArray("availableDomains") ?: return null
+            if (availableDomainJson.length() > 24) return null
+            val availableDomains = (0 until availableDomainJson.length()).map { i ->
+                val domain = availableDomainJson.optString(i)
+                if (!domainPattern.matches(domain)) return null
+                domain
+            }
+            if (availableDomains.distinct().size != availableDomains.size) return null
+            val selectedDomain = obj.optString("selectedDomain")
+            if (selectedDomain.isNotEmpty() && selectedDomain !in availableDomains) return null
+            if (obj.opt("canCreate") !is Boolean || obj.opt("busy") !is Boolean) return null
+            if (obj.optString("statusText").length > 160) return null
             val mailboxJson = obj.optJSONArray("mailboxes") ?: return null
             val messagesJson = obj.optJSONArray("messages") ?: return null
             if (mailboxJson.length() > 25 || messagesJson.length() > 30) return null
@@ -90,6 +111,11 @@ object NativeInboxPolicy {
                     activeId,
                     safeText(active.optString("address"), 254),
                     active.optBoolean("locked"),
+                    selectedDomain,
+                    availableDomains,
+                    obj.optBoolean("canCreate"),
+                    obj.optBoolean("busy"),
+                    safeText(obj.optString("statusText"),160),
                     mailboxes,
                     messages
                 )

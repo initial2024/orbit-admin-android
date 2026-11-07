@@ -10,6 +10,8 @@ class NativeInboxPolicyTest {
     private val json = """
         {"v":1,"kind":"mail_snapshot","scope":"public",
           "current":{"id":"a-123","address":"reader@example.test","locked":false},
+          "selectedDomain":"example.test","availableDomains":["example.test"],"canCreate":true,
+          "busy":false,"statusText":"",
           "mailboxes":[{"id":"a-123","address":"reader@example.test","protected":false}],
           "messages":[{"id":"m-11","sender":"Team","subject":"Test notice","receivedAt":"2026-11-07T09:00:00Z"}]}
     """.trimIndent()
@@ -33,6 +35,8 @@ class NativeInboxPolicyTest {
         assertEquals("m-11",event.data.messages.first().id)
         assertEquals("Test notice",event.data.messages.first().subject)
         assertEquals(1,event.data.mailboxes.size)
+        assertEquals("example.test",event.data.selectedDomain)
+        assertTrue(event.data.canCreate)
     }
 
     @Test fun rejectsCommandsUnboundedDataAndCredentialFields() {
@@ -44,4 +48,18 @@ class NativeInboxPolicyTest {
         assertNull(NativeInboxPolicy.parse("{\"v\":1,\"kind\":\"clear\",\"token\":\"bad\"}"))
         assertEquals(NativeInboxEvent.Clear,NativeInboxPolicy.parse("{\"v\":1,\"kind\":\"clear\"}"))
     }
+    @Test fun emptyAccountCanCreateFirstMailbox() {
+        val empty = json.replace("\"id\":\"a-123\"","\"id\":\"\"")
+            .replace("\"mailboxes\":[{\"id\":\"a-123\",\"address\":\"reader@example.test\",\"protected\":false}]",
+                "\"mailboxes\":[]")
+        assertTrue(NativeInboxPolicy.parse(empty) is NativeInboxEvent.Snapshot)
+    }
+    @Test fun rejectsInvalidCreationMetadata() {
+        assertNull(NativeInboxPolicy.parse(json.replace("\"canCreate\":true","\"canCreate\":\"yes\"")))
+        assertNull(NativeInboxPolicy.parse(json.replace("\"selectedDomain\":\"example.test\"",
+            "\"selectedDomain\":\"evil.test\"")))
+        assertNull(NativeInboxPolicy.parse(json.replace("\"availableDomains\":[\"example.test\"]",
+            "\"availableDomains\":[\"example.test\",\"example.test\"]")))
+    }
+
 }
