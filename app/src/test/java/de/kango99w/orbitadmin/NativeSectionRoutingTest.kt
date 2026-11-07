@@ -55,7 +55,12 @@ class NativeSectionRoutingTest {
         // Cached WebViews must never be mounted as invisible AndroidViews over
         // native Compose administrator screens. Only explicit web mode can.
         assertTrue(source.contains("if (transferWebVisible) {"))
-        assertTrue(source.contains("if (adminWebVisible) {"))
+        assertFalse(source.contains("if (adminWebVisible) {"))
+        assertFalse(source.contains("adminWebVisible"))
+        assertFalse(source.contains("factory = { obtainBrowser(MailSection.ADMIN) }"))
+        assertTrue(source.contains("if (target == MailSection.ADMIN)"))
+        assertTrue(source.contains("openAdvancedAdminWebsite(url)"))
+        assertTrue(source.contains("NativeAdminContent()"))
         assertFalse(source.contains("if (transferWebVisible ||"))
         assertFalse(source.contains("if (adminWebVisible ||"))
         assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.ADMIN)"))
