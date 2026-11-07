@@ -11,7 +11,7 @@ import javax.net.ssl.HttpsURLConnection
  * First-party administrator HTTPS client for real Compose screens.
  *
  * Administrator and ordinary account authentication are DISTINCT realms:
- * only administrator HttpOnly cookies are presented to the /api/admin/ path, never the
+ * only the administrator session and TOTP challenge cookies are presented to the /api/admin/ path, never the
  * ordinary kango_site_access cookie or ordinary native P-256 device grant.
  *
  * Cookies stay in the existing first-party Android WebView CookieManager so
@@ -25,8 +25,11 @@ class NativeAdminClient {
     data class Reply(val status: Int, val value: JSONObject?, val error: String? = null)
     companion object {
         private const val ORIGIN = "https://inbox.kango99w.de"
+        // Trusted-device tokens are bound to User-Agent by the Worker.
+        // Native HTTPS and the website WebView have DIFFERENT User-Agent values;
+        // never submit or clear the website's trusted-device token here.
         private val ALLOWED_COOKIES = setOf(
-            "kango_admin_session", "kango_admin_2fa_challenge", "kango_admin_trusted_device"
+            "kango_admin_session", "kango_admin_2fa_challenge"
         )
         private val UUID = "[A-Za-z0-9-]{8,64}"
         private val MAILBOX_MESSAGES = Regex(
