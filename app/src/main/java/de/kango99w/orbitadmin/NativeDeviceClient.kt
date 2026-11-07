@@ -88,6 +88,14 @@ class NativeDeviceClient(context: Context) {
             .put("current_password", password)
     }
 
+    /** Build an exact JSON credential packet. Do not transmit WebView bridge-only keys. */
+    fun createNativeLoginPayload(email: String, password: String, totp: String, label: String): JSONObject =
+        createPairPayload(label, password, totp).apply {
+            remove("v")
+            remove("action")
+            put("email", email.trim().lowercase(java.util.Locale.ROOT))
+        }
+
     /**
      * True native first-party account sign-in. One password + (if enabled) one
      * TOTP produces a revocable Keystore-bound device grant. Never opens WebView,
@@ -101,11 +109,7 @@ class NativeDeviceClient(context: Context) {
             label.isBlank() || label.length > 60) {
             return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
         }
-        val packet = createPairPayload(label, password, totp).apply {
-            remove("v")
-            remove("action")
-            put("email", trimmed)
-        }
+        val packet = createNativeLoginPayload(trimmed, password, totp, label)
         val body = packet.toString().toByteArray(Charsets.UTF_8)
         if (body.size > 7000) return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
         var connection: HttpsURLConnection? = null
