@@ -86,4 +86,6 @@ jobs:
             --title "Orbit Mail $TAG (debug test)" \
             --notes "v0.8.2-dev DEBUG / PRERELEASE ONLY. This GitHub Release includes a direct APK and a ZIP containing the same APK, SHA256, and installation notes. Android instrumentation security tests and live server enrollment still gate final approval. Debug signing may prevent in-place upgrades; uninstall clears local credentials. Native Worker API + D1 production deployment still pending." \
             --prerelease
-          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
+          echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
+          echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
+          echo "SHA256 checksum: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${CHECKSUM}"
