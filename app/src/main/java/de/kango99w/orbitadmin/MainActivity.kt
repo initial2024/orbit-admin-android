@@ -1054,6 +1054,8 @@ class MainActivity : FragmentActivity() {
                 }
                 (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
                     !showNativeToolsPanel -> showNativeToolsPanel = true
+                (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
+                    showNativeToolsPanel -> openSection(MailSection.INBOX)
                 (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) &&
                     !showNativeMail -> {
                         showNativeMail = true
@@ -1170,7 +1172,7 @@ class MainActivity : FragmentActivity() {
                             if (publicSelected && !nativeVisible) 1f else 0f
                         )
                     )
-                    if (activeSection == MailSection.TRANSFER ||
+                    if (transferWebVisible ||
                         sectionBrowsers.containsKey(MailSection.TRANSFER)) {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.TRANSFER) },
@@ -1182,7 +1184,7 @@ class MainActivity : FragmentActivity() {
                             )
                         )
                     }
-                    if (activeSection == MailSection.ADMIN ||
+                    if (adminWebVisible ||
                         sectionBrowsers.containsKey(MailSection.ADMIN)) {
                         AndroidView(
                             factory = { obtainBrowser(MailSection.ADMIN) },
