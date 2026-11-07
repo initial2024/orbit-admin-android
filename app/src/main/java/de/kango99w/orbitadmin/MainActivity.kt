@@ -1192,6 +1192,30 @@ class MainActivity : FragmentActivity() {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("账户与安全", style = MaterialTheme.typography.titleMedium)
+                    Text(if (nativeDeviceClient.isBound())
+                        "本机已绑定原生 API · 有效期至 " +
+                        java.text.DateFormat.getDateInstance().format(
+                            java.util.Date(nativeDeviceClient.localExpiry()))
+                        else "尚未绑定 Android 原生设备授权",
+                        style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = {
+                        if (publicWebView() == null || !isCurrentPublicMailDocument()) {
+                            navigateTo(MailSection.INBOX.address!!)
+                            message = "请先登录普通账号，再回到设置完成设备绑定。"
+                        } else {
+                            nativePairPassword = ""
+                            nativePairTotp = ""
+                            showNativePairDialog = true
+                        }
+                    }) { Text("绑定此设备 · 原生 API") }
+                    if (nativeDeviceClient.isBound()) {
+                        OutlinedButton(onClick = {
+                            nativeDeviceClient.clearLocalBinding()
+                            nativeApiActive = false
+                            nativeInbox = null
+                            message = "仅本机密钥已清除；须进入网站设备管理撤销服务器授权。"
+                        }) { Text("清除本机设备凭据") }
+                    }
                     OutlinedButton(onClick = { navigateTo(AdminDestination.SECURITY.address) }) {
                         Icon(painterResource(R.drawable.ic_shield), contentDescription = null)
                         Spacer(Modifier.padding(horizontal = 3.dp))
@@ -1223,6 +1247,46 @@ class MainActivity : FragmentActivity() {
             Text("Orbit Mail / Admin · Android 测试版。无自动发信或离线后台收信能力。",
                 style = MaterialTheme.typography.labelSmall)
         }
+    }
+
+    @Composable
+    private fun NativePairDialog() {
+        AlertDialog(
+            onDismissRequest = {
+                showNativePairDialog = false
+                nativePairPassword = ""
+                nativePairTotp = ""
+            },
+            title = { Text("绑定 Android 设备") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("先登录应用内的普通账号。开启 2FA 时输入验证码；未开启时输入当前账号密码。设备授权可由服务器撤销。",
+                        style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = nativePairLabel,
+                        onValueChange = { nativePairLabel = it.take(60).replace("\n", "") },
+                        label = { Text("设备名称") }, singleLine = true)
+                    OutlinedTextField(value = nativePairTotp,
+                        onValueChange = { nativePairTotp = it.take(24) },
+                        label = { Text("2FA 验证码") }, singleLine = true)
+                    OutlinedTextField(value = nativePairPassword,
+                        onValueChange = { nativePairPassword = it.take(128) },
+                        label = { Text("账号密码（无 2FA 时）") },
+                        visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = nativePairLabel.isNotBlank() &&
+                    (nativePairTotp.isNotBlank() || nativePairPassword.isNotBlank()),
+                    onClick = ::submitNativePair) { Text("验证并绑定") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showNativePairDialog = false
+                    nativePairPassword = ""
+                    nativePairTotp = ""
+                }) { Text("取消") }
+            }
+        )
     }
 
     @Composable
@@ -1269,6 +1333,7 @@ class MainActivity : FragmentActivity() {
             )
         }
         if (showTools) MailToolsDialog()
+        if (showNativePairDialog) NativePairDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
@@ -1349,7 +1414,8 @@ class MainActivity : FragmentActivity() {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Each WebView is mounted only after the section's first visit,
                     // then remains attached and retains its DOM/session across tabs.
-                    AndroidView(
+                    if (!nativeDeviceClient.isBound() || !nativeVisible ||
+                        sectionBrowsers.containsKey(MailSection.INBOX)) AndroidView(
                         factory = { obtainBrowser(MailSection.INBOX) },
                         update = {
                             it.visibility = if (publicSelected && !nativeVisible) View.VISIBLE else View.INVISIBLE
@@ -1426,6 +1492,8 @@ class MainActivity : FragmentActivity() {
 
     private fun clearLocalSession() {
         showClearConfirm = false
+        nativeDeviceClient.clearLocalBinding()
+        nativeApiActive = false
         nativeInbox = null
         sectionBrowsers.values.forEach { it.stopLoading() }
         WebStorage.getInstance().deleteAllData()
@@ -1445,6 +1513,12 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        showNativePairDialog = false
+        pendingPairNonce = null
+        nativePairPassword = ""
+        nativePairTotp = ""
+        nativeApiActive = false
+        nativeInbox = null
         nativeMailDetail=null
         pendingNativeMessageId=null
         browser?.onPause()
