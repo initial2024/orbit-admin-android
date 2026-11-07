@@ -3374,75 +3374,117 @@ class MainActivity : FragmentActivity() {
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
+        if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
+            NativeGlyphBuyDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
         Scaffold(
             topBar = {
                 val nativeMailTab = (activeSection == MailSection.INBOX ||
                     activeSection == MailSection.MAILBOXES) && showNativeMail
                 val nativeToolsTab = (activeSection == MailSection.TRANSFER ||
-                    activeSection == MailSection.ADMIN || activeSection == MailSection.PRIVATE) &&
-                    showNativeToolsPanel
-                val nativeTab = nativeMailTab || nativeToolsTab || activeSection == MailSection.SETTINGS
-                Surface(shadowElevation=1.dp) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp),
-                        horizontalArrangement=Arrangement.SpaceBetween,
-                        verticalAlignment=Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment=Alignment.CenterVertically) {
-                            Box(modifier=Modifier.size(35.dp)
-                                .background(MaterialTheme.colorScheme.primaryContainer,CircleShape),
-                                contentAlignment=Alignment.Center) {
-                                Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
-                                    tint=MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                            Spacer(Modifier.padding(horizontal=6.dp))
-                            Column {
-                                Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
-                                Text(if(nativeTab) "原生 Compose · " + BuildConfig.VERSION_NAME + " · " + activeSection.label
-                                    else "网站视图 · " + BuildConfig.VERSION_NAME + " · " + activeSection.label,
-                                    style=MaterialTheme.typography.labelSmall,
-                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        Row(verticalAlignment=Alignment.CenterVertically) {
-                            if (!nativeTab && activeSection != MailSection.SETTINGS) {
-                                TextButton(onClick={browser?.reload()}) {
-                                    Icon(painterResource(R.drawable.ic_refresh),
-                                        contentDescription="重新加载当前页面")
+                    activeSection == MailSection.DECOR ||
+                    activeSection == MailSection.ADMIN ||
+                    activeSection == MailSection.PRIVATE) && showNativeToolsPanel
+                val nativeTab = nativeMailTab || nativeToolsTab ||
+                    activeSection == MailSection.SETTINGS
+                Surface(shadowElevation=2.dp) {
+                    Column(modifier=Modifier.fillMaxWidth()) {
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .padding(horizontal=14.dp,vertical=6.dp),
+                            horizontalArrangement=Arrangement.SpaceBetween,
+                            verticalAlignment=Alignment.CenterVertically) {
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                modifier=Modifier.weight(1f)) {
+                                Box(modifier=Modifier.size(36.dp)
+                                    .background(MaterialTheme.colorScheme.primaryContainer,CircleShape),
+                                    contentAlignment=Alignment.Center) {
+                                    Icon(painterResource(R.drawable.ic_mail),
+                                        contentDescription=null,
+                                        tint=MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
+                                Spacer(Modifier.padding(horizontal=5.dp))
+                                Column {
+                                    Text("Orbit Mail",style=MaterialTheme.typography.titleMedium)
+                                    Text((if(nativeTab)"原生 Android" else "网页授权") +
+                                        " · "+BuildConfig.VERSION_NAME,
+                                        style=MaterialTheme.typography.labelSmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                            TextButton(onClick={showTools=true}) {
-                                Icon(painterResource(R.drawable.ic_more),
-                                    contentDescription="更多邮箱工具")
+                            TextButton(onClick={openSection(MailSection.SETTINGS)}) {
+                                Icon(painterResource(R.drawable.ic_settings),
+                                    contentDescription="应用设置")
                             }
                             TextButton(onClick=::lock) { Text("锁定") }
                         }
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .padding(horizontal=12.dp,vertical=2.dp),
+                            horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick={switchWorkspace(MailWorkspace.ORDINARY)},
+                                modifier=Modifier.weight(1f)) {
+                                Text((if(workspace==MailWorkspace.ORDINARY)"✓ " else "")+
+                                    "普通邮箱",maxLines=1)
+                            }
+                            OutlinedButton(onClick={switchWorkspace(MailWorkspace.ADMIN)},
+                                modifier=Modifier.weight(1f)) {
+                                Text((if(workspace==MailWorkspace.ADMIN)"✓ " else "")+
+                                    "管理员",maxLines=1)
+                            }
+                        }
+                        Text(
+                            if(workspace==MailWorkspace.ORDINARY)
+                                (if(nativeDeviceClient.isBound())"普通账号 · 本机已绑定"
+                                else "普通账号 · 需要登录")
+                            else (if(adminAuthenticated)"管理员身份 · 已验证"
+                                else "管理员身份 · 需要独立验证"),
+                            modifier=Modifier.padding(horizontal=17.dp,vertical=2.dp),
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },
             bottomBar = {
                 NavigationBar {
-                    MailSection.entries.forEach { section ->
-                        NavigationBarItem(
-                            selected = section == activeSection,
-                            onClick = { openSection(section) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(when (section) {
+                    if(workspace==MailWorkspace.ORDINARY) {
+                        WorkspaceNavigation.ordinaryTabs.forEach { section ->
+                            NavigationBarItem(
+                                selected=section==activeSection,
+                                onClick={openSection(section)},
+                                icon={
+                                    Icon(painterResource(when(section){
                                         MailSection.INBOX -> R.drawable.ic_mail
                                         MailSection.MAILBOXES -> R.drawable.ic_folder
                                         MailSection.TRANSFER -> R.drawable.ic_file
-                                        MailSection.ADMIN -> R.drawable.ic_admin
-                                        MailSection.PRIVATE -> R.drawable.ic_mail
+                                        MailSection.DECOR -> R.drawable.ic_admin
                                         MailSection.SETTINGS -> R.drawable.ic_settings
-                                    }),
-                                    contentDescription = null
-                                )
-                            },
-                            label = { Text(section.label) },
-                            alwaysShowLabel = true
-                        )
+                                        else -> R.drawable.ic_mail
+                                    }),contentDescription=null)
+                                },
+                                label={Text(section.label)},
+                                alwaysShowLabel=true
+                            )
+                        }
+                    } else {
+                        WorkspaceNavigation.adminTabs.forEach { tab ->
+                            val selected=if(tab==AdminDestinationTab.PRIVATE)
+                                activeSection==MailSection.PRIVATE
+                            else activeSection==MailSection.ADMIN && adminPane==tab.pane
+                            NavigationBarItem(
+                                selected=selected,
+                                onClick={selectAdminNavigation(tab)},
+                                icon={
+                                    Icon(painterResource(when(tab){
+                                        AdminDestinationTab.MAILBOXES -> R.drawable.ic_mail
+                                        AdminDestinationTab.DOMAINS -> R.drawable.ic_folder
+                                        AdminDestinationTab.RECORDS -> R.drawable.ic_file
+                                        AdminDestinationTab.PRIVATE -> R.drawable.ic_mail
+                                        AdminDestinationTab.SECURITY -> R.drawable.ic_shield
+                                    }),contentDescription=null)
+                                },
+                                label={Text(tab.label)},
+                                alwaysShowLabel=true
+                            )
+                        }
                     }
                 }
             }
@@ -3506,6 +3548,9 @@ class MainActivity : FragmentActivity() {
                         Surface(modifier = Modifier.fillMaxSize()) {
                             NativePrivateMailContent()
                         }
+                    }
+                    if (activeSection == MailSection.DECOR && showNativeToolsPanel) {
+                        Surface(modifier=Modifier.fillMaxSize()) { NativeGlyphContent() }
                     }
                     if (activeSection == MailSection.SETTINGS) {
                         Surface(modifier = Modifier.fillMaxSize()) {
