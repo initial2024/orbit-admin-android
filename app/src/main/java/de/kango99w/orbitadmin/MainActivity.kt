@@ -169,6 +169,7 @@ class MainActivity : FragmentActivity() {
     private var showCreateMailbox by mutableStateOf(false)
     private var nativeCreateLocal by mutableStateOf("")
     private var nativeCreateDomain by mutableStateOf("")
+    private var nativePickedFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var previousWebSection = MailSection.INBOX
     private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
@@ -189,6 +190,36 @@ class MainActivity : FragmentActivity() {
     private var lastNativeSnapshotRequestAtMs = 0L
 
     private lateinit var biometricPrompt: BiometricPrompt
+
+    // Native SAF picker is local-only until a first-party, account-authorized,
+    // client-side encrypted file transfer protocol is accepted and deployed.
+    private val nativeFilePicker =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (!unlocked) return@registerForActivityResult
+            nativePickedFiles = uris.take(10).mapNotNull { uri ->
+                try {
+                    if (uri.scheme != "content") return@mapNotNull null
+                    var name = "未命名文件"
+                    var size = -1L
+                    contentResolver.query(uri, arrayOf(
+                        android.provider.OpenableColumns.DISPLAY_NAME,
+                        android.provider.OpenableColumns.SIZE
+                    ), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIndex = cursor.getColumnIndex(
+                                android.provider.OpenableColumns.DISPLAY_NAME)
+                            val sizeIndex = cursor.getColumnIndex(
+                                android.provider.OpenableColumns.SIZE)
+                            if (nameIndex >= 0) name = cursor.getString(nameIndex)
+                                ?.take(160) ?: name
+                            if (sizeIndex >= 0 && !cursor.isNull(sizeIndex))
+                                size = cursor.getLong(sizeIndex).coerceAtLeast(0L)
+                        }
+                    }
+                    NativeSelectedFile(uri, name, size)
+                } catch (_: Exception) { null }
+            }
+        }
 
     private val pushPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -1318,13 +1349,25 @@ class MainActivity : FragmentActivity() {
                     )
                     Text("文件传输", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "文件选择和传输记录将统一放在这里。当前服务器尚未提供经过验收的原生上传接口，不能直接声称上传成功。",
+                        "使用 Android 系统文件选择器，文件仅保留在本机，不会传到网页或服务器。原生加密上传与分享链接正在接线，未上线前不声称传输完成。",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Button(
-                        onClick = { navigateTo(AdminDestination.TRANSFER.address) },
+                        onClick = { nativeFilePicker.launch(arrayOf("*/*")) },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("打开现有文件传输（网站操作）") }
+                    ) { Text("从手机选择文件") }
+                    if (nativePickedFiles.isNotEmpty()) {
+                        Text("本机已选择 ${nativePickedFiles.size} 个文件（均未上传）",
+                            style = MaterialTheme.typography.titleSmall)
+                        nativePickedFiles.forEach { file ->
+                            Text(file.displayName +
+                                (if(file.sizeBytes >= 0) " · ${file.sizeBytes} B" else " · 大小未知"),
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                        OutlinedButton(onClick={nativePickedFiles = emptyList()}) {
+                            Text("清空本机选择")
+                        }
+                    }
                 }
             }
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -2596,6 +2639,7 @@ class MainActivity : FragmentActivity() {
         nativeLoginPassword = ""
         nativeLoginTotp = ""
         nativeLoginBusy = false
+        nativePickedFiles = emptyList()
         nativeApiActive = false
         nativeInbox = null
         nativeMailDetail=null
