@@ -1408,24 +1408,32 @@ class MainActivity : FragmentActivity() {
             val status = nativeAdminClient.get("/api/admin/status", requestEpoch)
             val authorized = status.status == 200 &&
                 status.value?.optBoolean("authenticated") == true
-            val privateRows = if (authorized)
-                nativeAdminClient.get("/api/admin/pieterj-mail/mailboxes", requestEpoch) else null
-            val ordinaryRows = if (authorized)
-                nativeAdminClient.get("/api/admin/ordinary-inbox/mailboxes", requestEpoch) else null
-            val domainRows = if (authorized)
-                nativeAdminClient.get("/api/admin/ordinary-inbox/domains", requestEpoch) else null
+            // Verify the administrator once; independent read-only endpoints
+            // can then be fetched in parallel instead of 4 serial round trips.
+            fun asyncGet(path: String): CompletableFuture<NativeAdminClient.Reply>? =
+                if (authorized) CompletableFuture.supplyAsync(
+                    { nativeAdminClient.get(path, requestEpoch) }, adminReadIo
+                ) else null
+            val privateFuture = asyncGet("/api/admin/pieterj-mail/mailboxes")
+            val ordinaryFuture = asyncGet("/api/admin/ordinary-inbox/mailboxes")
+            val tempDomainFuture = asyncGet("/api/admin/ordinary-inbox/domains")
+            val managedDomainFuture = asyncGet("/api/admin/pieterj-mail/status")
+            fun receive(future: CompletableFuture<NativeAdminClient.Reply>?): NativeAdminClient.Reply? =
+                try { future?.get(22, TimeUnit.SECONDS) } catch (_: Exception) { null }
+            val privateRows = receive(privateFuture)
+            val ordinaryRows = receive(ordinaryFuture)
+            val domainRows = receive(tempDomainFuture)
+            val managedRows = receive(managedDomainFuture)
             val valid = authorized && privateRows?.status == 200 &&
                 ordinaryRows?.status == 200
             val mailboxes = if (valid)
                 AdminNativeModels.mailboxes(privateRows?.value, true) +
                     AdminNativeModels.mailboxes(ordinaryRows?.value, false)
                 else emptyList()
-            val domainsJson = domainRows?.value?.optJSONArray("domains")
-            val domains = if (domainRows?.status == 200 && domainsJson != null)
-                (0 until minOf(100, domainsJson.length())).mapNotNull {
-                    val domain = domainsJson.optJSONObject(it)?.optString("domain").orEmpty()
-                    domain.takeIf { s -> s.matches(Regex("^[a-z0-9.-]{3,150}$")) }
-                } else emptyList()
+            val privateOptions = if (managedRows?.status == 200)
+                AdminDomainSelection.permanent(managedRows.value) else emptyList()
+            val ordinaryOptions = if (domainRows?.status == 200)
+                AdminDomainSelection.temporary(domainRows.value) else emptyList()
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -1434,7 +1442,8 @@ class MainActivity : FragmentActivity() {
                 adminUsername = if (adminAuthenticated)
                     status.value?.optString("username").orEmpty().take(32) else ""
                 adminMailboxes = mailboxes
-                adminOrdinaryDomains = domains
+                adminPrivateDomainOptions = privateOptions
+                adminOrdinaryDomainOptions = ordinaryOptions
                 if (!adminAuthenticated) {
                     adminSelectedMailbox = null
                     adminSelectedMessage = null
