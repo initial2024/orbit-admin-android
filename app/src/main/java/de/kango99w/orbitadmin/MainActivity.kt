@@ -1450,6 +1450,314 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun connectPrivateMail() {
+        if (!unlocked || privateMailBusy || !adminAuthenticated) {
+            privateMailError = "请先在管理员页完成独立管理员登录与 2FA。"
+            return
+        }
+        val generation = privateMailGeneration.incrementAndGet()
+        val nativeEpoch = privateMailClient.epoch()
+        val adminEpoch = nativeAdminClient.requestEpoch()
+        privateMailBusy = true
+        privateMailError = ""
+        privateMailNotice = ""
+        privateMailIo.execute {
+            val handoff = nativeAdminClient.post("/api/admin/private-mail-handoff",
+                JSONObject(), adminEpoch)
+            val token = if (handoff.status == 200)
+                NativePrivateMailClient.extractHandoffToken(
+                    handoff.value?.optString("handoff_url")) else null
+            val connection = if (token != null)
+                privateMailClient.handoff(token, nativeEpoch)
+            else NativePrivateMailClient.Reply(handoff.status,null,
+                handoff.error ?: "PRIVATE_HANDOFF_DENIED")
+            runOnUiThread {
+                if (!unlocked || privateMailGeneration.get() != generation)
+                    return@runOnUiThread
+                privateMailBusy = false
+                val ok = connection.status == 200 &&
+                    connection.value?.optBoolean("ok") == true &&
+                    privateMailClient.hasLocalSession()
+                privateMailReady = ok
+                if (ok) {
+                    privateMailNotice = "已建立私人发信会话（8 小时）；不使用普通账号权限。"
+                } else {
+                    privateMailError = "私人发信授权失败：管理员 HTTP ${handoff.status}；" +
+                        "私人发信 HTTP ${connection.status} · " +
+                        (connection.error ?: "UNKNOWN")
+                }
+            }
+        }
+    }
+
+    private fun privateAttachmentPayload(files: List<NativeSelectedFile>): JSONArray {
+        require(files.size <= 3) { "附件最多 3 个" }
+        val items = JSONArray()
+        var total = 0L
+        files.forEach { file ->
+            val stream = contentResolver.openInputStream(file.uri)
+                ?: throw IllegalArgumentException("无法打开附件")
+            val data = ByteArrayOutputStream()
+            stream.use { input ->
+                val chunk = ByteArray(16_384)
+                while (true) {
+                    val n = input.read(chunk)
+                    if (n < 0) break
+                    total += n
+                    if (total > 5L * 1024 * 1024)
+                        throw IllegalArgumentException("附件总大小不能超过 5 MiB")
+                    data.write(chunk,0,n)
+                }
+            }
+            items.put(JSONObject()
+                .put("filename", file.displayName.replace('/', '_')
+                    .replace('\\', '_').take(120))
+                .put("content", Base64.encodeToString(data.toByteArray(),Base64.NO_WRAP))
+                .put("content_type", contentResolver.getType(file.uri)
+                    ?: "application/octet-stream"))
+        }
+        return items
+    }
+
+    private fun sendNativePrivateMail() {
+        if (!unlocked || privateMailBusy || !privateMailReady) return
+        if (privateMailFrom !in NativePrivateMailClient.SENDERS ||
+            !NativePrivateMailClient.validEmailList(privateMailTo,true) ||
+            !NativePrivateMailClient.validEmailList(privateMailCc) ||
+            !NativePrivateMailClient.validEmailList(privateMailBcc) ||
+            privateMailSubject.isBlank() || privateMailSubject.length > 200 ||
+            privateMailText.isBlank() || privateMailText.length > 20_000) {
+            privateMailError = "请核实发件身份、收件人、主题和正文。"
+            return
+        }
+        val schedule = privateMailScheduledAt.trim()
+        if (schedule.isNotBlank()) {
+            val sendAt = try { java.time.Instant.parse(schedule).toEpochMilli() }
+                catch (_:Exception) { 0L }
+            val now = System.currentTimeMillis()
+            if (sendAt < now + 60_000 || sendAt > now + 30L*24*60*60*1000 ||
+                privateMailFiles.isNotEmpty()) {
+                privateMailError = "定时发送需输入未来 1 分钟到 30 天内的 UTC ISO 时间；不能同时附加文件。"
+                return
+            }
+        }
+        val epoch = privateMailClient.epoch()
+        val generation = privateMailGeneration.incrementAndGet()
+        val sender = privateMailFrom
+        val to = privateMailTo
+        val cc = privateMailCc
+        val bcc = privateMailBcc
+        val subject = privateMailSubject.trim()
+        val body = privateMailText
+        val requestId = privateMailRequestId
+        val files = privateMailFiles.toList()
+        privateMailBusy = true
+        privateMailError = ""
+        privateMailNotice = ""
+        privateMailIo.execute {
+            var error: String? = null
+            var response: NativePrivateMailClient.Reply? = null
+            try {
+                val json = JSONObject().put("from",sender)
+                    .put("to",to).put("cc",cc).put("bcc",bcc)
+                    .put("subject",subject).put("text",body)
+                    .put("request_id",requestId)
+                if (schedule.isNotBlank()) json.put("scheduled_at",schedule)
+                if (files.isNotEmpty()) json.put("attachments",privateAttachmentPayload(files))
+                response = privateMailClient.sendMessage(json, epoch)
+            } catch (e: Exception) {
+                error = e.message?.take(160) ?: "附件读取失败"
+            }
+            runOnUiThread {
+                if (!unlocked || privateMailGeneration.get() != generation)
+                    return@runOnUiThread
+                privateMailBusy = false
+                if (response?.status == 200 && response.value?.optBoolean("ok") == true) {
+                    privateMailLastScheduledId = if (schedule.isNotBlank())
+                        response.value?.optString("id").orEmpty() else ""
+                    privateMailNotice = if (schedule.isNotBlank())
+                        "服务器已接受定时邮件 · ID: ${privateMailLastScheduledId}"
+                        else "发信服务已接受邮件 · ID: " +
+                            response.value?.optString("id").orEmpty()
+                    privateMailTo = ""
+                    privateMailCc = ""
+                    privateMailBcc = ""
+                    privateMailSubject = ""
+                    privateMailText = ""
+                    privateMailScheduledAt = ""
+                    privateMailFiles = emptyList()
+                    privateMailRequestId = UUID.randomUUID().toString()
+                } else {
+                    if (response?.status == 401) privateMailReady = false
+                    // Keep the same idempotency request ID after ambiguous
+                    // upstream timeouts to prevent accidental duplicate sends.
+                    privateMailError = error ?: "发送未获服务器成功确认：HTTP " +
+                        (response?.status ?: "UNKNOWN") + " · " +
+                        (response?.error ?: "UNKNOWN")
+                }
+            }
+        }
+    }
+
+    private fun cancelNativePrivateScheduled() {
+        val id = privateMailLastScheduledId
+        if (!unlocked || !privateMailReady || privateMailBusy ||
+            id.isBlank()) return
+        val generation = privateMailGeneration.incrementAndGet()
+        val epoch = privateMailClient.epoch()
+        privateMailBusy = true
+        privateMailIo.execute {
+            val response = privateMailClient.cancelScheduled(id,epoch)
+            runOnUiThread {
+                if (!unlocked || generation != privateMailGeneration.get())
+                    return@runOnUiThread
+                privateMailBusy = false
+                if (response.status == 200 && response.value?.optBoolean("ok") == true) {
+                    privateMailLastScheduledId=""
+                    privateMailNotice="定时发信已被服务器确认取消。"
+                } else privateMailError="取消失败：HTTP ${response.status}，原任务状态未更改。"
+            }
+        }
+    }
+
+    @Composable
+    private fun NativePrivateMailContent() {
+        Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal=16.dp,vertical=12.dp),
+            verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Row(modifier=Modifier.fillMaxWidth(),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.SpaceBetween) {
+                Column {
+                    Text("私人邮箱 · 写信",style=MaterialTheme.typography.headlineSmall)
+                    Text("Resend 发信 · 六种已验证发件身份",
+                        style=MaterialTheme.typography.labelSmall)
+                }
+                if(privateMailReady) TextButton(enabled=!privateMailBusy,onClick={
+                    privateMailClient.clearLocalSession()
+                    privateMailReady=false
+                    privateMailNotice="已退出私人发信会话。"
+                    privateMailError=""
+                }) { Text("退出") }
+            }
+            if (privateMailError.isNotBlank())
+                Text(privateMailError,color=MaterialTheme.colorScheme.error,
+                    style=MaterialTheme.typography.bodySmall)
+            if (privateMailNotice.isNotBlank())
+                Text(privateMailNotice,color=MaterialTheme.colorScheme.primary,
+                    style=MaterialTheme.typography.bodySmall)
+            if (!privateMailReady) {
+                Card(modifier=Modifier.fillMaxWidth()) {
+                    Column(modifier=Modifier.padding(16.dp),
+                        verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Text("连接私人发信",style=MaterialTheme.typography.titleLarge)
+                        Text("利用已通过 2FA 的管理员会话申请一次性交接令牌，" +
+                            "再建立 mail.kango99w.de 的独立 8 小时发信会话。" +
+                            "无需重新输入管理员密码或打开网站。",
+                            style=MaterialTheme.typography.bodySmall)
+                        Button(
+                            enabled=adminAuthenticated && !privateMailBusy,
+                            onClick=::connectPrivateMail,
+                            modifier=Modifier.fillMaxWidth()
+                        ) { Text(if(privateMailBusy) "正在验证…" else "连接私人发信") }
+                        if(!adminAuthenticated)
+                            OutlinedButton(
+                                onClick={openSection(MailSection.ADMIN)},
+                                modifier=Modifier.fillMaxWidth()
+                            ) { Text("先完成管理员登录 / 2FA") }
+                    }
+                }
+            } else {
+                Text("发件人",style=MaterialTheme.typography.labelLarge)
+                Box(modifier=Modifier.fillMaxWidth()) {
+                    OutlinedButton(enabled=!privateMailBusy,
+                        onClick={privateMailSenderDropdown=true},
+                        modifier=Modifier.fillMaxWidth()) {
+                        Text(privateMailFrom,modifier=Modifier.weight(1f))
+                        Text("⌄")
+                    }
+                    DropdownMenu(expanded=privateMailSenderDropdown,
+                        onDismissRequest={privateMailSenderDropdown=false},
+                        modifier=Modifier.fillMaxWidth()) {
+                        NativePrivateMailClient.SENDERS.forEach { sender ->
+                            DropdownMenuItem(text={Text(sender)},onClick={
+                                privateMailFrom=sender
+                                privateMailSenderDropdown=false
+                            })
+                        }
+                    }
+                }
+                OutlinedTextField(value=privateMailTo,
+                    onValueChange={privateMailTo=it.take(1200)},
+                    label={Text("收件人（多个地址用逗号分隔）")},
+                    singleLine=false,maxLines=3,modifier=Modifier.fillMaxWidth())
+                TextButton(onClick={privateMailExpandCc=!privateMailExpandCc}) {
+                    Text(if(privateMailExpandCc) "收起抄送与密送" else "展开 CC / BCC")
+                }
+                if(privateMailExpandCc) {
+                    OutlinedTextField(value=privateMailCc,
+                        onValueChange={privateMailCc=it.take(1000)},
+                        label={Text("CC 抄送")},modifier=Modifier.fillMaxWidth())
+                    OutlinedTextField(value=privateMailBcc,
+                        onValueChange={privateMailBcc=it.take(1000)},
+                        label={Text("BCC 密送")},modifier=Modifier.fillMaxWidth())
+                }
+                OutlinedTextField(value=privateMailSubject,
+                    onValueChange={privateMailSubject=it.take(200)},
+                    label={Text("主题")},singleLine=true,
+                    modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(value=privateMailText,
+                    onValueChange={privateMailText=it.take(20_000)},
+                    label={Text("邮件正文")},minLines=7,maxLines=18,
+                    modifier=Modifier.fillMaxWidth())
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp),
+                    verticalAlignment=Alignment.CenterVertically) {
+                    OutlinedButton(enabled=!privateMailBusy,
+                        onClick={privateMailFilePicker.launch(arrayOf("*/*"))}) {
+                        Text("添加附件")
+                    }
+                    Text("最多 3 个 · 共 5 MiB",style=MaterialTheme.typography.labelSmall)
+                }
+                privateMailFiles.forEach { file ->
+                    Row(modifier=Modifier.fillMaxWidth(),
+                        horizontalArrangement=Arrangement.SpaceBetween,
+                        verticalAlignment=Alignment.CenterVertically) {
+                        Text(file.displayName,style=MaterialTheme.typography.bodySmall,
+                            modifier=Modifier.weight(1f),maxLines=1)
+                        TextButton(enabled=!privateMailBusy,
+                            onClick={privateMailFiles=
+                                privateMailFiles.filterNot { it.uri == file.uri }}) {
+                            Text("移除")
+                        }
+                    }
+                }
+                OutlinedTextField(value=privateMailScheduledAt,
+                    onValueChange={privateMailScheduledAt=it.take(40)},
+                    label={Text("定时发送 UTC（选填）")},
+                    placeholder={Text("2026-11-10T09:00:00Z")},
+                    singleLine=true,modifier=Modifier.fillMaxWidth())
+                Text("定时邮件最多提前 30 天；不能附加文件。发送失败保留正文，" +
+                    "网络超时重试沿用同一请求 ID。",
+                    style=MaterialTheme.typography.labelSmall)
+                Button(enabled=!privateMailBusy &&
+                    privateMailTo.isNotBlank() && privateMailSubject.isNotBlank() &&
+                    privateMailText.isNotBlank(),
+                    onClick=::sendNativePrivateMail,
+                    modifier=Modifier.fillMaxWidth()) {
+                    Text(if(privateMailBusy) "正在提交…" else
+                        if(privateMailScheduledAt.isNotBlank()) "安排发送" else "发送邮件")
+                }
+                if(privateMailLastScheduledId.isNotBlank())
+                    OutlinedButton(enabled=!privateMailBusy,
+                        onClick=::cancelNativePrivateScheduled) {
+                        Text("取消上次定时发送")
+                    }
+                Text("仅成功提交给发信服务才会显示已接受；最终送达仍以邮件服务商状态为准。",
+                    style=MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+
     /** Existing admin HttpOnly session, not the ordinary account device grant. */
     private fun refreshNativeAdmin() {
         if (!unlocked || adminBusy) return
