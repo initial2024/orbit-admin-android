@@ -199,7 +199,7 @@ class NativeDeviceClient(context: Context) {
     /** Native push registration is signed over the exact JSON bytes; no site cookies. */
     fun registerPush(installationId: String, token: String): Response {
         if (!Regex("^[A-Za-z0-9_-]{16,72}$").matches(installationId) ||
-            !Regex("^[A-Za-z0-9:_~.\-]{40,4096}$").matches(token))
+            !Regex("^[A-Za-z0-9:_~.-]{40,4096}$").matches(token))
             return Response(400, null, "PUSH_INPUT_INVALID")
         return signedPushMutation("register",
             JSONObject().put("installation_id", installationId).put("token", token))
