@@ -191,6 +191,9 @@ class MainActivity : FragmentActivity() {
     // All administrator management panes are native Compose, never website links.
     private var adminPane by mutableStateOf("mailboxes")
     private var adminManagedDomains by mutableStateOf<List<AdminManagedDomain>>(emptyList())
+    private var adminInventoryDomains by mutableStateOf<List<AdminInventoryDomain>>(emptyList())
+    private var adminInventoryStatus by mutableStateOf("")
+    private var adminSelectedDomain by mutableStateOf<AdminManagedDomain?>(null)
     private var adminRecordedAddresses by mutableStateOf<List<AdminRecordedAddress>>(emptyList())
     private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
     private var adminDeleteTarget by mutableStateOf<AdminNativeMailbox?>(null)
@@ -2570,6 +2573,9 @@ class MainActivity : FragmentActivity() {
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
+        adminInventoryDomains = emptyList()
+        adminInventoryStatus = ""
+        adminSelectedDomain = null
         adminRegisteredAccounts = emptyList()
         adminSelectedRegistration = null
                     adminDeleteTarget = null
@@ -2585,6 +2591,7 @@ class MainActivity : FragmentActivity() {
         if (!unlocked || !adminAuthenticated || adminBusy ||
             pane !in setOf("mailboxes", "domains", "records", "security", "users")) return
         adminPane = pane
+        adminSelectedDomain = null
         adminSelectedRegistration = null
         adminSelectedMailbox = null
         adminSelectedMessageId = null
@@ -2599,6 +2606,27 @@ class MainActivity : FragmentActivity() {
         val generation = adminGeneration.incrementAndGet()
         val epoch = nativeAdminClient.requestEpoch()
         adminBusy = true
+        if(pane=="domains") {
+            adminInventoryStatus="正在读取独立域名托管库存…"
+            adminInventoryDomains=emptyList()
+            adminReadIo.execute {
+                val reply=nativeAdminClient.get("/api/admin/domain-control/inventory", epoch)
+                val records=if(reply.status==200)
+                    AdminDomainInventoryModels.parse(reply.value) else emptyList()
+                runOnUiThread {
+                    if(!unlocked || !adminAuthenticated ||
+                        generation!=adminGeneration.get() || adminPane!="domains")
+                        return@runOnUiThread
+                    adminInventoryDomains=records
+                    adminInventoryStatus=when(reply.status) {
+                        200 -> "托管库存已读取："+records.size+" 条 · 服务商标签不代表验证通过"
+                        403 -> "该管理员没有托管库存的读取权限（HTTP 403）"
+                        503 -> "独立托管库存未配置或暂不可用（HTTP 503）"
+                        else -> "托管库存读取失败（HTTP "+reply.status+"）；其他域名记录保留"
+                    }
+                }
+            }
+        }
         adminIo.execute {
             val primary: NativeAdminClient.Reply
             val secondary: NativeAdminClient.Reply?
@@ -2641,6 +2669,9 @@ class MainActivity : FragmentActivity() {
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
+        adminInventoryDomains = emptyList()
+        adminInventoryStatus = ""
+        adminSelectedDomain = null
         adminRegisteredAccounts = emptyList()
         adminSelectedRegistration = null
                     adminPane = "mailboxes"
@@ -2776,6 +2807,56 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
+    private fun AdminDomainDetailsDialog() {
+        val item=adminSelectedDomain ?: return
+        val inventory=adminInventoryDomains.firstOrNull { it.domain==item.domain }
+        AlertDialog(
+            onDismissRequest={adminSelectedDomain=null},
+            title={Text("域名详情 · "+item.domain,maxLines=2)},
+            text={
+                Column(
+                    modifier=Modifier.heightIn(max=420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement=Arrangement.spacedBy(9.dp)
+                ) {
+                    Text("来源："+item.source+" · 登记状态："+item.state)
+                    if(item.ingress.isNotBlank())Text("收件接入："+item.ingress)
+                    if(inventory==null) {
+                        Text("此域名来自邮箱或网站登记数据；独立托管库存未提供可用元数据。",
+                            style=MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("注册商："+inventory.registrar.ifBlank{"未登记"})
+                        Text("DNS 服务商："+inventory.dnsProvider.ifBlank{"未登记"})
+                        Text("网站托管："+inventory.websiteHost.ifBlank{"未登记"})
+                        Text("邮箱服务商："+inventory.emailProvider.ifBlank{"未登记"})
+                        Text("证据来源："+inventory.evidenceSource.ifBlank{"未知"})
+                        Text("检测状态："+inventory.evidenceStatus.ifBlank{"未验证"})
+                        if(inventory.pagesStatus.isNotBlank())
+                            Text("Pages 状态："+inventory.pagesStatus)
+                        if(inventory.zoneStatus.isNotBlank())
+                            Text("DNS 区域状态："+inventory.zoneStatus)
+                        Text("历史收件配置标记："+if(inventory.mailConfigured)"是" else "否")
+                        if(inventory.evidenceNote.isNotBlank())
+                            Text("检测说明："+inventory.evidenceNote)
+                        if(inventory.notes.isNotBlank()) {
+                            Text("登记备注",style=MaterialTheme.typography.titleSmall)
+                            SelectionContainer { Text(inventory.notes) }
+                        }
+                        Text("服务商、配置标记及人工备注均非当前 DNS、注册权或真实收件验证；这里不会修改 DNS。",
+                            style=MaterialTheme.typography.bodySmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton={TextButton(onClick={
+                val clipboard=getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("域名",item.domain))
+            }){Text("复制域名")}},
+            dismissButton={TextButton(onClick={adminSelectedDomain=null}){Text("关闭")}}
+        )
+    }
+
+    @Composable
     private fun AdminRegistrationDetailDialog() {
         val entry=adminSelectedRegistration ?: return
         AlertDialog(
@@ -2837,7 +2918,10 @@ class MainActivity : FragmentActivity() {
             HorizontalDivider()
             when (adminPane) {
                 "domains" -> AdminDomainManagement(
-                    rows=adminManagedDomains,
+                    rows=AdminDomainInventoryModels.combine(
+                        adminManagedDomains,adminInventoryDomains),
+                    inventoryStatus=adminInventoryStatus,
+                    onSelect={adminSelectedDomain=it},
                     search=adminDomainSearch,setSearch={adminDomainSearch=it},
                     source=adminDomainSourceFilter,setSource={adminDomainSourceFilter=it},
                     state=adminDomainStateFilter,setState={adminDomainStateFilter=it},
@@ -3610,6 +3694,8 @@ class MainActivity : FragmentActivity() {
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
+        if (adminSelectedDomain != null && adminAuthenticated && workspace==MailWorkspace.ADMIN)
+            AdminDomainDetailsDialog()
         if (adminSelectedRegistration != null && adminAuthenticated && workspace==MailWorkspace.ADMIN)
             AdminRegistrationDetailDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
@@ -3858,6 +3944,9 @@ class MainActivity : FragmentActivity() {
         adminManagedDomains = emptyList()
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
+        adminInventoryDomains = emptyList()
+        adminInventoryStatus = ""
+        adminSelectedDomain = null
         adminRegisteredAccounts = emptyList()
         adminSelectedRegistration = null
         adminDeleteTarget = null
@@ -3914,6 +4003,9 @@ class MainActivity : FragmentActivity() {
         adminManagedDomains = emptyList()
         adminRecordedAddresses = emptyList()
         adminSecurityState = null
+        adminInventoryDomains = emptyList()
+        adminInventoryStatus = ""
+        adminSelectedDomain = null
         adminRegisteredAccounts = emptyList()
         adminSelectedRegistration = null
         adminDeleteTarget = null
