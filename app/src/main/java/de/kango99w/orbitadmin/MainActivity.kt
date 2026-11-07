@@ -1888,7 +1888,27 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
-            Text("管理员登录、2FA 与邮箱阅读现已接入原生页面；高级安全设置和恢复码管理仍由现有受保护网站负责。",
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("当前安装的软件版本", style = MaterialTheme.typography.titleMedium)
+                    SelectionContainer {
+                        Text("Orbit Mail " + BuildConfig.VERSION_NAME +
+                            "（Build " + BuildConfig.VERSION_CODE + "）",
+                            style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text("包名：" + BuildConfig.APPLICATION_ID,
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("原生界面：Android Jetpack Compose。点击底部“管理员”应显示“管理员邮箱”原生页面，" +
+                        "不会自动加载网站。只有手动选择标注“网页”的高级功能才会进入网站。",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("如果手机显示的版本号低于最新 GitHub APK，说明安装没有更新成功。" +
+                        "不同 CI Debug 签名可能无法覆盖安装；卸载旧版会清除旧版应用本地数据和会话。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+            }
+            Text("管理员登录、2FA 与邮箱阅读使用原生客户端；高级安全设置和恢复码仍由受保护网站负责。",
                 style = MaterialTheme.typography.bodyMedium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
