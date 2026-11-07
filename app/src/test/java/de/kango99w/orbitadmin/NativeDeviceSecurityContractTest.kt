@@ -71,7 +71,7 @@ class NativeDeviceSecurityContractTest {
         val source = source("MainActivity.kt")
         assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound()) return@runOnUiThread"))
         assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound() ||"))
-        assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
+        assertTrue(source.contains("if (publicSelected && !nativeVisible) AndroidView("))
         assertFalse(source.contains("if (!nativeDeviceClient.isBound() || !nativeVisible ||"))
     }
 
@@ -130,9 +130,13 @@ class NativeDeviceSecurityContractTest {
 
     @Test fun boundDeviceDoesNotCreateAHiddenWebview() {
         val source = source("MainActivity.kt")
-        assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
+        assertTrue(source.contains("if (publicSelected && !nativeVisible) AndroidView("))
         assertTrue(source.contains("NativeInboxSnapshot("))
         assertTrue(source.contains("readMessageViaNativeApi("))
         assertTrue(source.contains("nativeIo.execute"))
+        assertFalse(source.contains("sectionBrowsers.containsKey(MailSection.INBOX)"))
+        assertFalse(source.contains("factory = { obtainBrowser(MailSection.ADMIN) }"))
+        assertFalse(source.contains("adminWebVisible"))
+        assertTrue(source.contains("Administrator must use native Compose, not WebView"))
     }
 }
