@@ -1,0 +1,76 @@
+name: Publish Orbit Mail debug APK (manual GitHub release)
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledgement:
+        description: "Type PUBLISH_TEST_APK to publish a debug APK as a GitHub pre-release"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+jobs:
+  build-preview:
+    if: github.ref == 'refs/heads/main' && inputs.acknowledgement == 'PUBLISH_TEST_APK'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout$v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java$v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and accepted licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle$v4
+        with:
+          gradle-version: '8.13'
+      - name: Test and package
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify debug APK and generate publish metadata
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          NAME="Orbit-Mail-v${VERSION}-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          TAG="orbit-mail-v${VERSION}-${GITHUB_SHA:0:12}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable prerelease (direct APK asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.seal.outputs.tag }}
+          APK: ${{ steps.seal.outputs.apk }}
+          CHECKSUM: ${{ steps.seal.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing debug release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" "$CHECKSUM" \
+            --target "$GITHUB_SHA" \
+            --title "Orbit Mail $TAG (debug test)" \
+            --notes "DEBUG / PRERELEASE ONLY. Not production-signed. The debug signing may prevent upgrades; uninstall clears local login. Native device API still needs server security review." \
+            --prerelease
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
