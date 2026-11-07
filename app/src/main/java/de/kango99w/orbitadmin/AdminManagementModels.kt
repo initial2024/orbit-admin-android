@@ -1,0 +1,87 @@
+package de.kango99w.orbitadmin
+
+import org.json.JSONObject
+import org.json.JSONArray
+
+/** Typed, bounded administrative data for Compose. API responses remain the source of truth. */
+data class AdminManagedDomain(
+    val domain: String,
+    val source: String,
+    val state: String,
+    val ingress: String
+)
+data class AdminRecordedAddress(
+    val address: String,
+    val source: String,
+    val reserved: Boolean
+)
+data class AdminTrustedDevice(
+    val id: String,
+    val label: String,
+    val expiresAt: Long
+)
+data class AdminSecurityState(
+    val totpEnabled: Boolean,
+    val recoveryCodesRemaining: Int,
+    val trustedDevices: List<AdminTrustedDevice>
+)
+
+object AdminManagementModels {
+    private val domainPattern = Regex("^[a-z0-9][a-z0-9.-]{1,148}[a-z0-9]$")
+    private val mailPattern = Regex("^[^@\\s]{1,64}@[a-z0-9.-]{3,150}$")
+
+    private fun domainRows(array: JSONArray?, source: String): List<AdminManagedDomain> {
+        if (array == null) return emptyList()
+        return (0 until minOf(array.length(), 100)).mapNotNull { index ->
+            val row = array.optJSONObject(index) ?: return@mapNotNull null
+            val domain = row.optString("domain").trim().lowercase()
+            if (!domainPattern.matches(domain)) return@mapNotNull null
+            AdminManagedDomain(
+                domain, source,
+                row.optString("state").ifBlank {
+                    if (row.optBoolean("enabled", false)) "active" else "disabled"
+                }.take(32),
+                row.optString("ingress").take(64)
+            )
+        }
+    }
+
+    fun domains(privateStatus: JSONObject?, ordinaryStatus: JSONObject?): List<AdminManagedDomain> {
+        val seen = HashSet<String>()
+        return (
+            domainRows(privateStatus?.optJSONArray("domains"), "管理员邮箱") +
+                domainRows(privateStatus?.optJSONArray("site_domains"), "网站域名") +
+                domainRows(privateStatus?.optJSONArray("domain_requests"), "域名申请") +
+                domainRows(ordinaryStatus?.optJSONArray("domains"), "临时邮箱")
+            ).filter { seen.add(it.source + ":" + it.domain + ":" + it.state) }.take(250)
+    }
+
+    fun recordedAddresses(response: JSONObject?): List<AdminRecordedAddress> {
+        val rows = response?.optJSONArray("records") ?: return emptyList()
+        return (0 until minOf(rows.length(), 250)).mapNotNull { index ->
+            val row = rows.optJSONObject(index) ?: return@mapNotNull null
+            val address = row.optString("address").take(254)
+            if (!mailPattern.matches(address)) return@mapNotNull null
+            AdminRecordedAddress(
+                address,
+                row.optString("source").take(48),
+                row.optBoolean("reserved", false)
+            )
+        }
+    }
+
+    fun security(totp: JSONObject?, devices: JSONObject?): AdminSecurityState {
+        val rows = devices?.optJSONArray("devices")
+        val list = if (rows == null) emptyList() else (0 until minOf(rows.length(), 50))
+            .mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                val id = row.optString("id")
+                if (!AdminNativeModels.validId(id)) return@mapNotNull null
+                AdminTrustedDevice(id, row.optString("device_label").take(64),
+                    row.optLong("expires_at"))
+            }
+        return AdminSecurityState(totp?.optBoolean("enabled") == true,
+            (totp?.optInt("recovery_codes_remaining") ?: 0).coerceIn(0, 100),
+            list)
+    }
+}
