@@ -48,7 +48,8 @@ class NativeAdminClient {
             "/api/admin/ordinary-inbox/recorded-addresses",
             "/api/admin/pieterj-mail/status",
             "/api/admin/trusted-devices",
-            "/api/admin/2fa/status"
+            "/api/admin/2fa/status",
+            "/api/admin/account-registry/registrations"
         )
         private val POST_PATHS = setOf(
             "/api/admin/login", "/api/admin/login/totp", "/api/admin/logout",

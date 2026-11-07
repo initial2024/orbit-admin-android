@@ -50,4 +50,24 @@ class AdminManagementModelsInstrumentedTest {
         assertEquals(5,state.recoveryCodesRemaining)
         assertEquals(2,state.trustedDevices.size)
     }
+
+    @Test fun accountRegistryDetailsAreBoundedAndStrictlyAdministratorScoped() {
+        val body=JSONObject("""{"registrations":[
+          {"id":"11111111-1111-4111-8111-111111111111","mailbox_address":"user@example.com",
+           "mailbox_source":"ordinary","service":"Example Service","account_label":"Work",
+           "status":"active","lifecycle_stage":"registered","registered_at":1790100000000,
+           "last_reviewed_at":1791000000000,"note":"Reviewed"},
+          {"id":"../../invalid","mailbox_address":"unsafe@example.com","mailbox_source":"pieterj"},
+          {"id":"22222222-2222-4222-8222-222222222222","mailbox_address":"private@example.net",
+           "mailbox_source":"pieterj","service":"Second","status":"closed"}
+        ]}""")
+        val accounts=AdminRegistrationModels.parse(body)
+        assertEquals(2,accounts.size)
+        assertEquals("Example Service",accounts[0].service)
+        assertEquals("Work",accounts[0].accountLabel)
+        assertEquals("ordinary",accounts[0].source)
+        assertEquals("private@example.net",accounts[1].address)
+        assertTrue(AdminRegistrationModels.parse(null).isEmpty())
+    }
+
 }
