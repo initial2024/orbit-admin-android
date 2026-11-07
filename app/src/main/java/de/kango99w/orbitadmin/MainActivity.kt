@@ -247,7 +247,13 @@ class MainActivity : FragmentActivity() {
     // client-side encrypted file transfer protocol is accepted and deployed.
     private val nativeFilePicker =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-            if (!unlocked) return@registerForActivityResult
+            val safeReturn = pickerPending && pickerReturnAllowed()
+            pickerPending = false
+            pickerLaunchedAtMs = 0L
+            if (!unlocked || !safeReturn) {
+                lock()
+                return@registerForActivityResult
+            }
             nativePickedFiles = uris.take(10).mapNotNull { uri ->
                 try {
                     if (uri.scheme != "content") return@mapNotNull null
@@ -275,7 +281,13 @@ class MainActivity : FragmentActivity() {
 
     private val privateMailFilePicker =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-            if (!unlocked) return@registerForActivityResult
+            val safeReturn = pickerPending && pickerReturnAllowed()
+            pickerPending = false
+            pickerLaunchedAtMs = 0L
+            if (!unlocked || !safeReturn) {
+                lock()
+                return@registerForActivityResult
+            }
             privateMailFiles = uris.take(3).mapNotNull { uri ->
                 try {
                     if (uri.scheme != "content") return@mapNotNull null
@@ -310,6 +322,21 @@ class MainActivity : FragmentActivity() {
             if (allowed) sendTestNotification()
             else message = "系统未授权通知；不会发送任何邮件内容。"
         }
+
+    /** Only the Android system document picker receives a bounded lock exception. */
+    private fun launchNativeDocumentPicker(privateSender: Boolean) {
+        if (!unlocked || pickerPending) return
+        pickerPending = true
+        pickerLaunchedAtMs = SystemClock.elapsedRealtime()
+        try {
+            if (privateSender) privateMailFilePicker.launch(arrayOf("*/*"))
+            else nativeFilePicker.launch(arrayOf("*/*"))
+        } catch (_: Exception) {
+            pickerPending = false
+            pickerLaunchedAtMs = 0L
+            message = "系统文件选择器未能启动，未读取或上传任何文件。"
+        }
+    }
 
     private fun pickerReturnAllowed(): Boolean {
         val locked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
@@ -1779,7 +1806,7 @@ class MainActivity : FragmentActivity() {
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Button(
-                        onClick = { nativeFilePicker.launch(arrayOf("*/*")) },
+                        onClick = { launchNativeDocumentPicker(false) },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("从手机选择文件") }
                     if (nativePickedFiles.isNotEmpty()) {
@@ -2072,7 +2099,7 @@ class MainActivity : FragmentActivity() {
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp),
                     verticalAlignment=Alignment.CenterVertically) {
                     OutlinedButton(enabled=!privateMailBusy,
-                        onClick={privateMailFilePicker.launch(arrayOf("*/*"))}) {
+                        onClick={launchNativeDocumentPicker(true)}) {
                         Text("添加附件")
                     }
                     Text("最多 3 个 · 共 5 MiB",style=MaterialTheme.typography.labelSmall)
