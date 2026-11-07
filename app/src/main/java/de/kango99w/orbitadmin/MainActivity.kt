@@ -118,6 +118,8 @@ class MainActivity : FragmentActivity() {
     private var nativeInbox by mutableStateOf<NativeInboxSnapshot?>(null)
     private val nativeDeviceClient by lazy { NativeDeviceClient(applicationContext) }
     private val nativeIo = Executors.newSingleThreadExecutor()
+    // Mail detail reads must not queue behind mailbox sync, transfers or FCM calls.
+    private val nativeReadIo = Executors.newSingleThreadExecutor()
     private val nativeRequestGeneration = AtomicLong(0)
     private var nativeApiActive by mutableStateOf(false)
     private var nativeApiLoading by mutableStateOf(false)
@@ -144,6 +146,7 @@ class MainActivity : FragmentActivity() {
     private val adminReadIo = Executors.newFixedThreadPool(4)
     private val adminGeneration = AtomicLong(0)
     private var adminBusy by mutableStateOf(false)
+    private var adminMessageLoading by mutableStateOf(false)
     private var adminAuthenticated by mutableStateOf(false)
     private var adminUsername by mutableStateOf("")
     private var adminSignInUsername by mutableStateOf("")
@@ -1092,7 +1095,7 @@ class MainActivity : FragmentActivity() {
         pendingNativeMessageId = id
         nativeMailDetail = null
         nativeReadCommandUnavailable = false
-        nativeIo.execute {
+        nativeReadIo.execute {
             val result = nativeDeviceClient.fetch("/api/account/native-device/mailboxes/$mailbox/messages/$id")
             runOnUiThread {
                 if (!unlocked || pendingNativeMessageId != id ||
@@ -1110,10 +1113,12 @@ class MainActivity : FragmentActivity() {
                     item.optString("subject").take(240),
                     formatNativeMessageTime(item.optLong("received_at", 0L)),
                     item.optString("text_body").take(8000),
-                    item.optString("html_body").take(12000),
+                    item.optString("html_body").take(16000),
                     item.optString("possible_code").takeIf {
                         Regex("^[A-Za-z0-9-]{4,16}$").matches(it)
-                    }.orEmpty())
+                    }.orEmpty(),
+                    NativeMailLinks.read(item.optJSONArray("safe_links"),
+                        item.optString("text_body"),item.optString("html_body")))
                 showNativeMail = true
             }
         }
@@ -1525,26 +1530,12 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
-            if (detail.textBody.isNotBlank()) {
-                SelectionContainer {
-                    Text(detail.textBody,style=MaterialTheme.typography.bodyLarge)
-                }
-            } else if (detail.htmlBody.isNotBlank()) {
-                // Text-only Android rendering of sanitized HTML: no WebView,
-                // JavaScript, cookie, remote image or embedded browser network calls.
-                val formatted = android.text.Html.fromHtml(
-                    detail.htmlBody, android.text.Html.FROM_HTML_MODE_COMPACT
-                ).toString().trim().take(16000)
-                SelectionContainer {
-                    Text(formatted.ifBlank { "（邮件 HTML 正文无可显示文字）" },
-                        style=MaterialTheme.typography.bodyLarge)
-                }
-                Text("为保护隐私，远程图片和追踪链接已由服务器清理。",
-                    style=MaterialTheme.typography.labelSmall)
-            } else {
-                Text("此邮件没有可读取的文本正文，附件将在后续原生接口中提供。",
-                    style=MaterialTheme.typography.bodyMedium)
-            }
+            NativeMailReadingContent(
+                messageKey="ordinary:"+detail.mailboxId+":"+detail.id,
+                plainText=detail.textBody,
+                htmlBody=detail.htmlBody,
+                safeLinks=detail.safeLinks
+            )
             OutlinedButton(onClick={showNativeMail=false}) {
                 Text("尚未原生支持的附件或高级内容（手动打开网站）")
             }
@@ -2410,19 +2401,23 @@ class MainActivity : FragmentActivity() {
             adminMessages.none { it.id == id }) return
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
-        adminBusy = true
+        adminMessageLoading = true
         adminSelectedMessageId = id
         adminSelectedMessage = null
         adminError = ""
         val path = if (mailbox.privateMailbox) "/api/admin/pieterj-mail/messages/$id"
         else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages/$id"
-        adminIo.execute {
+        adminReadIo.execute {
             val response = nativeAdminClient.get(path, requestEpoch)
             val detail = if (response.status == 200)
                 AdminNativeModels.detail(response.value)?.takeIf { it.id == id } else null
             runOnUiThread {
-                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
-                adminBusy = false
+                if (!unlocked || adminGeneration.get() != generation ||
+                    adminSelectedMessageId != id ||
+                    adminSelectedMailbox?.id != mailbox.id ||
+                    adminSelectedMailbox?.privateMailbox != mailbox.privateMailbox)
+                    return@runOnUiThread
+                adminMessageLoading = false
                 if (response.status == 401) {
                     adminAuthenticated = false
                     adminMailboxes = emptyList()
@@ -2512,6 +2507,7 @@ class MainActivity : FragmentActivity() {
         adminSelectedMailbox = null
         adminSelectedMessageId = null
         adminSelectedMessage = null
+        adminMessageLoading = false
         adminMessages = emptyList()
         adminError = ""
         if (pane == "mailboxes") {
@@ -2961,6 +2957,8 @@ class MainActivity : FragmentActivity() {
                     verticalAlignment=Alignment.CenterVertically) {
                     TextButton(onClick={
                         if (adminSelectedMessageId != null) {
+                            adminGeneration.incrementAndGet()
+                            adminMessageLoading=false
                             adminSelectedMessageId = null
                             adminSelectedMessage = null
                         } else {
@@ -3013,25 +3011,19 @@ class MainActivity : FragmentActivity() {
                             Card(modifier=Modifier.fillMaxWidth()) {
                                 Column(modifier=Modifier.padding(14.dp)) {
                                     Text("可能的验证码",style=MaterialTheme.typography.labelSmall)
-                                    SelectionContainer {
-                                        Text(detail.possibleCode,
-                                            style=MaterialTheme.typography.headlineMedium)
-                                    }
-                                }
-                            }
-                        SelectionContainer {
-                            Text((detail.text.ifBlank{detail.htmlText}).ifBlank{
-                                "此邮件没有可显示的纯文本正文。高级 HTML 和附件需使用受保护的网站功能。"
-                            },style=MaterialTheme.typography.bodyLarge)
-                        }
-                        Text("原生视图只显示文本，不加载邮件 HTML、脚本或远程图片。",
-                            style=MaterialTheme.typography.labelSmall)
+                                    NativeMailReadingContent(
+                            messageKey="admin:"+selected.id+":"+detail.id,
+                            plainText=detail.text.ifBlank{detail.htmlText},
+                            htmlBody=detail.htmlBody,
+                            safeLinks=detail.safeLinks
+                        )
                     }
                 } else if (adminSelectedMessageId != null) {
                     Column(modifier=Modifier.padding(20.dp)) {
-                        Text(if (adminBusy) "正在读取管理员邮件…" else "邮件暂不可读取",
+                        Text(if (adminMessageLoading) "正在读取管理员邮件…" else "邮件暂不可读取",
                             style=MaterialTheme.typography.titleMedium)
-                        if (!adminBusy) TextButton(onClick={
+                        if (!adminMessageLoading) TextButton(onClick={
+                            adminGeneration.incrementAndGet()
                             adminSelectedMessageId=null
                             adminSelectedMessage=null
                         }) { Text("返回邮件列表") }
@@ -4236,6 +4228,7 @@ class MainActivity : FragmentActivity() {
         nativeAdminClient.invalidatePendingResponses()
         adminIo.shutdownNow()
         adminReadIo.shutdownNow()
+        nativeReadIo.shutdownNow()
         privateMailGeneration.incrementAndGet()
         privateMailClient.invalidate()
         privateMailIo.shutdownNow()
