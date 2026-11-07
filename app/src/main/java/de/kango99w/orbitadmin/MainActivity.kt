@@ -1414,7 +1414,7 @@ class MainActivity : FragmentActivity() {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Each WebView is mounted only after the section's first visit,
                     // then remains attached and retains its DOM/session across tabs.
-                    if (!nativeDeviceClient.isBound() || !nativeVisible ||
+                    if ((publicSelected && !nativeVisible) ||
                         sectionBrowsers.containsKey(MailSection.INBOX)) AndroidView(
                         factory = { obtainBrowser(MailSection.INBOX) },
                         update = {
@@ -1646,7 +1646,8 @@ class MainActivity : FragmentActivity() {
                     val event=NativeMailDetailPolicy.parse(data.data)
                         ?: return@WebMessageListener
                     runOnUiThread {
-                        if (!unlocked || publicWebView() !== view || !isCurrentPublicMailDocument())
+                        if (!unlocked || nativeDeviceClient.isBound() ||
+                            publicWebView() !== view || !isCurrentPublicMailDocument())
                             return@runOnUiThread
                         when (event) {
                             NativeMailDetailEvent.Clear -> nativeMailDetail=null
@@ -1677,7 +1678,7 @@ class MainActivity : FragmentActivity() {
                     ) return@WebMessageListener
                     val event = NativeInboxPolicy.parse(data.data) ?: return@WebMessageListener
                     runOnUiThread {
-                        if (!unlocked) return@runOnUiThread
+                        if (!unlocked || nativeDeviceClient.isBound()) return@runOnUiThread
                         when (event) {
                             NativeInboxEvent.Clear -> nativeInbox = null
                             is NativeInboxEvent.Snapshot -> {
