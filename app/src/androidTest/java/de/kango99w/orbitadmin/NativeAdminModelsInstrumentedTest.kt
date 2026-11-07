@@ -49,6 +49,23 @@ class NativeAdminModelsInstrumentedTest {
         assertNull(AdminNativeModels.detail(JSONObject("""{"message":{"id":"../invalid"}}""")))
     }
 
+    @Test fun ordinaryAdminHtmlOnlyEmailShowsSafeNativeText() {
+        val item=JSONObject(
+            """{"message":{"id":"55555555-5555-4555-8555-555555555555",
+            "sender":"verification@example.net","recipient":"native@temp.example.net",
+            "subject":"Account security",
+            "text_body":"",
+            "html_body":"<html><body><p>Your <b>verification code</b> is 123456.</p><img src='https://tracker.invalid/pixel'></body></html>"}}"""
+        )
+        val detail=AdminNativeModels.detail(item)
+        assertNotNull(detail)
+        assertTrue(detail?.htmlText.orEmpty().contains("verification code"))
+        assertTrue(detail?.htmlText.orEmpty().contains("123456"))
+        assertFalse(detail?.htmlText.orEmpty().contains("https://tracker.invalid"))
+        assertFalse(detail?.htmlText.orEmpty().contains("<img"))
+        assertEquals("",detail?.text)
+    }
+
     @Test fun adminReadsNeverAllowUnboundedMessageIdOrPayloadLength() {
         val malformed=JSONObject("""{"messages":[
           {"id":"../../credential","sender":"x"},
