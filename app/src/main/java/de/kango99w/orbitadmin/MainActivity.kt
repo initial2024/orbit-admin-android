@@ -908,17 +908,17 @@ class MainActivity : FragmentActivity() {
     private fun clearLocalSession() {
         showClearConfirm = false
         nativeInbox = null
-        val current = browser
-        current?.stopLoading()
+        sectionBrowsers.values.forEach { it.stopLoading() }
         WebStorage.getInstance().deleteAllData()
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
             runOnUiThread {
-                if (browser === current) {
-                    current?.clearHistory()
-                    current?.loadUrl(AdminUrlPolicy.HOME)
+                sectionBrowsers.forEach { (scope, web) ->
+                    web.clearHistory()
+                    web.loadUrl(scope.address ?: MailSection.INBOX.address!!)
                 }
-                message = "本机网站数据已清除。重新登录仍需要服务器授权与 2FA。"
+                nativeInbox = null
+                message = "仅 APK 本机数据已清除。重新登录需要服务器授权和 2FA。"
             }
         }
         lock()
@@ -932,12 +932,12 @@ class MainActivity : FragmentActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun obtainBrowser(): WebView {
-        browser?.let { existing ->
+    private fun obtainBrowser(section: MailSection): WebView {
+        val key = BrowserSessionRouting.key(section)
+        sectionBrowsers[key]?.let { existing ->
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
         }
-
         val view = WebView(this)
         WebView.setWebContentsDebuggingEnabled(false)
         view.settings.apply {
@@ -955,6 +955,7 @@ class MainActivity : FragmentActivity() {
             mediaPlaybackRequiresUserGesture = true
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
+        if (key == MailSection.INBOX) {
         // The only website→Android channel carries one constant event, never
         // administrator identity, cookies, TOTP, message content or native commands.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
@@ -1031,6 +1032,7 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
+        } // First-party inbox/notification bridge belongs only to public mail.
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
@@ -1051,7 +1053,7 @@ class MainActivity : FragmentActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 // Do not display a stale native inbox during any new full-page navigation.
-                nativeInbox = null
+                if (key == MailSection.INBOX) nativeInbox = null
                 if (url == null || !AdminUrlPolicy.isTrustedMainFrame(url)) {
                     view?.stopLoading()
                     message = "页面来源不符合管理员域名限制。"
@@ -1071,8 +1073,8 @@ class MainActivity : FragmentActivity() {
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
-                    nativeInbox = null
-                    message = "管理员页面加载失败，请检查网络后重试。"
+                    if (key == MailSection.INBOX) nativeInbox = null
+                    message = "页面加载失败，请检查网络后重试。"
                 }
             }
 
@@ -1084,9 +1086,8 @@ class MainActivity : FragmentActivity() {
                 deferredFileUris = null
                 pickerPending = false
                 pickerLaunchedAtMs = 0
-                browser = null
-                nativeInbox = null
-                openedOnce = false
+                sectionBrowsers.remove(key)
+                if (key == MailSection.INBOX) nativeInbox = null
                 unlocked = false
                 message = "网页进程意外退出，重新解锁后可恢复管理页面。"
                 return true
@@ -1129,11 +1130,12 @@ class MainActivity : FragmentActivity() {
         view.setDownloadListener { _, _, _, _, _ ->
             message = "下载暂未开放；请通过网页版完成敏感附件下载。"
         }
-        browser = view
-        if (!openedOnce) {
-            openedOnce = true
-            view.loadUrl(activeSection.address ?: MailSection.INBOX.address!!)
-        }
+        sectionBrowsers[key] = view
+        val initial = if (key == MailSection.ADMIN)
+            (pendingAdminUrl ?: MailSection.ADMIN.address!!).also { pendingAdminUrl = null }
+        else key.address ?: MailSection.INBOX.address!!
+        view.loadUrl(initial)
+        if (BrowserSessionRouting.key(activeSection) != key) view.onPause()
         return view
     }
 
@@ -1234,10 +1236,11 @@ class MainActivity : FragmentActivity() {
         nativeInbox = null
         pickerPending = false
         pickerLaunchedAtMs = 0
-        val current = browser
-        browser = null
-        (current?.parent as? ViewGroup)?.removeView(current)
-        current?.destroy()
+        sectionBrowsers.values.toList().forEach { web ->
+            (web.parent as? ViewGroup)?.removeView(web)
+            web.destroy()
+        }
+        sectionBrowsers.clear()
         super.onDestroy()
     }
 }
