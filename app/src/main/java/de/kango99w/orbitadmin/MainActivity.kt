@@ -453,6 +453,287 @@ class MainActivity : FragmentActivity() {
      * Switching workspaces only changes navigation presentation. It NEVER
      * promotes an ordinary device grant to administrator access.
      */
+    private fun refreshNativeGlyphs() {
+        if (!unlocked || glyphBusy) return
+        val generation = glyphGeneration.incrementAndGet()
+        val epoch = glyphClient.epoch()
+        glyphBusy = true
+        glyphError = ""
+        glyphIo.execute {
+            val status = glyphClient.get("/api/lucky-glyphs/status",epoch)
+            val collections = if(status.status == 200)
+                glyphClient.get("/api/lucky-glyphs/collections",epoch) else null
+            val parsed = if(status.status == 200 && status.value != null)
+                try { NativeGlyphModels.read(
+                    status.value,collections?.value?.takeIf{collections.status==200})
+                } catch(_:Exception) { null } else null
+            runOnUiThread {
+                if (!unlocked || glyphGeneration.get() != generation) return@runOnUiThread
+                glyphBusy = false
+                if(parsed != null) {
+                    glyphSnapshot = parsed
+                    glyphError = if(collections?.status==200) "" else
+                        "常规字符已同步，节日收藏接口暂不可用。"
+                } else {
+                    glyphSnapshot = null
+                    glyphError = if(status.error == "ORDINARY_SITE_SESSION_REQUIRED")
+                        "字符装扮目前要求普通账号的网站会话。" +
+                        "已有原生设备授权不等于字符 API 已授权；需先完成服务端原生权限桥接。" 
+                        else "字符状态读取失败：HTTP ${status.status} / " +
+                            (status.error ?: "UNKNOWN")
+                }
+            }
+        }
+    }
+
+    private fun performNativeGlyphAction(action: String, item: NativeGlyphItem?=null) {
+        if (!unlocked || glyphBusy || glyphSnapshot==null) return
+        val request: Pair<String, JSONObject> = when(action) {
+            "checkin" -> "/api/lucky-glyphs/checkin" to JSONObject()
+            "draw" -> "/api/lucky-glyphs/draw" to
+                JSONObject().put("idempotency_key",glyphDrawId)
+            "equip" -> {
+                if(item==null || !item.owned || !NativeGlyphModels.validId(item.id)) return
+                "/api/lucky-glyphs/equip" to JSONObject().put("glyph_id",item.id)
+            }
+            "unequip" -> "/api/lucky-glyphs/equip" to JSONObject().put("glyph_id",JSONObject.NULL)
+            "buy" -> {
+                if(item==null || !NativeGlyphModels.validId(item.id) ||
+                    item.owned || item.price <= 0) return
+                "/api/lucky-glyphs/shop/buy" to JSONObject().put("glyph_id",item.id)
+            }
+            else -> return
+        }
+        val generation=glyphGeneration.incrementAndGet()
+        val epoch=glyphClient.epoch()
+        glyphBusy=true
+        glyphError=""
+        glyphNotice=""
+        glyphIo.execute {
+            val reply=glyphClient.post(request.first,request.second,epoch)
+            runOnUiThread {
+                if(!unlocked || glyphGeneration.get()!=generation)return@runOnUiThread
+                glyphBusy=false
+                if(reply.status==200 && reply.value?.has("catalog")==true) {
+                    glyphNotice = when(action) {
+                        "checkin" -> "已向服务器核实今日签到状态。"
+                        "draw" -> "抽取已由服务器确认，图鉴更新中。"
+                        "equip","unequip" -> "佩戴已保存。"
+                        else -> "今日商店兑换已确认。"
+                    }
+                    if(action=="draw") glyphDrawId=UUID.randomUUID().toString()
+                    if(action=="buy") glyphBuyTarget=null
+                    refreshNativeGlyphs()
+                } else {
+                    glyphError="操作未获服务器确认：HTTP ${reply.status} / " +
+                        (reply.error ?: "UNKNOWN") +
+                        "。未改变本地图鉴或余额。"
+                    if(reply.status==401)glyphSnapshot=null
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeGlyphContent() {
+        val data=glyphSnapshot
+        Column(modifier=Modifier.fillMaxSize()) {
+            Row(modifier=Modifier.fillMaxWidth()
+                .padding(horizontal=16.dp,vertical=12.dp),
+                verticalAlignment=Alignment.CenterVertically) {
+                Column(modifier=Modifier.weight(1f)) {
+                    Text("幸运字符 · 装扮",style=MaterialTheme.typography.headlineSmall)
+                    Text("普通账号收藏 · 原生 Android 图鉴",
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        style=MaterialTheme.typography.labelSmall)
+                }
+                TextButton(enabled=!glyphBusy,onClick=::refreshNativeGlyphs) {
+                    Icon(painterResource(R.drawable.ic_refresh),contentDescription="刷新")
+                    Text("刷新")
+                }
+            }
+            if(glyphError.isNotBlank())
+                Text(glyphError,modifier=Modifier.padding(horizontal=16.dp),
+                    color=MaterialTheme.colorScheme.error,
+                    style=MaterialTheme.typography.bodySmall)
+            if(glyphNotice.isNotBlank())
+                Text(glyphNotice,modifier=Modifier.padding(horizontal=16.dp),
+                    color=MaterialTheme.colorScheme.primary,
+                    style=MaterialTheme.typography.bodySmall)
+            if(data==null) {
+                Column(modifier=Modifier.fillMaxSize().padding(20.dp),
+                    horizontalAlignment=Alignment.CenterHorizontally,
+                    verticalArrangement=Arrangement.Center) {
+                    Box(modifier=Modifier.size(96.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer,CircleShape),
+                        contentAlignment=Alignment.Center) {
+                        Text("✦",style=MaterialTheme.typography.displayMedium)
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text(if(glyphBusy) "正在同步字符图鉴…"
+                        else "无法读取普通账号的装扮资料",
+                        style=MaterialTheme.typography.titleMedium)
+                    Text("账号字符、积分和装扮属于普通账号，不能借用管理员身份。",
+                        style=MaterialTheme.typography.bodySmall,
+                        modifier=Modifier.padding(vertical=10.dp))
+                    Button(onClick=::refreshNativeGlyphs,enabled=!glyphBusy) {
+                        Text("重新同步")
+                    }
+                }
+            } else {
+                Card(modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=5.dp)) {
+                    Column(modifier=Modifier.padding(16.dp),
+                        verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Row(modifier=Modifier.fillMaxWidth(),
+                            horizontalArrangement=Arrangement.SpaceBetween) {
+                            Column {
+                                Text("当前佩戴",style=MaterialTheme.typography.labelSmall)
+                                Text(data.equipped?.let{
+                                    it.symbol+" "+it.name
+                                } ?: "未佩戴字符",style=MaterialTheme.typography.titleLarge)
+                            }
+                            Box(modifier=Modifier.size(54.dp)
+                                .background(MaterialTheme.colorScheme.primaryContainer,CircleShape),
+                                contentAlignment=Alignment.Center) {
+                                Text(data.equipped?.symbol?.ifBlank { "✦" } ?: "✦",
+                                    style=MaterialTheme.typography.headlineMedium)
+                            }
+                        }
+                        Text("已收集 ${data.owned}/${data.total}  ·  ${data.points} 积分  ·  ${data.streak} 天连续",
+                            style=MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Button(onClick={performNativeGlyphAction("checkin")},
+                                enabled=!glyphBusy && !data.checkedIn) {
+                                Text(if(data.checkedIn) "今日已签到" else "每日签到")
+                            }
+                            OutlinedButton(onClick={performNativeGlyphAction("draw")},
+                                enabled=!glyphBusy && data.draws>0) {
+                                Text("抽取 · ${data.draws} 次")
+                            }
+                        }
+                    }
+                }
+                Row(modifier=Modifier.fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal=10.dp,vertical=7.dp),
+                    horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    listOf("图鉴","每日商店","节日收藏","主题套组").forEach { name ->
+                        OutlinedButton(onClick={glyphTab=name}) {
+                            Text((if(glyphTab==name) "✓ " else "")+name)
+                        }
+                    }
+                }
+                if(glyphTab=="图鉴") {
+                    OutlinedTextField(value=glyphSearch,
+                        onValueChange={glyphSearch=it.take(100)},
+                        label={Text("搜索字符、系列或稀有度")},
+                        singleLine=true,
+                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp))
+                    Row(modifier=Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal=12.dp,vertical=5.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        listOf("全部","已拥有","普通","稀有","史诗","传说").forEach{scope->
+                            OutlinedButton(onClick={glyphScope=scope}) {
+                                Text((if(glyphScope==scope) "✓ " else "")+scope)
+                            }
+                        }
+                    }
+                }
+                val items = if(glyphTab=="每日商店") data.shop else data.catalog
+                val rarityLabels=mapOf("common" to "普通","rare" to "稀有",
+                    "epic" to "史诗","legendary" to "传说")
+                val filtered=if(glyphTab=="图鉴")items.filter {
+                    (glyphSearch.isBlank() ||
+                        it.name.contains(glyphSearch,ignoreCase=true) ||
+                        it.id.contains(glyphSearch,ignoreCase=true) ||
+                        it.rarity.contains(glyphSearch,ignoreCase=true)) &&
+                        (glyphScope=="全部" ||
+                            (glyphScope=="已拥有" && it.owned) ||
+                            (rarityLabels[it.rarity]==glyphScope))
+                } else items
+                if(glyphTab=="图鉴" || glyphTab=="每日商店") {
+                    LazyColumn(modifier=Modifier.fillMaxSize(),
+                        contentPadding=PaddingValues(bottom=18.dp)) {
+                        items(filtered,key={it.id}) { item ->
+                            Row(modifier=Modifier.fillMaxWidth()
+                                .padding(horizontal=14.dp,vertical=7.dp),
+                                verticalAlignment=Alignment.CenterVertically) {
+                                Box(modifier=Modifier.size(56.dp)
+                                    .background(MaterialTheme.colorScheme.secondaryContainer,CircleShape),
+                                    contentAlignment=Alignment.Center) {
+                                    Text(item.symbol.ifBlank{"✧"},
+                                        style=MaterialTheme.typography.headlineMedium)
+                                }
+                                Spacer(Modifier.padding(horizontal=7.dp))
+                                Column(modifier=Modifier.weight(1f)) {
+                                    Text(item.name,style=MaterialTheme.typography.titleMedium)
+                                    Text((rarityLabels[item.rarity] ?: item.rarity) +
+                                        if(item.owned) " · 已拥有" else " · 未解锁",
+                                        style=MaterialTheme.typography.labelSmall)
+                                    if(item.description.isNotBlank())Text(item.description,
+                                        style=MaterialTheme.typography.bodySmall,
+                                        maxLines=2)
+                                }
+                                if(glyphTab=="每日商店") {
+                                    OutlinedButton(enabled=!glyphBusy && !item.owned &&
+                                        item.price>0 && data.points>=item.price,
+                                        onClick={glyphBuyTarget=item}) {
+                                        Text(if(item.owned) "已拥有" else "${item.price}积分")
+                                    }
+                                } else if(item.owned) {
+                                    TextButton(enabled=!glyphBusy && !item.equipped,
+                                        onClick={performNativeGlyphAction("equip",item)}) {
+                                        Text(if(item.equipped) "已佩戴" else "佩戴")
+                                    }
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                } else {
+                    val extras=if(glyphTab=="节日收藏")data.collections else data.sets
+                    LazyColumn(modifier=Modifier.fillMaxSize()) {
+                        if(extras.isEmpty())item {
+                            Text("该收藏类别暂时没有可显示的条目。",
+                                modifier=Modifier.padding(20.dp))
+                        }
+                        items(extras) { entry ->
+                            Card(modifier=Modifier.fillMaxWidth()
+                                .padding(horizontal=14.dp,vertical=5.dp)) {
+                                Text(entry,modifier=Modifier.padding(14.dp))
+                            }
+                        }
+                        item {
+                            Text("节日兑换及主题购买仍需服务端专用授权和原生确认，" +
+                                "展示资料并不代表已开启兑换。",
+                                modifier=Modifier.padding(15.dp),
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeGlyphBuyDialog() {
+        val item=glyphBuyTarget ?: return
+        AlertDialog(
+            onDismissRequest={if(!glyphBusy)glyphBuyTarget=null},
+            title={Text("确认兑换装扮？")},
+            text={Text("兑换「${item.name}」将消耗 ${item.price} 字符积分。" +
+                "只有服务器返回成功后才更新余额，兑换不涉及现金。")},
+            confirmButton={
+                Button(enabled=!glyphBusy,onClick={
+                    performNativeGlyphAction("buy",item)
+                }) { Text(if(glyphBusy)"处理中…" else "确认兑换") }
+            },
+            dismissButton={
+                TextButton(enabled=!glyphBusy,onClick={glyphBuyTarget=null}){Text("取消")}
+            }
+        )
+    }
+
     private fun switchWorkspace(next: MailWorkspace) {
         if (workspace == next) return
         workspace = next
