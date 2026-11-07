@@ -35,6 +35,10 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.UUID
+import android.util.Base64
+import org.json.JSONArray
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicLong
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.net.http.SslError
@@ -175,6 +179,27 @@ class MainActivity : FragmentActivity() {
     private var adminCreateDomain by mutableStateOf("")
     private var adminCreateDomainQuery by mutableStateOf("")
     private var adminCreateDomainExpanded by mutableStateOf(false)
+    // Private mail is a separate sender service with a separate mail_session.
+    private val privateMailClient by lazy { NativePrivateMailClient() }
+    private val privateMailIo = Executors.newSingleThreadExecutor()
+    private val privateMailGeneration = AtomicLong(0)
+    private var privateMailBusy by mutableStateOf(false)
+    private var privateMailReady by mutableStateOf(false)
+    private var privateMailError by mutableStateOf("")
+    private var privateMailNotice by mutableStateOf("")
+    private var privateMailFrom by mutableStateOf(NativePrivateMailClient.SENDERS.first())
+    private var privateMailTo by mutableStateOf("")
+    private var privateMailCc by mutableStateOf("")
+    private var privateMailBcc by mutableStateOf("")
+    private var privateMailSubject by mutableStateOf("")
+    private var privateMailText by mutableStateOf("")
+    private var privateMailScheduledAt by mutableStateOf("")
+    private var privateMailExpandCc by mutableStateOf(false)
+    private var privateMailSenderDropdown by mutableStateOf(false)
+    private var privateMailRequestId by mutableStateOf(UUID.randomUUID().toString())
+    private var privateMailFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
+    private var privateMailLastScheduledId by mutableStateOf("")
+
     private var webLoginInProgress by mutableStateOf(false)
     private var nativeSearchQuery by mutableStateOf("")
     private var pendingNativeMessageId by mutableStateOf<String?>(null)
@@ -3132,6 +3157,9 @@ class MainActivity : FragmentActivity() {
         nativeAdminClient.invalidatePendingResponses()
         adminIo.shutdownNow()
         adminReadIo.shutdownNow()
+        privateMailGeneration.incrementAndGet()
+        privateMailClient.invalidate()
+        privateMailIo.shutdownNow()
         nativeRequestGeneration.incrementAndGet()
         nativeIo.shutdownNow()
         pendingFileCallback?.onReceiveValue(null)
