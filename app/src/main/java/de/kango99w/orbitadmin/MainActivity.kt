@@ -216,6 +216,7 @@ class MainActivity : FragmentActivity() {
     private val glyphGeneration = AtomicLong(0)
     private var glyphSnapshot by mutableStateOf<NativeGlyphSnapshot?>(null)
     private var glyphBusy by mutableStateOf(false)
+    private var glyphSiteSession by mutableStateOf(false)
     private var glyphError by mutableStateOf("")
     private var glyphNotice by mutableStateOf("")
     private var glyphTab by mutableStateOf("图鉴")
@@ -487,6 +488,8 @@ class MainActivity : FragmentActivity() {
         glyphBusy = true
         glyphError = ""
         glyphIo.execute {
+            // No CookieManager reads during Compose rendering.
+            val ordinarySiteSession = glyphClient.hasOrdinarySiteSession()
             fun readGlyph(suffix: String): NativeGlyphClient.Reply {
                 if(nativeDeviceClient.isBound()) {
                     // Keystore-bound P-256 account data first. Native-device
@@ -497,7 +500,7 @@ class MainActivity : FragmentActivity() {
                     if(native.status==200)
                         return NativeGlyphClient.Reply(native.status,native.value,native.error)
                     if(native.status !in setOf(404,503) ||
-                        !glyphClient.hasOrdinarySiteSession())
+                        !ordinarySiteSession)
                         return NativeGlyphClient.Reply(native.status,native.value,native.error)
                 }
                 return glyphClient.get("/api/lucky-glyphs/$suffix",epoch)
@@ -512,6 +515,7 @@ class MainActivity : FragmentActivity() {
             runOnUiThread {
                 if (!unlocked || glyphGeneration.get() != generation) return@runOnUiThread
                 glyphBusy = false
+                glyphSiteSession = ordinarySiteSession
                 if(parsed != null) {
                     glyphSnapshot = parsed
                     glyphError = if(collections?.status==200) "" else
@@ -602,7 +606,7 @@ class MainActivity : FragmentActivity() {
                 Text(glyphNotice,modifier=Modifier.padding(horizontal=16.dp),
                     color=MaterialTheme.colorScheme.primary,
                     style=MaterialTheme.typography.bodySmall)
-            if(data!=null && !glyphClient.hasOrdinarySiteSession())
+            if(data!=null && !glyphSiteSession)
                 Text("原生设备授权当前仅支持读取装扮图鉴；" +
                     "签到、抽取和兑换需由服务端扩展签名交易协议后开放。",
                     modifier=Modifier.padding(horizontal=16.dp,vertical=4.dp),
@@ -652,12 +656,12 @@ class MainActivity : FragmentActivity() {
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Button(onClick={performNativeGlyphAction("checkin")},
                                 enabled=!glyphBusy && !data.checkedIn &&
-                                    glyphClient.hasOrdinarySiteSession()) {
+                                    glyphSiteSession) {
                                 Text(if(data.checkedIn) "今日已签到" else "每日签到")
                             }
                             OutlinedButton(onClick={performNativeGlyphAction("draw")},
                                 enabled=!glyphBusy && data.draws>0 &&
-                                    glyphClient.hasOrdinarySiteSession()) {
+                                    glyphSiteSession) {
                                 Text("抽取 · ${data.draws} 次")
                             }
                         }
@@ -727,13 +731,13 @@ class MainActivity : FragmentActivity() {
                                 if(glyphTab=="每日商店") {
                                     OutlinedButton(enabled=!glyphBusy && !item.owned &&
                                         item.price>0 && data.points>=item.price &&
-                                        glyphClient.hasOrdinarySiteSession(),
+                                        glyphSiteSession,
                                         onClick={glyphBuyTarget=item}) {
                                         Text(if(item.owned) "已拥有" else "${item.price}积分")
                                     }
                                 } else if(item.owned) {
                                     TextButton(enabled=!glyphBusy && !item.equipped &&
-                                        glyphClient.hasOrdinarySiteSession(),
+                                        glyphSiteSession,
                                         onClick={performNativeGlyphAction("equip",item)}) {
                                         Text(if(item.equipped) "已佩戴" else "佩戴")
                                     }
@@ -788,6 +792,12 @@ class MainActivity : FragmentActivity() {
 
     private fun switchWorkspace(next: MailWorkspace) {
         if (workspace == next) return
+        if (next == MailWorkspace.ADMIN) glyphBuyTarget = null
+        else {
+            adminDeleteTarget = null
+            adminRevokeTrustedTarget = null
+            showAdminCreateDialog = false
+        }
         workspace = next
         if (next == MailWorkspace.ADMIN) {
             openSection(MailSection.ADMIN)
@@ -2862,20 +2872,7 @@ class MainActivity : FragmentActivity() {
                 }
                 return@Column
             }
-            Row(modifier=Modifier.fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal=12.dp,vertical=6.dp),
-                horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-                listOf("mailboxes" to "邮箱",
-                    "domains" to "域名",
-                    "records" to "使用记录",
-                    "security" to "安全中心").forEach { (pane,label) ->
-                    OutlinedButton(enabled=!adminBusy,
-                        onClick={openAdminNativePane(pane)}) {
-                        Text((if(adminPane==pane) "✓ " else "") + label)
-                    }
-                }
-            }
+            // Administrator modules belong to the role-specific bottom bar.
             HorizontalDivider()
             if (adminPane != "mailboxes") {
                 NativeAdminManagementContent()
@@ -3634,6 +3631,7 @@ class MainActivity : FragmentActivity() {
         glyphClient.invalidate()
         glyphSnapshot = null
         glyphBusy = false
+        glyphSiteSession = false
         adminBusy = false
         adminAuthenticated = false
         adminMailboxes = emptyList()
@@ -3684,6 +3682,7 @@ class MainActivity : FragmentActivity() {
         glyphClient.invalidate()
         glyphSnapshot = null
         glyphBusy = false
+        glyphSiteSession = false
         adminBusy = false
         adminAuthenticated = false
         adminSignInPassword = ""
