@@ -257,6 +257,8 @@ class MainActivity : FragmentActivity() {
                     browser?.onResume()
                     if (nativeDeviceClient.isBound()) refreshNativeApi()
                     else requestMissingNativeSnapshot()
+                    if (activeSection == MailSection.ADMIN && showNativeToolsPanel)
+                        refreshNativeAdmin()
                     tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
@@ -365,6 +367,8 @@ class MainActivity : FragmentActivity() {
         if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
             if (nativeDeviceClient.isBound()) refreshNativeApi()
             else requestMissingNativeSnapshot()
+        } else if (section == MailSection.ADMIN && showNativeToolsPanel) {
+            refreshNativeAdmin()
         }
     }
 
@@ -1868,7 +1872,7 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
-            Text("管理账号登录、2FA、恢复码及可信设备均由网站负责。",
+            Text("管理员登录、2FA 与邮箱阅读现已接入原生页面；高级安全设置和恢复码管理仍由现有受保护网站负责。",
                 style = MaterialTheme.typography.bodyMedium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1996,8 +2000,21 @@ class MainActivity : FragmentActivity() {
                     } else if (activeSection == MailSection.MAILBOXES) openSection(MailSection.INBOX)
                     else lock()
                 }
+                activeSection == MailSection.ADMIN && adminSelectedMessageId != null &&
+                    showNativeToolsPanel -> {
+                    adminSelectedMessageId = null
+                    adminSelectedMessage = null
+                }
+                activeSection == MailSection.ADMIN && adminSelectedMailbox != null &&
+                    showNativeToolsPanel -> {
+                    adminSelectedMailbox = null
+                    adminMessages = emptyList()
+                }
                 (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
-                    !showNativeToolsPanel -> showNativeToolsPanel = true
+                    !showNativeToolsPanel -> {
+                    showNativeToolsPanel = true
+                    if (activeSection == MailSection.ADMIN) refreshNativeAdmin()
+                }
                 (activeSection == MailSection.ADMIN || activeSection == MailSection.TRANSFER) &&
                     showNativeToolsPanel -> openSection(MailSection.INBOX)
                 (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES) &&
@@ -2213,6 +2230,18 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        adminGeneration.incrementAndGet()
+        adminBusy = false
+        adminAuthenticated = false
+        adminSignInPassword = ""
+        adminTotpCode = ""
+        adminTotpRequired = false
+        adminMailboxes = emptyList()
+        adminMessages = emptyList()
+        adminSelectedMailbox = null
+        adminSelectedMessage = null
+        adminSelectedMessageId = null
+        showAdminCreateDialog = false
         nativeRequestGeneration.incrementAndGet()
         nativeApiLoading = false
         showNativePairDialog = false
@@ -2624,6 +2653,8 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        adminGeneration.incrementAndGet()
+        adminIo.shutdownNow()
         nativeRequestGeneration.incrementAndGet()
         nativeIo.shutdownNow()
         pendingFileCallback?.onReceiveValue(null)
