@@ -52,6 +52,24 @@ class NativeDeviceSecurityContractTest {
         assertFalse(source.contains("if (!nativeDeviceClient.isBound() || !nativeVisible ||"))
     }
 
+    @Test fun accountMailCreationCannotPretendNativeSuccess() {
+        val source = source("MainActivity.kt")
+        val method = source.substringAfter("private fun requestMailboxCreation(")
+            .substringBefore("/** Stay in Compose")
+        assertTrue(method.contains("if (nativeApiActive || nativeDeviceClient.isBound())"))
+        assertTrue(method.contains("navigateTo(\"https://inbox.kango99w.de/?orbit_app=android#orbit-create\")"))
+        assertFalse(method.contains("sendNativeMailboxCommand(\"create_custom\""))
+    }
+
+    @Test fun ordinaryMailboxRowClickUsesNativeSelector() {
+        val source = source("MainActivity.kt")
+        val content = source.substringAfter("private fun NativeInboxContent(")
+            .substringBefore("private fun NativeMailboxLanding(")
+        assertTrue(content.contains(".clickable { openNativeMailbox(mailbox.id) }"))
+        assertTrue(source.contains("private fun openNativeMailbox(id: String)"))
+        assertTrue(source.contains("if (nativeApiActive) {"))
+    }
+
     @Test fun boundDeviceDoesNotCreateAHiddenWebview() {
         val source = source("MainActivity.kt")
         assertTrue(source.contains("if ((publicSelected && !nativeVisible) ||"))
