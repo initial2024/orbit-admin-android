@@ -93,6 +93,21 @@ class NativeDeviceSecurityContractTest {
         assertTrue(source.contains("if (nativeApiActive) {"))
     }
 
+    @Test fun htmlOnlyMailRendersWithNativeTextNotRemoteWebView() {
+        val screen = source("MainActivity.kt")
+        val model = source("NativeMailDetailPolicy.kt")
+        assertTrue(model.contains("val htmlBody: String = \"\""))
+        val render = screen.substringAfter("private fun NativeMailDetailContent(")
+            .substringBefore("private fun NativeMailLoadingContent()")
+        assertTrue(render.contains("android.text.Html.fromHtml("))
+        assertTrue(render.contains("detail.htmlBody.isNotBlank()"))
+        assertFalse(render.contains("WebView("))
+        assertFalse(render.contains("loadUrl("))
+        val response = screen.substringAfter("private fun readMessageViaNativeApi(")
+            .substringBefore("/** Revocation is performed")
+        assertTrue(response.contains("item.optString(\"html_body\").take(12000)"))
+    }
+
     @Test fun signedSelfRevocationRequiresRealServerAcknowledgment() {
         val client = source("NativeDeviceClient.kt")
         val screen = source("MainActivity.kt")
