@@ -2926,6 +2926,11 @@ class MainActivity : FragmentActivity() {
                     adminDeleteTarget = null
                     adminRevokeTrustedTarget = null
                     adminTotpRequired = false
+                    adminRegPassword = ""
+                    adminRegTotp = ""
+                    adminRegPolicy = null
+                    adminRegMessage = ""
+                    showAdminRegConfirm = false
                     adminError = "已退出管理员会话。普通账号授权未更改。"
                     adminLoadedAt.clear()
                     workspacePrefs.edit().putString("last_workspace","ordinary").apply()
@@ -3070,6 +3075,16 @@ class MainActivity : FragmentActivity() {
         adminMessageLoading = false
         adminMessages = emptyList()
         adminError = ""
+        // A fresh admin pane must never reuse a step-up secret from another pane.
+        if (pane != "registration") {
+            adminRegPassword = ""
+            adminRegTotp = ""
+            showAdminRegConfirm = false
+        } else if (!recent || force) {
+            // Do not display an old cached policy as current when its refresh fails.
+            adminRegPolicy = null
+            adminRegMessage = ""
+        }
         if(recent && !force && pane !in setOf("mailboxes","glyphs"))return
         if (pane == "mailboxes") {
             refreshNativeAdmin()
@@ -3158,6 +3173,10 @@ class MainActivity : FragmentActivity() {
                 adminBusy = false
                 if (primary.status == 401 || secondary?.status == 401) {
                     adminAuthenticated = false
+                    adminRegPassword = ""
+                    adminRegTotp = ""
+                    adminRegPolicy = null
+                    showAdminRegConfirm = false
                     adminLoadedAt.clear()
                     adminExternalEmails=emptyList()
                     adminSelectedExternalEmail=null
@@ -3178,7 +3197,19 @@ class MainActivity : FragmentActivity() {
                     return@runOnUiThread
                 }
                 if (!valid) {
-                    adminError = "原生管理员${when(pane){"domains"->"域名";"records"->"记录";"users"->"登记账户";else->"安全"}}数据加载失败，HTTP ${primary.status}/${secondary?.status ?: "-"}；未回退网页。"
+                    if (pane == "registration") {
+                        adminRegPolicy = null
+                        adminRegPassword = ""
+                        adminRegTotp = ""
+                        showAdminRegConfirm = false
+                        adminError = when(primary.status) {
+                            503 -> "注册控制服务端尚未上线或数据库尚未迁移（HTTP 503）。本机不会修改注册状态。"
+                            403 -> "服务器拒绝读取注册控制（HTTP 403）；需要有效管理员权限。"
+                            else -> "注册控制服务器读取失败（HTTP ${primary.status} / ${primary.error ?: "UNKNOWN"}）；未修改注册状态。"
+                        }
+                    } else {
+                        adminError = "原生管理员${when(pane){"domains"->"域名";"records"->"记录";"users"->"登记账户";else->"安全"}}数据加载失败，HTTP ${primary.status}/${secondary?.status ?: "-"}；未回退网页。"
+                    }
                     return@runOnUiThread
                 }
                 when (pane) {
@@ -3471,7 +3502,11 @@ class MainActivity : FragmentActivity() {
                 } else {
                     adminRegMessage="注册规则未保存（HTTP " + result.status +
                         " / "+(result.error?:"UNKNOWN")+"）；如其他设备修改过规则，请刷新。"
-                    if(result.status==401)adminAuthenticated=false
+                    if(result.status==401) {
+                        adminAuthenticated=false
+                        adminRegPolicy=null
+                        showAdminRegConfirm=false
+                    }
                 }
             }
         }
