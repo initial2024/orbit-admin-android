@@ -202,6 +202,7 @@ class MainActivity : FragmentActivity() {
     private var adminRegistrationSearch by mutableStateOf("")
     private var adminRegistrationSourceFilter by mutableStateOf("全部")
     private var adminRegisteredAccounts by mutableStateOf<List<AdminRegisteredAccount>>(emptyList())
+    private var adminRegistrationFetchLimit by mutableIntStateOf(100)
     private var adminSelectedRegistration by mutableStateOf<AdminRegisteredAccount?>(null)
     private var adminDomainSearch by mutableStateOf("")
     private var adminDomainSourceFilter by mutableStateOf("全部")
@@ -2938,6 +2939,14 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun expandAdminRegistrationHistory() {
+        if(!unlocked || !adminAuthenticated || adminBusy ||
+            adminRegistrationFetchLimit>=500 ||
+            (adminPane!="users" && (adminPane!="records" || adminLedgerTab!="internal")))return
+        adminRegistrationFetchLimit=500
+        openAdminNativePane(adminPane,force=true)
+    }
+
     private fun selectAdminLedgerTab(tab:String) {
         if(tab !in setOf("internal","external","reserved") || adminBusy ||
             !unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN)return
@@ -3044,7 +3053,8 @@ class MainActivity : FragmentActivity() {
                 }
                 "records" -> {
                     val route=when(recordTab) {
-                        "internal"->"/api/admin/account-registry/registrations?limit=100"
+                        "internal"->"/api/admin/account-registry/registrations?limit="+
+                            adminRegistrationFetchLimit
                         "external"->"/api/admin/external-emails"
                         else->"/api/admin/ordinary-inbox/recorded-addresses"
                     }
@@ -3053,7 +3063,8 @@ class MainActivity : FragmentActivity() {
                 }
                 "users" -> {
                     primary = nativeAdminClient.get(
-                        "/api/admin/account-registry/registrations?limit=100", epoch)
+                        "/api/admin/account-registry/registrations?limit="+
+                            adminRegistrationFetchLimit, epoch)
                     secondary = null
                 }
                 else -> {
@@ -3383,7 +3394,9 @@ class MainActivity : FragmentActivity() {
                                 setSource={adminRegistrationSourceFilter=it},
                                 expanded=adminRegistrationFiltersExpanded,
                                 onExpand={adminRegistrationFiltersExpanded=!adminRegistrationFiltersExpanded},
-                                busy=adminBusy,onSelect={adminSelectedRegistration=it})
+                                busy=adminBusy,onSelect={adminSelectedRegistration=it},
+                                maxFetched=adminRegistrationFetchLimit,
+                                onExpandHistory=::expandAdminRegistrationHistory)
                         }
                     }
                 }
@@ -3402,7 +3415,9 @@ class MainActivity : FragmentActivity() {
                     source=adminRegistrationSourceFilter,setSource={adminRegistrationSourceFilter=it},
                     expanded=adminRegistrationFiltersExpanded,
                     onExpand={adminRegistrationFiltersExpanded=!adminRegistrationFiltersExpanded},
-                    busy=adminBusy,onSelect={adminSelectedRegistration=it}
+                    busy=adminBusy,onSelect={adminSelectedRegistration=it},
+                    maxFetched=adminRegistrationFetchLimit,
+                    onExpandHistory=::expandAdminRegistrationHistory
                 )
                 else -> {
                     val state = adminSecurityState
@@ -4479,6 +4494,7 @@ class MainActivity : FragmentActivity() {
         adminLoadedAt.clear()
         adminExternalDetailGeneration.incrementAndGet()
         adminExternalEmails=emptyList()
+        adminRegistrationFetchLimit=100
         adminSelectedExternalEmail=null
         adminSelectedExternalDetail=null
         adminExternalDetailBusy=false
