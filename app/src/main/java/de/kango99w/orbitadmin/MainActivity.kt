@@ -1182,7 +1182,7 @@ class MainActivity : FragmentActivity() {
                     if (MailNoticePolicy.canDeliver(stamp,lastNewMailNoticeAtMs) &&
                         showMailNotification()) lastNewMailNoticeAtMs=stamp
                 }
-                nativeInbox = snapshot
+                nativeInbox = NativeIncrementalMerge.snapshot(prior,snapshot)
                 showNativeMail = true
             }
         }
@@ -1237,6 +1237,8 @@ class MainActivity : FragmentActivity() {
             val response = nativeDeviceClient.revokeSelf()
             val revoked = response.status == 200 && response.value?.optBoolean("revoked") == true
             if (revoked) {
+                nativeOfflineCache.clear()
+                nativeLastSuccessfulSyncMs=0L
                 try { nativeDeviceClient.clearLocalBinding() } catch (_: Exception) {
                     // Server revocation already succeeded. The stale device ID cannot authenticate.
                 }
@@ -1599,6 +1601,10 @@ class MainActivity : FragmentActivity() {
 
     /** Stay in Compose, even when the server-side native reader is not yet deployed. */
     private fun openNativeMessage(id: String) {
+        if(nativeDeviceClient.isBound() && !nativeApiActive) {
+            message="离线只支持历史标题；请联网重新校验后阅读正文。"
+            return
+        }
         // A fast second tap must not enqueue a duplicate signed read.
         if (pendingNativeMessageId == id && nativeMailDetail == null) return
         if (!unlocked || !NativeInboxPolicy.isSafeId(id) || nativeInbox?.locked == true ||
@@ -1620,6 +1626,10 @@ class MainActivity : FragmentActivity() {
     /** Reuse the authorized mailbox-selection command. Never force a WebView navigation. */
     private fun openNativeMailbox(id: String) {
         if (!unlocked || !NativeInboxPolicy.isSafeId(id)) return
+        if(nativeDeviceClient.isBound() && !nativeApiActive) {
+            message="离线列表不可切换未授权邮箱；请联网刷新。"
+            return
+        }
         if (nativeApiActive) {
             val item = nativeInbox?.mailboxes?.firstOrNull { it.id == id } ?: return
             nativeRequestGeneration.incrementAndGet()
@@ -1844,7 +1854,7 @@ class MainActivity : FragmentActivity() {
                         color=MaterialTheme.colorScheme.primary)
                 }
                 TextButton(onClick={
-                    if (nativeApiActive) refreshNativeApi()
+                    if (nativeDeviceClient.isBound()) refreshNativeApi()
                     else sendNativeMailboxCommand("refresh")
                 }) {
                     Icon(painterResource(R.drawable.ic_refresh),contentDescription="刷新")
@@ -1939,7 +1949,7 @@ class MainActivity : FragmentActivity() {
                     Text("邮件将显示在这里。可刷新或切换邮箱。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(onClick={
-                        if (nativeApiActive) refreshNativeApi()
+                        if (nativeDeviceClient.isBound()) refreshNativeApi()
                         else sendNativeMailboxCommand("refresh")
                     }) {
                         Text("检查新邮件")
@@ -3816,6 +3826,8 @@ class MainActivity : FragmentActivity() {
                         ) { Text(if (nativeApiLoading) "正在撤销…" else "安全解绑 · 撤销服务器授权") }
                         OutlinedButton(onClick = {
                             nativeRequestGeneration.incrementAndGet()
+                            nativeOfflineCache.clear()
+                            nativeLastSuccessfulSyncMs=0L
                             nativeDeviceClient.clearLocalBinding()
                             setPushOptIn(false)
                             nativeApiActive = false
