@@ -250,6 +250,12 @@ class MainActivity : FragmentActivity() {
     private val glyphIo = Executors.newSingleThreadExecutor()
     private val glyphGeneration = AtomicLong(0)
     private var glyphSnapshot by mutableStateOf<NativeGlyphSnapshot?>(null)
+    private val adminGlyphGeneration=AtomicLong(0)
+    private var adminGlyphSnapshot by mutableStateOf<NativeGlyphSnapshot?>(null)
+    private var adminGlyphBusy by mutableStateOf(false)
+    private var adminGlyphError by mutableStateOf("")
+    private var adminGlyphDrawId by mutableStateOf(UUID.randomUUID().toString())
+    private var adminGlyphBuyTarget by mutableStateOf<NativeGlyphItem?>(null)
     private var glyphBusy by mutableStateOf(false)
     private var glyphSiteSession by mutableStateOf(false)
     private var glyphError by mutableStateOf("")
@@ -853,6 +859,12 @@ class MainActivity : FragmentActivity() {
         workspaceSwitcherExpanded = false
         if (workspace == next) return
         if (next == MailWorkspace.ADMIN) glyphBuyTarget = null
+        else {
+            adminGlyphGeneration.incrementAndGet()
+            adminGlyphSnapshot=null
+            adminGlyphBuyTarget=null
+            adminGlyphBusy=false
+        }
         else {
             adminDeleteTarget = null
             adminRevokeTrustedTarget = null
@@ -2652,6 +2664,10 @@ class MainActivity : FragmentActivity() {
                     adminSelectedMessage = null
                     adminSelectedMessageId = null
                     adminPane = "mailboxes"
+                    adminGlyphGeneration.incrementAndGet()
+                    adminGlyphSnapshot=null
+                    adminGlyphBuyTarget=null
+                    adminGlyphBusy=false
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
                     adminSecurityState = null
@@ -2669,9 +2685,74 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun refreshAdminGlyphs() {
+        if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminPane!="glyphs" || adminGlyphBusy) return
+        val generation=adminGlyphGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminGlyphBusy=true
+        adminGlyphError=""
+        adminReadIo.execute {
+            val res=nativeAdminClient.get("/api/admin/lucky-glyphs/status",epoch)
+            val parsed=if(res.status==200 && res.value!=null)
+                try { NativeGlyphModels.read(res.value) } catch (_:Exception) { null }
+                else null
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    adminPane!="glyphs" || adminGlyphGeneration.get()!=generation)
+                    return@runOnUiThread
+                adminGlyphBusy=false
+                adminGlyphSnapshot=parsed
+                adminGlyphError=if(parsed!=null) "" else
+                    if(res.status in setOf(404,503))
+                        "管理员字符服务尚未上线或暂不可用；不会显示虚假库存。"
+                    else "字符读取失败 HTTP "+res.status+" · "+(res.error ?: "UNKNOWN")
+            }
+        }
+    }
+
+    private fun mutateAdminGlyph(action: String, id: String?=null) {
+        if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminPane!="glyphs" || adminGlyphBusy) return
+        val path=when(action) {
+            "checkin" -> "/api/admin/lucky-glyphs/checkin"
+            "draw" -> "/api/admin/lucky-glyphs/draw"
+            "equip" -> "/api/admin/lucky-glyphs/equip"
+            "buy" -> "/api/admin/lucky-glyphs/shop/buy"
+            else -> return
+        }
+        if(id!=null && !NativeGlyphModels.validId(id)) return
+        val body=when(action) {
+            "draw" -> JSONObject().put("idempotency_key",adminGlyphDrawId)
+            "equip","buy" -> JSONObject().put("glyph_id",id ?: return)
+            else -> JSONObject()
+        }
+        val generation=adminGlyphGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminGlyphBusy=true
+        adminGlyphError=""
+        adminReadIo.execute {
+            val res=nativeAdminClient.post(path,body,epoch)
+            val parsed=if(res.status in 200..299 && res.value!=null)
+                try { NativeGlyphModels.read(res.value) } catch (_:Exception) { null }
+                else null
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    adminPane!="glyphs" || adminGlyphGeneration.get()!=generation)
+                    return@runOnUiThread
+                adminGlyphBusy=false
+                if(parsed!=null) {
+                    adminGlyphSnapshot=parsed
+                    if(action=="draw")adminGlyphDrawId=UUID.randomUUID().toString()
+                } else adminGlyphError="服务器未确认 "+action+
+                    "：HTTP "+res.status+"，"+(res.error ?: "UNKNOWN")
+            }
+        }
+    }
+
     private fun openAdminNativePane(pane: String) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
-            pane !in setOf("mailboxes", "domains", "records", "security", "users")) return
+            pane !in setOf("mailboxes", "domains", "records", "security", "users", "glyphs")) return
         adminPane = pane
         adminSelectedDomain = null
         adminSelectedRegistration = null
@@ -2683,6 +2764,10 @@ class MainActivity : FragmentActivity() {
         adminError = ""
         if (pane == "mailboxes") {
             refreshNativeAdmin()
+            return
+        }
+        if(pane=="glyphs") {
+            refreshAdminGlyphs()
             return
         }
         val generation = adminGeneration.incrementAndGet()
@@ -2991,6 +3076,7 @@ class MainActivity : FragmentActivity() {
                     "domains" -> "域名管理"
                     "records" -> "邮箱使用记录"
                     "users" -> "用户与登记详情"
+                    "glyphs" -> "管理员字符"
                     else -> "管理员安全中心"
                 }, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
@@ -3020,6 +3106,14 @@ class MainActivity : FragmentActivity() {
                     expanded=adminRecordFiltersExpanded,
                     onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
                     busy=adminBusy
+                )
+                "glyphs" -> NativeAdminGlyphGallery(
+                    state=adminGlyphSnapshot,busy=adminGlyphBusy,error=adminGlyphError,
+                    onRefresh=::refreshAdminGlyphs,
+                    onCheckin={mutateAdminGlyph("checkin")},
+                    onDraw={mutateAdminGlyph("draw")},
+                    onEquip={mutateAdminGlyph("equip",it)},
+                    onBuy={adminGlyphBuyTarget=it}
                 )
                 "users" -> AdminAccountRegistrations(
                     rows=adminRegisteredAccounts,
@@ -3088,6 +3182,8 @@ class MainActivity : FragmentActivity() {
                         color = MaterialTheme.colorScheme.primary)
                 }
                 if (adminAuthenticated) {
+                    TextButton(enabled = !adminBusy,
+                        onClick={openAdminNativePane("glyphs")}) { Text("字符") }
                     TextButton(enabled = !adminBusy, onClick = ::refreshNativeAdmin) {
                         Text("刷新")
                     }
@@ -3779,6 +3875,19 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
+        if(adminGlyphBuyTarget!=null && adminAuthenticated &&
+            workspace==MailWorkspace.ADMIN) {
+            val item=adminGlyphBuyTarget!!
+            AlertDialog(onDismissRequest={adminGlyphBuyTarget=null},
+                title={Text("确认兑换管理员字符？")},
+                text={Text(item.name+" · 消耗 "+item.price+
+                    " 积分；成功与否以管理员服务器为准。")},
+                confirmButton={TextButton(enabled=!adminGlyphBusy,onClick={
+                    adminGlyphBuyTarget=null
+                    mutateAdminGlyph("buy",item.id)
+                }) {Text("确认兑换")}},
+                dismissButton={TextButton(onClick={adminGlyphBuyTarget=null}){Text("取消")}})
+        }
         if (showTools) MailToolsDialog()
         if (showNativePairDialog) NativePairDialog()
         if (showAdminCreateDialog && adminAuthenticated) NativeAdminCreateDialog()
@@ -4081,6 +4190,11 @@ class MainActivity : FragmentActivity() {
         privateMailText = ""
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
+        adminGlyphGeneration.incrementAndGet()
+        adminGlyphSnapshot=null
+        adminGlyphBusy=false
+        adminGlyphError=""
+        adminGlyphBuyTarget=null
         glyphGeneration.incrementAndGet()
         glyphClient.invalidate()
         glyphSnapshot = null
