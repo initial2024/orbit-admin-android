@@ -266,6 +266,10 @@ class MainActivity : FragmentActivity() {
     private var nativePickedFiles by mutableStateOf<List<NativeSelectedFile>>(emptyList())
     private var activeSection by mutableStateOf(MailSection.INBOX)
     private var workspace by mutableStateOf(MailWorkspace.ORDINARY)
+    // Only a presentation preference. Never treat the stored value as admin authorization.
+    private val workspacePrefs by lazy { getSharedPreferences("orbit_workspace_v1",MODE_PRIVATE) }
+    private val adminRestoreGeneration=AtomicLong(0)
+    private var adminRestoreChecking by mutableStateOf(false)
     // Presentation-only; does not affect ordinary/admin authentication or browser sessions.
     private var workspaceSwitcherExpanded by mutableStateOf(false)
     private val glyphClient by lazy { NativeGlyphClient() }
@@ -454,6 +458,10 @@ class MainActivity : FragmentActivity() {
         appearanceMode=OrbitAppearanceMode.parse(
             getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
                 .getString("mode",OrbitAppearanceMode.SYSTEM.name))
+        if(workspacePrefs.getString("last_workspace","auto")=="admin") {
+            workspace=MailWorkspace.ADMIN
+            activeSection=MailSection.ADMIN
+        }
         val pushPrefs = getSharedPreferences("orbit_push",MODE_PRIVATE)
         backgroundPushRevokePending = pushPrefs.getBoolean("revoke_pending",false)
         backgroundPushOptIn = pushPrefs.getBoolean("opt_in",false)
@@ -471,12 +479,7 @@ class MainActivity : FragmentActivity() {
                     message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
-                    if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
-                    else requestMissingNativeSnapshot()
-                    if (activeSection == MailSection.ADMIN && showNativeToolsPanel)
-                        refreshNativeAdmin()
-                    if (activeSection == MailSection.PRIVATE)
-                        privateMailReady = privateMailClient.hasLocalSession()
+                    restoreWorkspaceAfterUnlock()
                     tryRegisterPush()
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
@@ -501,7 +504,8 @@ class MainActivity : FragmentActivity() {
             OrbitMailTheme(appearanceMode) {
                 Surface(modifier = Modifier.fillMaxSize(),
                     color=MaterialTheme.colorScheme.background) {
-                    if (unlocked) AdminScreen() else LockScreen()
+                    if (unlocked && adminRestoreChecking) AdminRestoreScreen()
+                    else if (unlocked) AdminScreen() else LockScreen()
                 }
             }
         }
@@ -519,6 +523,67 @@ class MainActivity : FragmentActivity() {
             .setAllowedAuthenticators(authenticators)
             .build()
         biometricPrompt.authenticate(prompt)
+    }
+
+    /** On first use, probe the FIRST-PARTY admin session before choosing UI.
+     * A valid cookie must be verified by the Worker; unverified devices get
+     * the ordinary inbox and cannot see cached administrator data.
+     */
+    private fun restoreWorkspaceAfterUnlock() {
+        when(workspacePrefs.getString("last_workspace","auto")) {
+            "admin" -> {
+                workspace=MailWorkspace.ADMIN
+                activeSection=MailSection.ADMIN
+                showNativeToolsPanel=true
+                refreshNativeAdmin()
+            }
+            "ordinary" -> resumeOrdinaryAfterUnlock()
+            else -> {
+                adminRestoreChecking=true
+                val generation=adminRestoreGeneration.incrementAndGet()
+                val epoch=nativeAdminClient.requestEpoch()
+                adminReadIo.execute {
+                    val response=nativeAdminClient.get("/api/admin/status",epoch)
+                    val verified=response.status==200 &&
+                        response.value?.optBoolean("authenticated")==true
+                    runOnUiThread {
+                        if(!unlocked || adminRestoreGeneration.get()!=generation ||
+                            !adminRestoreChecking)return@runOnUiThread
+                        adminRestoreChecking=false
+                        if(verified) {
+                            workspace=MailWorkspace.ADMIN
+                            activeSection=MailSection.ADMIN
+                            showNativeToolsPanel=true
+                            refreshNativeAdmin()
+                        } else resumeOrdinaryAfterUnlock()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resumeOrdinaryAfterUnlock() {
+        workspace=MailWorkspace.ORDINARY
+        activeSection=MailSection.INBOX
+        if(nativeDeviceClient.isBound())refreshNativeApiIfNeeded()
+        else requestMissingNativeSnapshot()
+    }
+
+    @Composable
+    private fun AdminRestoreScreen() {
+        Column(modifier=Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment=Alignment.CenterHorizontally,
+            verticalArrangement=Arrangement.Center) {
+            Text("正在确认管理员工作区",style=MaterialTheme.typography.titleMedium)
+            Text("只验证现有会话，不重新登录或加载普通邮箱。",
+                style=MaterialTheme.typography.bodySmall)
+            TextButton(onClick={
+                adminRestoreGeneration.incrementAndGet()
+                adminRestoreChecking=false
+                workspacePrefs.edit().putString("last_workspace","ordinary").apply()
+                resumeOrdinaryAfterUnlock()
+            }) {Text("直接进入普通邮箱")}
+        }
     }
 
     @Composable
@@ -894,6 +959,12 @@ class MainActivity : FragmentActivity() {
             showAdminCreateDialog = false
         }
         workspace = next
+        adminRestoreGeneration.incrementAndGet()
+        adminRestoreChecking=false
+        if(next==MailWorkspace.ORDINARY)
+            workspacePrefs.edit().putString("last_workspace","ordinary").apply()
+        else if(adminAuthenticated)
+            workspacePrefs.edit().putString("last_workspace","admin").apply()
         if (next == MailWorkspace.ADMIN) {
             openSection(MailSection.ADMIN)
         } else {
@@ -2510,7 +2581,7 @@ class MainActivity : FragmentActivity() {
 
     /** Existing admin HttpOnly session, not the ordinary account device grant. */
     private fun refreshNativeAdmin() {
-        if (!unlocked || adminBusy) return
+        if (!unlocked || adminBusy || workspace!=MailWorkspace.ADMIN) return
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
@@ -2546,12 +2617,15 @@ class MainActivity : FragmentActivity() {
             val ordinaryOptions = if (domainRows?.status == 200)
                 AdminDomainSelection.temporary(domainRows.value) else emptyList()
             runOnUiThread {
-                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
+                if (!unlocked || workspace!=MailWorkspace.ADMIN ||
+                    adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
                 adminAuthenticated = authorized && privateRows?.status != 401 &&
                     ordinaryRows?.status != 401
                 adminUsername = if (adminAuthenticated)
                     status.value?.optString("username").orEmpty().take(32) else ""
+                if(adminAuthenticated)
+                    workspacePrefs.edit().putString("last_workspace","admin").apply()
                 adminMailboxes = mailboxes
                 adminPrivateDomainOptions = privateOptions
                 adminOrdinaryDomainOptions = ordinaryOptions
@@ -2791,6 +2865,9 @@ class MainActivity : FragmentActivity() {
                     adminRevokeTrustedTarget = null
                     adminTotpRequired = false
                     adminError = "已退出管理员会话。普通账号授权未更改。"
+                    adminLoadedAt.clear()
+                    workspacePrefs.edit().putString("last_workspace","ordinary").apply()
+                    switchWorkspace(MailWorkspace.ORDINARY)
                 } else adminError = "管理员退出失败：HTTP ${response.status}，未声称退出成功。"
             }
         }
@@ -4397,6 +4474,14 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        adminRestoreGeneration.incrementAndGet()
+        adminRestoreChecking=false
+        adminLoadedAt.clear()
+        adminExternalDetailGeneration.incrementAndGet()
+        adminExternalEmails=emptyList()
+        adminSelectedExternalEmail=null
+        adminSelectedExternalDetail=null
+        adminExternalDetailBusy=false
         showHumanVerificationPrompt=false
         humanVerificationFlow=false
         humanVerificationBaseline=emptySet()
@@ -4834,8 +4919,10 @@ class MainActivity : FragmentActivity() {
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
-            if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
-            else requestMissingNativeSnapshot()
+            if(workspace==MailWorkspace.ORDINARY && !adminRestoreChecking) {
+                if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
+                else requestMissingNativeSnapshot()
+            }
             tryRegisterPush()
         }
     }
