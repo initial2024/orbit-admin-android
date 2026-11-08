@@ -8,7 +8,10 @@ data class AdminManagedDomain(
     val domain: String,
     val source: String,
     val state: String,
-    val ingress: String
+    val ingress: String,
+    // Multiple registries may refer to one hostname. Count it once, but
+    // retain each source so filters and details do not lose provenance.
+    val sources: List<String> = listOf(source)
 )
 data class AdminRecordedAddress(
     val address: String,
@@ -27,6 +30,24 @@ data class AdminSecurityState(
 )
 
 object AdminManagementModels {
+    /**
+     * Domain inventory is a set of unique FQDNs, not a sum of registry rows.
+     * Preserve the first provenance's state/ingress; later sources are retained
+     * as evidence labels and are not automatically elevated to ownership.
+     */
+    fun uniqueDomains(rows: List<AdminManagedDomain>): List<AdminManagedDomain> {
+        val grouped = LinkedHashMap<String, AdminManagedDomain>()
+        for (row in rows) {
+            val key = row.domain.trim().lowercase(java.util.Locale.ROOT)
+            if (!domainPattern.matches(key)) continue
+            val previous = grouped[key]
+            val labels = ((previous?.sources ?: emptyList()) + row.sources)
+                .filter { it.isNotBlank() }.distinct().take(8)
+            grouped[key] = (previous ?: row).copy(domain = key, sources = labels)
+        }
+        return grouped.values.sortedBy { it.domain }
+    }
+
     private val domainPattern = Regex("^[a-z0-9][a-z0-9.-]{1,148}[a-z0-9]$")
     private val mailPattern = Regex("^[^@\\s]{1,64}@[a-z0-9.-]{3,150}$")
 
@@ -47,13 +68,12 @@ object AdminManagementModels {
     }
 
     fun domains(privateStatus: JSONObject?, ordinaryStatus: JSONObject?): List<AdminManagedDomain> {
-        val seen = HashSet<String>()
-        return (
+        return uniqueDomains(
             domainRows(privateStatus?.optJSONArray("domains"), "管理员邮箱") +
                 domainRows(privateStatus?.optJSONArray("site_domains"), "网站域名") +
                 domainRows(privateStatus?.optJSONArray("domain_requests"), "域名申请") +
                 domainRows(ordinaryStatus?.optJSONArray("domains"), "临时邮箱")
-            ).filter { seen.add(it.source + ":" + it.domain + ":" + it.state) }.take(250)
+        ).take(250)
     }
 
     fun recordedAddresses(response: JSONObject?): List<AdminRecordedAddress> {
@@ -121,7 +141,6 @@ object AdminDomainInventoryModels {
                 it.evidenceStatus.ifBlank{"unverified"},
                 if(it.dnsProvider.isNotBlank())"DNS："+it.dnsProvider else "服务商未登记")
         }
-        return (known+providerRows)
-            .distinctBy { it.source+"|"+it.domain+"|"+it.state }.take(750)
+        return AdminManagementModels.uniqueDomains(known + providerRows).take(750)
     }
 }
