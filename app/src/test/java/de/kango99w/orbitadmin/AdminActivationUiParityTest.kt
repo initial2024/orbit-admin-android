@@ -13,7 +13,8 @@ class AdminActivationUiParityTest {
     @Test fun activationHasSeparatePaneAndNoInlineMailboxRecoveryButton() {
         val main=text("MainActivity.kt")
         assertTrue(main.contains("openAdminNativePane(\"activation\")"))
-        assertTrue(main.contains("\"activation\" -> AdminAddressRecords("))
+        assertTrue(main.contains("\"activation\" -> Column("))
+        assertTrue(main.contains("AdminAddressRecords("))
         assertTrue(main.contains("activationOnly=true"))
         assertTrue(main.contains("adminActivationEvidenceReady"))
         assertFalse(main.contains("onClick={requestAdminMailboxActivation(activation)}"))
