@@ -172,6 +172,7 @@ class MainActivity : FragmentActivity() {
     // All regular tabs are Compose surfaces. Website views are explicit fallback only.
     private var showNativeToolsPanel by mutableStateOf(true)
     private var adminSearchQuery by mutableStateOf("")
+    private var adminQuickMenuOpen by mutableStateOf(false)
     // Administrator authentication never consumes ordinary-account native grants.
     // The existing first-party admin session is read by a separate native client.
     private val nativeAdminClient by lazy { NativeAdminClient() }
@@ -948,6 +949,7 @@ class MainActivity : FragmentActivity() {
         accountOverviewBusy=false
         // Selecting even the active workspace closes the menu without reloading mail.
         workspaceSwitcherExpanded = false
+        adminQuickMenuOpen=false
         if (workspace == next) return
         if (next == MailWorkspace.ADMIN) glyphBuyTarget = null
         else {
@@ -3462,28 +3464,36 @@ class MainActivity : FragmentActivity() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("管理员邮箱", style = MaterialTheme.typography.headlineSmall)
-                    Text("原生 Android · " + BuildConfig.VERSION_NAME,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary)
-                    Text(if (adminAuthenticated)
-                        "用户详情 › "+adminUsername.ifBlank { "已验证管理员" }
-                        else "独立管理员身份验证",
+                    Text("管理员邮箱",style=MaterialTheme.typography.titleMedium)
+                    Text(if(adminAuthenticated)
+                        "已验证 · "+adminUsername.ifBlank{"管理员"}
+                        else "独立管理员登录 · "+BuildConfig.VERSION_NAME,
                         modifier=Modifier.clickable(enabled=adminAuthenticated) {
                             openAdminNativePane("users")
-                        },
-                        maxLines=1,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary)
+                        },maxLines=1,
+                        style=MaterialTheme.typography.labelSmall,
+                        color=MaterialTheme.colorScheme.primary)
                 }
-                if (adminAuthenticated) {
-                    TextButton(enabled = !adminBusy,
-                        onClick={openAdminNativePane("glyphs")}) { Text("字符") }
-                    TextButton(enabled = !adminBusy, onClick = ::refreshNativeAdmin) {
+                if(adminAuthenticated) {
+                    TextButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
                         Text("刷新")
                     }
-                    TextButton(enabled = !adminBusy, onClick = ::logoutNativeAdmin) {
-                        Text("退出")
+                    Box {
+                        TextButton(enabled=!adminBusy,
+                            onClick={adminQuickMenuOpen=true}){Text("更多 ▾")}
+                        DropdownMenu(expanded=adminQuickMenuOpen,
+                            onDismissRequest={adminQuickMenuOpen=false}) {
+                            DropdownMenuItem(text={Text("字符图鉴")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("glyphs")})
+                            DropdownMenuItem(text={Text("邮箱使用记录")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("records")})
+                            DropdownMenuItem(text={Text("域名健康与库存")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("domains")})
+                            DropdownMenuItem(text={Text("用户与登记详情")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("users")})
+                            DropdownMenuItem(text={Text("退出管理员")},
+                                onClick={adminQuickMenuOpen=false;logoutNativeAdmin()})
+                        }
                     }
                 }
             }
@@ -4491,6 +4501,7 @@ class MainActivity : FragmentActivity() {
         unlocked = false
         adminRestoreGeneration.incrementAndGet()
         adminRestoreChecking=false
+        adminQuickMenuOpen=false
         adminLoadedAt.clear()
         adminExternalDetailGeneration.incrementAndGet()
         adminExternalEmails=emptyList()
