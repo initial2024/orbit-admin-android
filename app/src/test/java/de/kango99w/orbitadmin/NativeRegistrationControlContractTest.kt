@@ -57,6 +57,8 @@ class NativeRegistrationControlContractTest {
   assertTrue(lock.contains("adminRegTotp = \"\""))
   assertTrue(lock.contains("adminRegPolicy = null"))
   assertTrue(ui.contains("if(result.status==200 && result.value!=null)"))
-  assertTrue(ui.contains("if(result.status==401)adminAuthenticated=false"))
+  assertTrue(ui.contains("if(result.status==401) {"))
+  assertTrue(ui.contains("adminAuthenticated=false"))
+  assertTrue(ui.contains("adminRegPolicy=null"))
  }
 }
