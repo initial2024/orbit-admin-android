@@ -157,6 +157,11 @@ class MainActivity : FragmentActivity() {
     private var pendingPairNonce: String? = null
     private var showNativeMail by mutableStateOf(true)
     private var showNativeAccountDetails by mutableStateOf(false)
+    private var showHumanVerificationPrompt by mutableStateOf(false)
+    private var humanVerificationFlow = false
+    private var humanVerificationBaseline = emptySet<String>()
+    private var humanVerificationCode by mutableStateOf("")
+    private var lastHumanVerificationPromptAtMs = 0L
     private var showNativeClosureInfo by mutableStateOf(false)
     private val accountOverviewClient by lazy { NativeAccountOverviewClient() }
     private val accountOverviewIo = Executors.newSingleThreadExecutor()
@@ -859,6 +864,9 @@ class MainActivity : FragmentActivity() {
         adminSelectedRegistration = null
         adminSelectedDomain = null
         showNativeAccountDetails = false
+        showHumanVerificationPrompt=false
+        humanVerificationFlow=false
+        humanVerificationBaseline=emptySet()
         showNativeClosureInfo=false
         accountOverviewGeneration.incrementAndGet()
         accountOverviewClient.invalidate()
@@ -1445,6 +1453,54 @@ class MainActivity : FragmentActivity() {
         message = "邮箱地址已复制。"
     }
 
+    /** Visible only for real human interaction, never a solved CAPTCHA surrogate. */
+    private fun requestHumanVerification(reason:String="TURNSTILE_REQUIRED") {
+        if(!unlocked || workspace!=MailWorkspace.ORDINARY || humanVerificationFlow) return
+        val stamp=SystemClock.elapsedRealtime()
+        if(lastHumanVerificationPromptAtMs!=0L &&
+            stamp-lastHumanVerificationPromptAtMs in 0..900L) return
+        lastHumanVerificationPromptAtMs=stamp
+        humanVerificationCode=reason
+        showHumanVerificationPrompt=true
+    }
+
+    private fun openHumanVerificationWebsite() {
+        if(!unlocked || workspace!=MailWorkspace.ORDINARY) return
+        showHumanVerificationPrompt=false
+        showCreateMailbox=false
+        if(humanVerificationFlow)return
+        humanVerificationFlow=true
+        humanVerificationBaseline=nativeInbox?.mailboxes?.map { it.id }?.toSet().orEmpty()
+        // A regular first-party WebView owns the real Turnstile iframe and
+        // its single-use token. The browser will send the ordinary create POST.
+        navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+    }
+
+    @Composable
+    private fun HumanVerificationDialog() {
+        AlertDialog(
+            onDismissRequest={showHumanVerificationPrompt=false},
+            title={Text("需要人工安全验证")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(when(humanVerificationCode) {
+                    "TURNSTILE_EXPIRED" -> "上次验证已过期，请重新手动完成。"
+                    "TURNSTILE_FAILED" -> "安全验证未通过，可重新尝试。"
+                    else -> "服务器要求完成人机验证后才能创建邮箱。"
+                },style=MaterialTheme.typography.bodyMedium)
+                Text("仅在本应用的第一方网页区域显示 Cloudflare 验证。请自行完成挑战，系统不会自动识别、跳过或重复提交。",
+                    style=MaterialTheme.typography.bodySmall)
+                Text("已加载的原生邮箱页面保持状态；完成创建后会返回原生界面。网站验证失效、断网或限流时不能保证创建成功。",
+                    style=MaterialTheme.typography.bodySmall)
+            }},
+            confirmButton={TextButton(onClick=::openHumanVerificationWebsite) {
+                Text("在应用内验证")
+            }},
+            dismissButton={TextButton(onClick={showHumanVerificationPrompt=false}) {
+                Text("稍后")
+            }}
+        )
+    }
+
     @Composable
     private fun NativeCreateMailboxDialog(snapshot: NativeInboxSnapshot) {
         val domains = snapshot.availableDomains
@@ -1465,6 +1521,9 @@ class MainActivity : FragmentActivity() {
                     }
                     Text("邮箱归属、最终容量和安全验证仍由网站服务器检查。",
                         style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick={requestHumanVerification()},modifier=Modifier.fillMaxWidth()) {
+                        Text("安全验证 / Turnstile")
+                    }
                     OutlinedButton(
                         onClick = { expanded = true },
                         modifier = Modifier.fillMaxWidth()
@@ -3934,6 +3993,8 @@ class MainActivity : FragmentActivity() {
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
             NativeGlyphBuyDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
+        if (showHumanVerificationPrompt && workspace==MailWorkspace.ORDINARY)
+            HumanVerificationDialog()
         if (showNativeAccountDetails && workspace == MailWorkspace.ORDINARY)
             NativeAccountDetailDialog()
         if (showNativeClosureInfo && workspace == MailWorkspace.ORDINARY)
@@ -4207,6 +4268,9 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        showHumanVerificationPrompt=false
+        humanVerificationFlow=false
+        humanVerificationBaseline=emptySet()
         nativeDeviceClient.cancelPendingLogin()
         nativeOfflineCache.cancelPendingWrites()
         nativeLastSuccessfulSyncMs=0L
@@ -4402,6 +4466,28 @@ class MainActivity : FragmentActivity() {
                 }
             )
         }
+        // Only the exact public first-party document can request a human
+        // challenge prompt. It cannot provide or consume CAPTCHA answers.
+        if (key == MailSection.INBOX && WebViewFeature.isFeatureSupported(
+            WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                view,"orbitMailChallenge",setOf("https://inbox.kango99w.de"),
+                WebViewCompat.WebMessageListener { sender,data,origin,mainFrame,_ ->
+                    if(data.type!=WebMessageCompat.TYPE_STRING ||
+                        !NativeHumanVerificationPolicy.trustedSource(
+                            origin.scheme,origin.host,origin.port,mainFrame,sender.url))
+                        return@WebMessageListener
+                    val challenge=NativeHumanVerificationPolicy.parse(data.data)
+                        ?: return@WebMessageListener
+                    runOnUiThread {
+                        if(!unlocked || workspace!=MailWorkspace.ORDINARY ||
+                            nativeDeviceClient.isBound() || publicWebView() !== view ||
+                            !isCurrentPublicMailDocument())return@runOnUiThread
+                        requestHumanVerification(challenge.code)
+                    }
+                }
+            )
+        }
         if (key == MailSection.INBOX && WebViewFeature.isFeatureSupported(
             WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(
@@ -4462,7 +4548,21 @@ class MainActivity : FragmentActivity() {
                                 }
                                 nativeInbox = event.data
                                 tryRegisterPush()
-                                if (webLoginInProgress &&
+                                if(humanVerificationFlow) {
+                                    // Completing the challenge itself is NOT a
+                                    // successful create. Only a newly returned
+                                    // mailbox permits automatic Compose return.
+                                    val created=event.data.mailboxes.any {
+                                        it.id !in humanVerificationBaseline
+                                    }
+                                    if(created) {
+                                        humanVerificationFlow=false
+                                        humanVerificationBaseline=emptySet()
+                                        showHumanVerificationPrompt=false
+                                        webLoginInProgress=false
+                                        showNativeMail=true
+                                    }
+                                } else if (webLoginInProgress &&
                                     (activeSection == MailSection.INBOX || activeSection == MailSection.MAILBOXES)) {
                                     webLoginInProgress = false
                                     showNativeMail = true
