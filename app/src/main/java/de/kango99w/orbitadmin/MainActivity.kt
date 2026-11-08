@@ -3058,6 +3058,115 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Only the existing server-owned recorded ID may reopen an administrator ordinary inbox. */
+    private fun requestAdminMailboxActivation(intent: AdminMailboxActivationIntent) {
+        if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminBusy || adminPane !in setOf("mailboxes","records") ||
+            !AdminNativeModels.validId(intent.id))return
+        adminActivationError=""
+        adminActivationNotice=""
+        adminActivationTarget=intent
+    }
+
+    private fun submitAdminMailboxActivation() {
+        val intent=adminActivationTarget ?: return
+        if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminBusy || adminPane !in setOf("mailboxes","records") ||
+            !AdminNativeModels.validId(intent.id))return
+        val generation=adminGeneration.incrementAndGet()
+        val activationGeneration=adminActivationGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        val sourcePane=adminPane
+        adminBusy=true
+        adminActivationError=""
+        adminIo.execute {
+            val body=if(intent.kind==AdminMailboxActivationKind.EXTERNAL)
+                JSONObject().put("external_id",intent.id).put("confirm_address",intent.address)
+            else JSONObject()
+            val reply=nativeAdminClient.post(intent.endpoint,body,epoch)
+            val confirmed=AdminMailboxActivationPolicy.confirmedMailbox(
+                intent,reply.status,reply.value)
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    adminGeneration.get()!=generation ||
+                    adminActivationGeneration.get()!=activationGeneration ||
+                    adminActivationTarget!=intent || adminPane!=sourcePane)
+                    return@runOnUiThread
+                adminBusy=false
+                if(reply.status==401) {
+                    adminAuthenticated=false
+                    adminActivationTarget=null
+                    adminActivationError=""
+                    adminRecordedAddresses=emptyList()
+                    adminMailboxes=emptyList()
+                    adminLoadedAt.clear()
+                    adminError="管理员会话已失效，激活结果未确认；请重新验证后刷新。"
+                    return@runOnUiThread
+                }
+                if(confirmed==null) {
+                    adminActivationError=when(reply.status) {
+                        403 -> "服务器拒绝本次操作（HTTP 403）。请核实管理员会话和邮箱权限。"
+                        404 -> "登记记录已失效或不存在（HTTP 404）；请刷新使用记录。"
+                        409 -> "当前地址已在使用、被保留或上游路由尚未清理（HTTP 409）。请刷新核查。"
+                        429 -> "上游容量或激活频率受限（HTTP 429）；未确认恢复成功。"
+                        503 -> "服务器或上游收件服务暂不可用（HTTP 503）；请核实实际状态。"
+                        else -> "未取得可核验的激活回执（HTTP "+reply.status+
+                            " / "+(reply.error ?: "UNKNOWN")+ "）。请先刷新，避免重复提交。"
+                    }
+                    return@runOnUiThread
+                }
+                // The exact response must contain a new server-owned mailbox ID
+                // and the confirmed original address. No client-side route
+                // creation, bypass of the reserved address, or old-mail recovery.
+                adminMailboxes=adminMailboxes.filterNot {
+                    !it.privateMailbox && it.address.equals(confirmed.address,ignoreCase=true)
+                } + confirmed
+                adminLoadedAt.remove("records:reserved")
+                adminLoadedAt.remove("records:external")
+                adminActivationTarget=null
+                adminActivationError=""
+                adminActivationNotice="服务器已确认重新激活 "+confirmed.address+
+                    "；请注意到期时间，旧邮件不会恢复。"
+                adminPane="mailboxes"
+                openNativeAdminMailbox(confirmed)
+            }
+        }
+    }
+
+    @Composable
+    private fun AdminMailboxActivationDialog() {
+        val target=adminActivationTarget ?: return
+        AlertDialog(
+            onDismissRequest={
+                if(!adminBusy) {adminActivationTarget=null;adminActivationError=""}
+            },
+            title={Text(if(target.kind==AdminMailboxActivationKind.EXTERNAL)
+                "确认一键激活邮箱？" else "确认恢复已登记邮箱？")},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                    Text(target.address,style=MaterialTheme.typography.titleSmall)
+                    Text(if(target.kind==AdminMailboxActivationKind.EXTERNAL)
+                        "将申请为此已登记地址建立管理员普通收件路由。新邮箱通常为短期有效，需按实际到期时间续期。"
+                        else "将重新申请原地址的上游收件路由。仅恢复地址，不恢复已删除的历史邮件。")
+                    Text("激活仍须通过服务器的永久保留、所有权、域名和上游容量检查；不保证一定成功。",
+                        style=MaterialTheme.typography.bodySmall)
+                    if(adminActivationError.isNotBlank())
+                        Text(adminActivationError,color=MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton={
+                TextButton(enabled=!adminBusy,onClick=::submitAdminMailboxActivation) {
+                    Text(if(adminBusy)"正在提交…" else target.label)
+                }
+            },
+            dismissButton={
+                TextButton(enabled=!adminBusy,onClick={
+                    adminActivationTarget=null;adminActivationError=""
+                }) { Text("取消") }
+            }
+        )
+    }
+
     private fun openAdminNativePane(pane: String,force:Boolean=false) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
             pane !in setOf("mailboxes", "domains", "records", "security", "users", "registration", "glyphs")) return
