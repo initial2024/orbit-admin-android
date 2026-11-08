@@ -20,8 +20,10 @@ class OrbitNativeReinstallContractTest {
             Regex("""versionName\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+-dev"(?=\s|$)""")
                 .containsMatchIn(gradle)
         )
-        assertFalse("An unintended second Android application would confuse app upgrades",
-            gradle.contains("applicationIdSuffix"))
+        assertTrue("Only one deliberate preview suffix may exist",
+            Regex("""applicationIdSuffix\\s*=""").findAll(gradle).count() == 1)
+        assertTrue(gradle.contains("create(\"compactPreview\")"))
+        assertTrue(gradle.contains("applicationIdSuffix = \".compactpreview\""))
         assertFalse(
             File("src/debug/res/values/strings.xml").isFile ||
                 File("app/src/debug/res/values/strings.xml").isFile

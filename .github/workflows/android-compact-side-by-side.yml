@@ -1,0 +1,140 @@
+name: Orbit Mail compact side-by-side Android 35 install
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - "app/build.gradle.kts"
+      - "app/src/compactPreview/**"
+      - "app/src/test/java/de/kango99w/orbitadmin/OrbitNativeReinstallContractTest.kt"
+      - ".github/workflows/android-compact-side-by-side.yml"
+      - "scripts/ci/smoke-compact-side-by-side.sh"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: orbit-compact-dual-install
+  cancel-in-progress: true
+jobs:
+  installable-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android 36 SDK and 35 build-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT)"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - name: SHA256-pinned Gradle 8.13, bounded official CDN fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/gradle-8.13-bin.zip"
+          SHA=20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+          for url in https://downloads.gradle.org/distributions/gradle-8.13-bin.zip https://services.gradle.org/distributions/gradle-8.13-bin.zip; do
+            rm -f "$ZIP"
+            if curl -fLsS --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 240 "$url" -o "$ZIP"; then break; fi
+          done
+          test -s "$ZIP" || exit 1
+          printf '%s  %s\n' "$SHA" "$ZIP" | sha256sum --check --status
+          unzip -q "$ZIP" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+      - name: Build baseline and minified test with unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if gradle --no-daemon --no-configuration-cache :app:testDebugUnitTest :app:testCompactPreviewUnitTest :app:assembleDebug :app:assembleCompactPreview; then exit 0; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 12))
+          done
+      - name: Exact package, signature, and minimum saving
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$(printenv ANDROID_HOME || printenv ANDROID_SDK_ROOT)"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          BASE=app/build/outputs/apk/debug/app-debug.apk
+          TRIAL=app/build/outputs/apk/compactPreview/app-compactPreview.apk
+          test -s "$BASE" && test -s "$TRIAL"
+          "$SIGNER" verify --verbose "$BASE"
+          "$SIGNER" verify --verbose "$TRIAL"
+          "$AAPT" dump badging "$BASE" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$AAPT" dump badging "$TRIAL" | grep -F "package: name='de.kango99w.orbitadmin.compactpreview'"
+          "$AAPT" dump badging "$TRIAL" | grep -F "application-label:'Orbit Mail Compact Test'"
+          BASE_BYTES="$(wc -c < "$BASE")"
+          TRIAL_BYTES="$(wc -c < "$TRIAL")"
+          test "$TRIAL_BYTES" -lt "$((BASE_BYTES * 80 / 100))"
+          echo "Base=$BASE_BYTES bytes; preview=$TRIAL_BYTES bytes"
+      - name: KVM for Android emulator
+        run: |
+          test -e /dev/kvm || exit 1
+          sudo chmod 666 /dev/kvm
+      - name: Install original and preview together, start each twice
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: bash scripts/ci/smoke-compact-side-by-side.sh
+      - name: Archive installable preview with checksum and warning
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME=Orbit-Mail-v0.9.25-compact-side-by-side-test.apk
+          cp app/build/outputs/apk/compactPreview/app-compactPreview.apk "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          cat > INSTALL_NOTES.txt <<'EOF'
+          Orbit Mail Compact SIDE-BY-SIDE DEBUG TEST. Not a stable release.
+          Installs independently as de.kango99w.orbitadmin.compactpreview.
+          No overwrite/uninstall of existing de.kango99w.orbitadmin is required.
+          App label: Orbit Mail Compact Test. Data, Keystore, cookies and cache isolated.
+          Firebase/FCM is intentionally disabled in THIS test variant.
+          Existing compact and stable variants retain FCM client code.
+          Built using R8; two packages installed and both launch on Android 35 emulator.
+          Actual native login, live mail, notification and real-phone performance remain unverified.
+          Backend API availability and server-side authorization are independent gates.
+          Debug signing is ephemeral; future preview APK may not update this test installation.
+          Deleting the test app removes its independent cache, not the existing app's data.
+          EOF
+          ZIP=Orbit-Mail-v0.9.25-compact-side-by-side-test.zip
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt compact-preview-evidence/summary.md >/dev/null
+          unzip -t "$ZIP" >/dev/null
+          cat compact-preview-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload test package, independent of Release API permissions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbit-mail-compact-side-by-side-test
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            Orbit-Mail-v0.9.25-compact-side-by-side-test.apk
+            Orbit-Mail-v0.9.25-compact-side-by-side-test.apk.sha256
+            Orbit-Mail-v0.9.25-compact-side-by-side-test.zip
+            INSTALL_NOTES.txt
+            compact-preview-evidence/summary.md
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orbit-compact-side-by-side-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            compact-preview-evidence/
+            app/build/reports/tests/

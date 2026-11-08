@@ -64,6 +64,18 @@ android {
                 "proguard-rules.pro"
             )
         }
+        // Only a separately installed test app receives a different Android ID.
+        create("compactPreview") {
+            initWith(getByName("compact"))
+            applicationIdSuffix = ".compactpreview"
+            versionNameSuffix = "-compactpreview"
+            matchingFallbacks += listOf("compact", "debug")
+            // Never register test app push credentials or production FCM tokens.
+            for (name in listOf(
+                "ORBIT_FIREBASE_APP_ID", "ORBIT_FIREBASE_API_KEY",
+                "ORBIT_FIREBASE_SENDER_ID", "ORBIT_FIREBASE_PROJECT_ID"
+            )) buildConfigField("String", name, "\"\"")
+        }
         // Debug uses the same application ID as the user's installed app.
         // Its ephemeral CI signature requires uninstalling the old APK first.
         // No signing keys are generated, copied, or claimed to be reusable.
