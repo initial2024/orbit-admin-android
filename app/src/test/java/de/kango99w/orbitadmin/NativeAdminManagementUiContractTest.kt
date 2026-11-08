@@ -36,11 +36,13 @@ class NativeAdminManagementUiContractTest {
         assertTrue(app.contains("NativeAccountDetailDialog("))
         assertTrue(app.contains("showNativeAccountDetails=true"))
         assertTrue(app.contains("adminRegisteredAccounts = emptyList()"))
-        assertTrue(app.contains("\"/api/admin/account-registry/registrations?limit=100\""))
-        assertTrue(client.contains("method == \"GET\" && path == \"/api/admin/account-registry/registrations?limit=100\""))
+        assertTrue(app.contains("adminRegistrationFetchLimit by mutableStateOf(100)"))
+        assertTrue(app.contains("adminRegistrationFetchLimit, epoch)"))
+        assertTrue(client.contains("\"/api/admin/account-registry/registrations?limit=100\""))
+        assertTrue(client.contains("\"/api/admin/account-registry/registrations?limit=500\""))
         assertFalse(client.contains("method == \"POST\" && path == \"/api/admin/account-registry/registrations?limit=100\""))
         assertTrue(models.contains("NOT the whole"))
-        assertTrue(models.contains("minOf(array.length(),150)"))
+        assertTrue(models.contains("minOf(array.length(),500)"))
     }
 
     @Test fun providerInventoryIsReadOnlyAndDoesNotBlockEmailDomains() {
