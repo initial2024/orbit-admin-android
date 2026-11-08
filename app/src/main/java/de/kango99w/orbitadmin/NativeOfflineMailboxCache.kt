@@ -7,6 +7,7 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -25,6 +26,9 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class NativeOfflineMailboxCache(private val context: Context) {
     private val prefs = context.getSharedPreferences("orbit_native_mailbox_cache_v1",Context.MODE_PRIVATE)
+    private val writeEpoch=AtomicLong(0)
+    fun epoch():Long=writeEpoch.get()
+    @Synchronized fun cancelPendingWrites() { writeEpoch.incrementAndGet() }
     companion object {
         private const val ALIAS="orbit_native_metadata_aes_gcm_v1"
         private const val MAX_CACHE_BYTES=32_768
@@ -46,7 +50,9 @@ class NativeOfflineMailboxCache(private val context: Context) {
             .build())
         return generator.generateKey()
     }
-    @Synchronized fun store(bindingId:String, data:NativeInboxSnapshot, now:Long=System.currentTimeMillis()):Boolean {
+    @Synchronized fun store(bindingId:String, data:NativeInboxSnapshot,
+        expectedEpoch:Long, now:Long=System.currentTimeMillis()):Boolean {
+        if(expectedEpoch!=writeEpoch.get())return false
         if(!NativeInboxPolicy.isSafeId(bindingId) || !NativeInboxPolicy.isSafeId(data.currentId) ||
             now < 946684800000L || data.locked) return false
         val obj=JSONObject().put("version",CACHE_VERSION).put("binding",bindingId)
@@ -128,5 +134,8 @@ class NativeOfflineMailboxCache(private val context: Context) {
                 mailboxes=boxes,messages=messages)
         } catch (_:Exception) { null }
     }
-    @Synchronized fun clear():Boolean = prefs.edit().remove("snapshot").commit()
+    @Synchronized fun clear():Boolean {
+        writeEpoch.incrementAndGet()
+        return prefs.edit().remove("snapshot").commit()
+    }
 }
