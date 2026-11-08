@@ -39,6 +39,7 @@ class NativeAdminClient {
         private val EXTERNAL_EMAIL_DETAIL = Regex("^/api/admin/external-emails/$UUID$")
         private val PRIVATE_MAILBOX = Regex("^/api/admin/pieterj-mail/mailboxes/$UUID$")
         private val ORDINARY_RENEW = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID/renew$")
+        private val REGISTERED_REVIVE = Regex("^/api/admin/account-registry/registrations/$UUID/revive$")
         private val ORDINARY_MAILBOX = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID$")
         private val TRUSTED_REVOKE = Regex("^/api/admin/trusted-devices/$UUID/revoke$")
         private val GET_PATHS = setOf(
@@ -61,7 +62,8 @@ class NativeAdminClient {
             "/api/admin/registration-control",
             "/api/admin/lucky-glyphs/checkin", "/api/admin/lucky-glyphs/draw",
             "/api/admin/lucky-glyphs/equip", "/api/admin/lucky-glyphs/shop/buy",
-            "/api/admin/pieterj-mail/mailboxes", "/api/admin/ordinary-inbox/mailboxes"
+            "/api/admin/pieterj-mail/mailboxes", "/api/admin/ordinary-inbox/mailboxes",
+            "/api/admin/ordinary-inbox/activate-recorded"
         )
 
         fun allows(method: String, path: String): Boolean {
@@ -77,6 +79,7 @@ class NativeAdminClient {
                 "GET" -> path in GET_PATHS || MAILBOX_MESSAGES.matches(path) ||
                     PRIVATE_MESSAGE.matches(path) || EXTERNAL_EMAIL_DETAIL.matches(path)
                 "POST" -> path in POST_PATHS || ORDINARY_RENEW.matches(path) ||
+                    REGISTERED_REVIVE.matches(path) ||
                     TRUSTED_REVOKE.matches(path)
                 "PATCH" -> PRIVATE_MAILBOX.matches(path)
                 "DELETE" -> PRIVATE_MAILBOX.matches(path) || ORDINARY_MAILBOX.matches(path)
