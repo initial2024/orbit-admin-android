@@ -985,6 +985,10 @@ class MainActivity : FragmentActivity() {
             adminManagedDomains=emptyList()
             adminInventoryDomains=emptyList()
             adminRecordedAddresses=emptyList()
+            adminActivationGeneration.incrementAndGet()
+            adminActivationTarget=null
+            adminActivationError=""
+            adminActivationNotice=""
             adminRegisteredAccounts=emptyList()
             adminExternalEmails=emptyList()
             adminSelectedExternalEmail=null
@@ -2696,6 +2700,10 @@ class MainActivity : FragmentActivity() {
                 adminPrivateDomainOptions = privateOptions
                 adminOrdinaryDomainOptions = ordinaryOptions
                 if (!adminAuthenticated) {
+                    adminActivationGeneration.incrementAndGet()
+                    adminActivationTarget=null
+                    adminActivationError=""
+                    adminActivationNotice=""
                     adminSelectedMailbox = null
                     adminSelectedMessage = null
                     adminSelectedMessageId = null
@@ -2921,6 +2929,10 @@ class MainActivity : FragmentActivity() {
                     adminGlyphBusy=false
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
+                    adminActivationGeneration.incrementAndGet()
+                    adminActivationTarget=null
+                    adminActivationError=""
+                    adminActivationNotice=""
                     adminSecurityState = null
         adminInventoryDomains = emptyList()
         adminInventoryStatus = ""
@@ -3176,6 +3188,8 @@ class MainActivity : FragmentActivity() {
             elapsed in 0..60_000L
         }==true
         adminPane = pane
+        adminActivationTarget=null
+        adminActivationError=""
         adminSelectedDomain = null
         adminSelectedRegistration = null
         adminSelectedExternalEmail = null
@@ -3305,6 +3319,10 @@ class MainActivity : FragmentActivity() {
                     adminMailboxes = emptyList()
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
+                    adminActivationGeneration.incrementAndGet()
+                    adminActivationTarget=null
+                    adminActivationError=""
+                    adminActivationNotice=""
                     adminSecurityState = null
         adminInventoryDomains = emptyList()
         adminInventoryStatus = ""
@@ -4914,6 +4932,10 @@ class MainActivity : FragmentActivity() {
         adminPane = "mailboxes"
         adminManagedDomains = emptyList()
         adminRecordedAddresses = emptyList()
+        adminActivationGeneration.incrementAndGet()
+        adminActivationTarget=null
+        adminActivationError=""
+        adminActivationNotice=""
         adminSecurityState = null
         adminInventoryDomains = emptyList()
         adminInventoryStatus = ""
@@ -4949,6 +4971,10 @@ class MainActivity : FragmentActivity() {
         adminRestoreChecking=false
         adminQuickMenuOpen=false
         adminLoadedAt.clear()
+        adminActivationGeneration.incrementAndGet()
+        adminActivationTarget=null
+        adminActivationError=""
+        adminActivationNotice=""
         adminExternalDetailGeneration.incrementAndGet()
         adminExternalEmails=emptyList()
         adminRegistrationFetchLimit=100
