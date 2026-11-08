@@ -3780,6 +3780,10 @@ class MainActivity : FragmentActivity() {
                 )
                 "records" -> Column(modifier=Modifier.fillMaxSize()) {
                     AdminLedgerTabStrip(selected=adminLedgerTab,onSelect=::selectAdminLedgerTab)
+                    if(adminActivationNotice.isNotBlank())
+                        Text(adminActivationNotice,
+                            modifier=Modifier.padding(horizontal=14.dp,vertical=3.dp),
+                            style=MaterialTheme.typography.labelSmall)
                     Box(modifier=Modifier.weight(1f)) {
                         when(adminLedgerTab) {
                             "external" -> AdminExternalEmailLedger(
@@ -3792,7 +3796,14 @@ class MainActivity : FragmentActivity() {
                                 state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
                                 expanded=adminRecordFiltersExpanded,
                                 onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
-                                busy=adminBusy)
+                                busy=adminBusy,
+                                allowedDomains=adminOrdinaryDomainOptions.map{it.domain}.toSet(),
+                                activeMailboxes=adminMailboxes,
+                                onActivate=::requestAdminMailboxActivation,
+                                onOpenActive={
+                                    adminPane="mailboxes"
+                                    openNativeAdminMailbox(it)
+                                })
                             else -> AdminAccountRegistrations(
                                 rows=adminRegisteredAccounts,admin=adminUsername,
                                 search=adminRegistrationSearch,
@@ -4627,6 +4638,8 @@ class MainActivity : FragmentActivity() {
                     if(!adminExternalDetailBusy)loadAdminExternalDetail(selected)
                 })
         }
+        if (adminActivationTarget != null && adminAuthenticated &&
+            workspace==MailWorkspace.ADMIN) AdminMailboxActivationDialog()
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (showAdminRegConfirm && adminAuthenticated && workspace==MailWorkspace.ADMIN)
             AlertDialog(onDismissRequest={showAdminRegConfirm=false},
