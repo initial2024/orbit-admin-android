@@ -17,6 +17,11 @@ jobs:
     environment: Production
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_APP_ID }}
+      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_API_KEY }}
+      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_SENDER_ID }}
+      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PROJECT_ID }}
     permissions:
       contents: write
     steps:
@@ -47,6 +52,16 @@ jobs:
           printf '%s' "$RELEASE_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/orbit-release.jks"
           test -s "$RUNNER_TEMP/orbit-release.jks"
           echo "ORBIT_RELEASE_KEYSTORE_FILE=$RUNNER_TEMP/orbit-release.jks" >> "$GITHUB_ENV"
+      - name: Require complete Production Firebase Android identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -z "${!key}" ]; then
+              echo "Production Firebase Android identifier missing: $key" >&2
+              exit 1
+            fi
+          done
       - name: Build and test signed release
         shell: bash
         env:

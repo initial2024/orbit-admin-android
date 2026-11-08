@@ -18,8 +18,10 @@ import com.google.firebase.messaging.RemoteMessage
 class OrbitFcmService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // Never log/store an FCM token here. It is re-read on next opt-in unlock
-        // and registered through the existing HttpOnly-cookie website session.
+        // Never persist the raw FCM token in WorkManager input or logs.
+        // The worker re-reads the current token and uses the existing P-256
+        // native device grant, not website cookies or an admin session.
+        if (token.isNotBlank()) OrbitPushRetry.enqueue(applicationContext)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

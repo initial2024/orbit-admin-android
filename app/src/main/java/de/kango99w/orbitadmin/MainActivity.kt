@@ -1423,8 +1423,13 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun setPushOptIn(value: Boolean) {
-        backgroundPushOptIn = value
-        getSharedPreferences("orbit_push",MODE_PRIVATE).edit().putBoolean("opt_in",value).apply()
+        // Cancel deferred registrations before persisting opt-out. Never claim that
+        // local cancellation alone proves server token revocation.
+        if (!value) OrbitPushRetry.cancel(applicationContext)
+        val stored = getSharedPreferences("orbit_push",MODE_PRIVATE)
+            .edit().putBoolean("opt_in",value).commit()
+        backgroundPushOptIn = value && stored
+        if (value && !stored) backgroundPushStatus = "通知授权无法持久保存；未登记设备。"
     }
 
     private fun setPushRevokePending(value: Boolean) {

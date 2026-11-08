@@ -21,6 +21,11 @@ jobs:
       || (github.event_name == 'push' && github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107' && contains(github.event.head_commit.message, '[publish-debug]'))
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
     permissions:
       contents: write
     steps:
@@ -45,6 +50,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Guard preview Firebase identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -n "${!key}" ]; then count=$((count+1)); fi
+          done
+          if [ "$count" -ne 0 ] && [ "$count" -ne 4 ]; then
+            echo 'Incomplete preview Firebase identifiers: fail closed' >&2
+            exit 1
+          fi
+          if [ "$count" -eq 0 ]; then
+            echo 'Preview has no Firebase identifiers; background push is disabled'
+          fi
       - name: Test and package
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
       - name: Verify debug APK and generate publish metadata

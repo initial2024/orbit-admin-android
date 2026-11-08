@@ -82,6 +82,8 @@ dependencies {
     implementation("androidx.webkit:webkit:1.18.0")
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // Persistent, network-constrained retry for Firebase token rotation.
+    implementation("androidx.work:work-runtime:2.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
