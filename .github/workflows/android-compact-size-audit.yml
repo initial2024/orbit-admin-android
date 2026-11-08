@@ -47,6 +47,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+          # This long-lived feature branch has independent Android emulator CI.
+          # Save the public Kotlin compiler/dependency cache after a successful
+          # size build so the runtime audit does not repeatedly hit JetBrains 504.
+          cache-read-only: false
       - name: Require Firebase project for representative compact measurements
         shell: bash
         run: |
