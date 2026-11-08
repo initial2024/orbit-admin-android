@@ -65,7 +65,9 @@ class NativeAdminClient {
         fun allows(method: String, path: String): Boolean {
             // An exact, bounded, read-only registry query; never expose arbitrary
             // user-supplied URLs or open-ended list sizes to the admin cookie.
-            if (method == "GET" && path == "/api/admin/account-registry/registrations?limit=100")
+            if (method == "GET" && path in setOf(
+                "/api/admin/account-registry/registrations?limit=100",
+                "/api/admin/account-registry/registrations?limit=500"))
                 return true
             if (path.any { it == '?' || it == '#' || it == '%' || it == '\\' ||
                     it == '\n' || it == '\r' }) return false
@@ -169,7 +171,9 @@ class NativeAdminClient {
                 while (true) {
                     val n = input.read(chunk)
                     if (n < 0) break
-                    if (output.size() + n > 262_144)
+                    val maxResponse = if(path=="/api/admin/account-registry/registrations?limit=500")
+                        1_048_576 else 262_144
+                    if (output.size() + n > maxResponse)
                         return Reply(503, null, "ADMIN_NATIVE_RESPONSE_TOO_LARGE")
                     output.write(chunk, 0, n)
                 }
