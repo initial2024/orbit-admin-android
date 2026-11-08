@@ -63,8 +63,10 @@ jobs:
             exit 1
           fi
           if [ "$count" -eq 0 ]; then
-            echo 'Preview has no Firebase identifiers; background push is disabled'
+            echo 'This Firebase-enabled preview must have all four repository variables. Configure ORBIT_FIREBASE_PREVIEW_* before publication.' >&2
+            exit 1
           fi
+          echo 'Four Firebase Android identifiers present; Firebase SDK initialization will be compiled into this preview.'
       - name: Test and package
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
       - name: Verify debug APK and generate publish metadata
