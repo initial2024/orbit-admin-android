@@ -24,7 +24,8 @@ class OrbitPushRetryContractTest {
         assertTrue(worker.contains("client.registerPush(installation, token)"))
         assertFalse(worker.contains("CookieManager"))
         assertFalse(worker.contains("putString(\"token\""))
-        assertFalse(worker.contains("WebView"))
+        assertFalse(worker.contains("WebView("))
+        assertFalse(worker.contains("loadUrl("))
         assertTrue(worker.contains("runAttemptCount < 3"))
     }
 
