@@ -4,6 +4,8 @@ on:
     branches: [feat/secure-admin-shell-v0-20261107]
     paths:
       - ".github/workflows/android-compact-runtime-audit.yml"
+      - "app/proguard-rules.pro"
+      - "app/build.gradle.kts"
   workflow_dispatch:
 
 permissions:
