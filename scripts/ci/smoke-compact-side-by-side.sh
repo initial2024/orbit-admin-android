@@ -16,7 +16,7 @@ A="$(uid "$BASE")"; B="$(uid "$TRIAL")"
 test -n "$A" && test -n "$B" && test "$A" != "$B"
 for pkg in "$BASE" "$TRIAL" "$BASE" "$TRIAL"; do
   adb shell am force-stop "$pkg" || true
-  adb shell am start -W -n "$pkg/.MainActivity" | tee -a compact-preview-evidence/start.txt
+  adb shell am start -W -n "$pkg/de.kango99w.orbitadmin.MainActivity" | tee -a compact-preview-evidence/start.txt
   sleep 7
   test -n "$(adb shell pidof "$pkg" | tr -d '\r')" || {
     echo "App process exited unexpectedly: $pkg" >&2; exit 1;
