@@ -209,6 +209,14 @@ class MainActivity : FragmentActivity() {
     private var adminRecordSearch by mutableStateOf("")
     private var adminRecordStateFilter by mutableStateOf("全部")
     private var adminRecordSourceFilter by mutableStateOf("全部")
+    private var adminLedgerTab by mutableStateOf("internal")
+    private var adminExternalEmails by mutableStateOf<List<AdminExternalEmail>>(emptyList())
+    private var adminSelectedExternalEmail by mutableStateOf<AdminExternalEmail?>(null)
+    private var adminSelectedExternalDetail by mutableStateOf<AdminExternalEmailDetail?>(null)
+    private var adminExternalDetailBusy by mutableStateOf(false)
+    private var adminExternalDetailError by mutableStateOf("")
+    private val adminExternalDetailGeneration=AtomicLong(0)
+    private val adminLoadedAt=mutableMapOf<String,Long>()
     // All administrator management panes are native Compose, never website links.
     private var adminPane by mutableStateOf("mailboxes")
     private var adminManagedDomains by mutableStateOf<List<AdminManagedDomain>>(emptyList())
@@ -2853,18 +2861,69 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun openAdminNativePane(pane: String) {
+    private fun selectAdminLedgerTab(tab:String) {
+        if(tab !in setOf("internal","external","reserved") || adminBusy ||
+            !unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN)return
+        if(adminLedgerTab==tab)return
+        adminLedgerTab=tab
+        openAdminNativePane("records")
+    }
+
+    private fun loadAdminExternalDetail(item:AdminExternalEmail) {
+        if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminPane!="records" || adminLedgerTab!="external" ||
+            !AdminExternalEmailModels.validId(item.id) || adminExternalDetailBusy)return
+        val generation=adminExternalDetailGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminSelectedExternalEmail=item
+        adminSelectedExternalDetail=null
+        adminExternalDetailError=""
+        adminExternalDetailBusy=true
+        adminReadIo.execute {
+            val result=nativeAdminClient.get("/api/admin/external-emails/"+item.id,epoch)
+            val details=if(result.status==200)
+                AdminExternalEmailModels.detail(result.value,item.id) else null
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    adminPane!="records" || adminLedgerTab!="external" ||
+                    adminExternalDetailGeneration.get()!=generation ||
+                    adminSelectedExternalEmail?.id!=item.id)return@runOnUiThread
+                adminExternalDetailBusy=false
+                adminSelectedExternalDetail=details
+                adminExternalDetailError=if(details==null)
+                    "外部邮箱详情未核验（HTTP "+result.status+"）" else ""
+                if(result.status==401) {
+                    adminAuthenticated=false
+                    adminLoadedAt.clear()
+                    adminSelectedExternalEmail=null
+                    adminSelectedExternalDetail=null
+                }
+            }
+        }
+    }
+
+    private fun openAdminNativePane(pane: String,force:Boolean=false) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
             pane !in setOf("mailboxes", "domains", "records", "security", "users", "glyphs")) return
+        val cacheKey=if(pane=="records")"records:"+adminLedgerTab else pane
+        val recent=adminLoadedAt[cacheKey]?.let {
+            val elapsed=SystemClock.elapsedRealtime()-it
+            elapsed in 0..60_000L
+        }==true
         adminPane = pane
         adminSelectedDomain = null
         adminSelectedRegistration = null
+        adminSelectedExternalEmail = null
+        adminSelectedExternalDetail = null
+        adminExternalDetailGeneration.incrementAndGet()
+        adminExternalDetailBusy=false
         adminSelectedMailbox = null
         adminSelectedMessageId = null
         adminSelectedMessage = null
         adminMessageLoading = false
         adminMessages = emptyList()
         adminError = ""
+        if(recent && !force && pane !in setOf("mailboxes","glyphs"))return
         if (pane == "mailboxes") {
             refreshNativeAdmin()
             return
@@ -2875,6 +2934,7 @@ class MainActivity : FragmentActivity() {
         }
         val generation = adminGeneration.incrementAndGet()
         val epoch = nativeAdminClient.requestEpoch()
+        val recordTab=adminLedgerTab
         adminBusy = true
         if(pane=="domains") {
             adminInventoryStatus="正在读取独立域名托管库存…"
@@ -2906,7 +2966,12 @@ class MainActivity : FragmentActivity() {
                     secondary = nativeAdminClient.get("/api/admin/ordinary-inbox/domains", epoch)
                 }
                 "records" -> {
-                    primary = nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses", epoch)
+                    val route=when(recordTab) {
+                        "internal"->"/api/admin/account-registry/registrations?limit=100"
+                        "external"->"/api/admin/external-emails"
+                        else->"/api/admin/ordinary-inbox/recorded-addresses"
+                    }
+                    primary = nativeAdminClient.get(route, epoch)
                     secondary = null
                 }
                 "users" -> {
@@ -2923,18 +2988,27 @@ class MainActivity : FragmentActivity() {
                 (secondary == null || secondary.status == 200)
             val domains = if (pane == "domains" && valid)
                 AdminManagementModels.domains(primary.value, secondary?.value) else emptyList()
-            val records = if (pane == "records" && valid)
+            val records = if (pane == "records" && recordTab=="reserved" && valid)
                 AdminManagementModels.recordedAddresses(primary.value) else emptyList()
+            val external = if (pane == "records" && recordTab=="external" && valid)
+                AdminExternalEmailModels.list(primary.value) else emptyList()
+            val recordRegistrations=if(pane=="records" && recordTab=="internal" && valid)
+                AdminRegistrationModels.parse(primary.value) else emptyList()
             val security = if (pane == "security" && valid)
                 AdminManagementModels.security(primary.value, secondary?.value) else null
             val registrations = if (pane == "users" && valid)
                 AdminRegistrationModels.parse(primary.value) else emptyList()
             runOnUiThread {
-                if (!unlocked || generation != adminGeneration.get() || adminPane != pane)
+                if (!unlocked || generation != adminGeneration.get() || adminPane != pane ||
+                    (pane=="records"&&recordTab!=adminLedgerTab))
                     return@runOnUiThread
                 adminBusy = false
                 if (primary.status == 401 || secondary?.status == 401) {
                     adminAuthenticated = false
+                    adminLoadedAt.clear()
+                    adminExternalEmails=emptyList()
+                    adminSelectedExternalEmail=null
+                    adminSelectedExternalDetail=null
                     adminMailboxes = emptyList()
                     adminManagedDomains = emptyList()
                     adminRecordedAddresses = emptyList()
@@ -2956,10 +3030,15 @@ class MainActivity : FragmentActivity() {
                 }
                 when (pane) {
                     "domains" -> adminManagedDomains = domains
-                    "records" -> adminRecordedAddresses = records
+                    "records" -> when(recordTab) {
+                        "external" -> adminExternalEmails = external
+                        "reserved" -> adminRecordedAddresses = records
+                        else -> adminRegisteredAccounts = recordRegistrations
+                    }
                     "users" -> adminRegisteredAccounts = registrations
                     else -> adminSecurityState = security
                 }
+                adminLoadedAt[cacheKey]=SystemClock.elapsedRealtime()
             }
         }
     }
@@ -3183,7 +3262,9 @@ class MainActivity : FragmentActivity() {
                     else -> "管理员安全中心"
                 }, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
-                TextButton(enabled = !adminBusy, onClick = { openAdminNativePane(adminPane) }) {
+                TextButton(enabled = !adminBusy, onClick = {
+                    openAdminNativePane(adminPane,force=true)
+                }) {
                     Text("刷新")
                 }
             }
@@ -3193,6 +3274,7 @@ class MainActivity : FragmentActivity() {
                     rows=AdminDomainInventoryModels.combine(
                         adminManagedDomains,adminInventoryDomains),
                     inventoryStatus=adminInventoryStatus,
+                    inventory=adminInventoryDomains,
                     onSelect={adminSelectedDomain=it},
                     search=adminDomainSearch,setSearch={adminDomainSearch=it},
                     source=adminDomainSourceFilter,setSource={adminDomainSourceFilter=it},
@@ -3201,15 +3283,33 @@ class MainActivity : FragmentActivity() {
                     onExpand={adminDomainFiltersExpanded=!adminDomainFiltersExpanded},
                     busy=adminBusy
                 )
-                "records" -> AdminAddressRecords(
-                    rows=adminRecordedAddresses,
-                    search=adminRecordSearch,setSearch={adminRecordSearch=it},
-                    source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
-                    state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
-                    expanded=adminRecordFiltersExpanded,
-                    onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
-                    busy=adminBusy
-                )
+                "records" -> Column(modifier=Modifier.fillMaxSize()) {
+                    AdminLedgerTabStrip(selected=adminLedgerTab,onSelect=::selectAdminLedgerTab)
+                    Box(modifier=Modifier.weight(1f)) {
+                        when(adminLedgerTab) {
+                            "external" -> AdminExternalEmailLedger(
+                                rows=adminExternalEmails,busy=adminBusy,
+                                onSelect=::loadAdminExternalDetail)
+                            "reserved" -> AdminAddressRecords(
+                                rows=adminRecordedAddresses,
+                                search=adminRecordSearch,setSearch={adminRecordSearch=it},
+                                source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
+                                state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
+                                expanded=adminRecordFiltersExpanded,
+                                onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
+                                busy=adminBusy)
+                            else -> AdminAccountRegistrations(
+                                rows=adminRegisteredAccounts,admin=adminUsername,
+                                search=adminRegistrationSearch,
+                                setSearch={adminRegistrationSearch=it},
+                                source=adminRegistrationSourceFilter,
+                                setSource={adminRegistrationSourceFilter=it},
+                                expanded=adminRegistrationFiltersExpanded,
+                                onExpand={adminRegistrationFiltersExpanded=!adminRegistrationFiltersExpanded},
+                                busy=adminBusy,onSelect={adminSelectedRegistration=it})
+                        }
+                    }
+                }
                 "glyphs" -> NativeAdminGlyphGallery(
                     state=adminGlyphSnapshot,busy=adminGlyphBusy,error=adminGlyphError,
                     onRefresh=::refreshAdminGlyphs,
@@ -4000,6 +4100,23 @@ class MainActivity : FragmentActivity() {
             AdminDomainDetailsDialog()
         if (adminSelectedRegistration != null && adminAuthenticated && workspace==MailWorkspace.ADMIN)
             AdminRegistrationDetailDialog()
+        if (adminSelectedExternalEmail != null && adminAuthenticated &&
+            workspace==MailWorkspace.ADMIN && adminPane=="records" &&
+            adminLedgerTab=="external") {
+            val selected=adminSelectedExternalEmail!!
+            AdminExternalEmailDetailDialog(
+                selected=selected,detail=adminSelectedExternalDetail,
+                loading=adminExternalDetailBusy,error=adminExternalDetailError,
+                onDismiss={
+                    adminExternalDetailGeneration.incrementAndGet()
+                    adminSelectedExternalEmail=null
+                    adminSelectedExternalDetail=null
+                    adminExternalDetailBusy=false
+                },
+                onRetry={
+                    if(!adminExternalDetailBusy)loadAdminExternalDetail(selected)
+                })
+        }
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
         if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
