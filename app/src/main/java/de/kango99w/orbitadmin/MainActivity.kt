@@ -205,7 +205,7 @@ class MainActivity : FragmentActivity() {
     private var adminRegistrationFetchLimit by mutableStateOf(100)
     private var adminSelectedRegistration by mutableStateOf<AdminRegisteredAccount?>(null)
     private var adminDomainSearch by mutableStateOf("")
-    private var adminDomainSourceFilter by mutableStateOf("全部")
+    private var adminDomainSourceFilter by mutableStateOf("邮箱登记")
     private var adminDomainStateFilter by mutableStateOf("全部")
     private var adminRecordSearch by mutableStateOf("")
     private var adminRecordStateFilter by mutableStateOf("全部")
@@ -228,6 +228,7 @@ class MainActivity : FragmentActivity() {
     private var adminActivationTarget by mutableStateOf<AdminMailboxActivationIntent?>(null)
     private var adminActivationError by mutableStateOf("")
     private var adminActivationNotice by mutableStateOf("")
+    private var adminActivationEvidenceReady by mutableStateOf(false)
     private val adminActivationGeneration = AtomicLong(0)
     private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
     // Administrator-owned registration policy, never shared with ordinary login.
@@ -3111,7 +3112,7 @@ class MainActivity : FragmentActivity() {
     /** Only the existing server-owned recorded ID may reopen an administrator ordinary inbox. */
     private fun requestAdminMailboxActivation(intent: AdminMailboxActivationIntent) {
         if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
-            adminBusy || adminPane !in setOf("mailboxes","records") ||
+            adminBusy || adminPane !in setOf("mailboxes","records","activation") ||
             !AdminNativeModels.validId(intent.id))return
         adminActivationError=""
         adminActivationNotice=""
@@ -3121,7 +3122,7 @@ class MainActivity : FragmentActivity() {
     private fun submitAdminMailboxActivation() {
         val intent=adminActivationTarget ?: return
         if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
-            adminBusy || adminPane !in setOf("mailboxes","records") ||
+            adminBusy || adminPane !in setOf("mailboxes","records","activation") ||
             !AdminNativeModels.validId(intent.id))return
         val generation=adminGeneration.incrementAndGet()
         val activationGeneration=adminActivationGeneration.incrementAndGet()
@@ -3219,7 +3220,7 @@ class MainActivity : FragmentActivity() {
 
     private fun openAdminNativePane(pane: String,force:Boolean=false) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
-            pane !in setOf("mailboxes", "domains", "records", "security", "users", "registration", "glyphs")) return
+            pane !in setOf("mailboxes", "domains", "records", "activation", "security", "users", "registration", "glyphs")) return
         val cacheKey=if(pane=="records")"records:"+adminLedgerTab else pane
         val recent=adminLoadedAt[cacheKey]?.let {
             val elapsed=SystemClock.elapsedRealtime()-it
@@ -3250,7 +3251,11 @@ class MainActivity : FragmentActivity() {
             adminRegPolicy = null
             adminRegMessage = ""
         }
-        if(recent && !force && pane !in setOf("mailboxes","glyphs"))return
+        if(recent && !force && pane !in setOf("mailboxes","glyphs","activation"))return
+        if(pane=="records" || pane=="activation") {
+            adminActivationEvidenceReady=false
+            adminActivationNotice=""
+        }
         if (pane == "mailboxes") {
             refreshNativeAdmin()
             return
@@ -3292,6 +3297,11 @@ class MainActivity : FragmentActivity() {
                     primary = nativeAdminClient.get("/api/admin/pieterj-mail/status", epoch)
                     secondary = nativeAdminClient.get("/api/admin/ordinary-inbox/domains", epoch)
                 }
+                "activation" -> {
+                    primary=nativeAdminClient.get(
+                        "/api/admin/ordinary-inbox/recorded-addresses",epoch)
+                    secondary=nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
+                }
                 "records" -> {
                     val route=when(recordTab) {
                         "internal"->"/api/admin/account-registry/registrations?limit="+
@@ -3323,13 +3333,13 @@ class MainActivity : FragmentActivity() {
             }
             val valid = primary.status == 200 &&
                 (secondary == null || secondary.status == 200 ||
-                    (pane=="records" && recordTab=="reserved"))
-            val recordAllowedDomains=if(pane=="records" && recordTab=="reserved" &&
-                secondary?.status==200) AdminDomainSelection.temporary(secondary.value)
+                    (pane=="records" && recordTab=="reserved") || pane=="activation")
+            val recordAllowedDomains=if((pane=="activation" ||
+                (pane=="records" && recordTab=="reserved")) && secondary?.status==200) AdminDomainSelection.temporary(secondary.value)
                 else emptyList()
             val domains = if (pane == "domains" && valid)
                 AdminManagementModels.domains(primary.value, secondary?.value) else emptyList()
-            val records = if (pane == "records" && recordTab=="reserved" && valid)
+            val records = if ((pane=="activation" || (pane=="records" && recordTab=="reserved")) && valid)
                 AdminManagementModels.recordedAddresses(primary.value) else emptyList()
             val external = if (pane == "records" && recordTab=="external" && valid)
                 AdminExternalEmailModels.list(primary.value) else emptyList()
@@ -3391,11 +3401,19 @@ class MainActivity : FragmentActivity() {
                 }
                 when (pane) {
                     "domains" -> adminManagedDomains = domains
+                    "activation" -> {
+                        adminRecordedAddresses=records
+                        adminOrdinaryDomainOptions=recordAllowedDomains
+                        adminActivationEvidenceReady=secondary?.status==200
+                        if(!adminActivationEvidenceReady)
+                            adminActivationNotice="收信域名授权核验失败；激活入口已锁定。"
+                    }
                     "records" -> when(recordTab) {
                         "external" -> adminExternalEmails = external
                         "reserved" -> {
                             adminRecordedAddresses = records
                             adminOrdinaryDomainOptions=recordAllowedDomains
+                            adminActivationEvidenceReady=secondary?.status==200
                             if(secondary?.status!=200)
                                 adminActivationNotice="域名允许列表读取失败；当前记录只读，不能申请激活。"
                         }
@@ -3807,6 +3825,7 @@ class MainActivity : FragmentActivity() {
                 Text(when(adminPane) {
                     "domains" -> "域名管理"
                     "records" -> "邮箱使用记录"
+                    "activation" -> "一键激活邮箱"
                     "users" -> "用户与登记详情"
                     "registration" -> "新用户注册控制"
                     "glyphs" -> "管理员字符"
@@ -3833,6 +3852,21 @@ class MainActivity : FragmentActivity() {
                     expanded=adminDomainFiltersExpanded,
                     onExpand={adminDomainFiltersExpanded=!adminDomainFiltersExpanded},
                     busy=adminBusy
+                )
+                "activation" -> AdminAddressRecords(
+                    rows=adminRecordedAddresses,
+                    search=adminRecordSearch,setSearch={adminRecordSearch=it},
+                    source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
+                    state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
+                    expanded=adminRecordFiltersExpanded,
+                    onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
+                    busy=adminBusy,
+                    allowedDomains=if(adminActivationEvidenceReady)
+                        adminOrdinaryDomainOptions.map{it.domain}.toSet() else emptySet(),
+                    activeMailboxes=adminMailboxes,
+                    onActivate=::requestAdminMailboxActivation,
+                    onOpenActive={openNativeAdminMailbox(it)},
+                    onCopy=::copyMailboxAddress,activationOnly=true
                 )
                 "records" -> Column(modifier=Modifier.fillMaxSize()) {
                     AdminLedgerTabStrip(selected=adminLedgerTab,onSelect=::selectAdminLedgerTab)
@@ -3961,6 +3995,8 @@ class MainActivity : FragmentActivity() {
                                 onClick={adminQuickMenuOpen=false;openAdminNativePane("glyphs")})
                             DropdownMenuItem(text={Text("邮箱使用记录")},
                                 onClick={adminQuickMenuOpen=false;openAdminNativePane("records")})
+                            DropdownMenuItem(text={Text("一键激活邮箱")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("activation")})
                             DropdownMenuItem(text={Text("域名健康与库存")},
                                 onClick={adminQuickMenuOpen=false;openAdminNativePane("domains")})
                             DropdownMenuItem(text={Text("用户与登记详情")},

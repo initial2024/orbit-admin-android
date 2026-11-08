@@ -54,7 +54,7 @@ fun AdminDomainManagement(
             Text("域名来源",style=MaterialTheme.typography.labelMedium)
             Row(modifier=Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                listOf("全部","管理员邮箱","网站域名","域名申请","临时邮箱","托管库存").forEach { value ->
+                listOf("邮箱登记","全部","管理员邮箱","临时邮箱","网站域名","域名申请","托管库存").forEach { value ->
                     FilterChip(selected=source==value,onClick={setSource(value)},
                         label={Text(value,maxLines=1)})
                 }
@@ -95,7 +95,7 @@ fun AdminDomainManagement(
                 inv?.registrar.orEmpty(),inv?.dnsProvider.orEmpty(),
                 inv?.websiteHost.orEmpty(),inv?.emailProvider.orEmpty())
                 .any { it.contains(q,ignoreCase=true) }) &&
-            (source=="全部"||source in item.sources) &&
+            (source=="全部" || (source=="邮箱登记" && item.sources.any { it=="管理员邮箱" || it=="临时邮箱" }) || source in item.sources) &&
             (state=="全部"||item.state==state) &&
             (provider=="全部"||inv?.registrar==provider||inv?.dnsProvider==provider)
         }
@@ -153,7 +153,7 @@ fun AdminAddressRecords(
     allowedDomains:Set<String>,activeMailboxes:List<AdminNativeMailbox>,
     onActivate:(AdminMailboxActivationIntent)->Unit,
     onOpenActive:(AdminNativeMailbox)->Unit,
-    onCopy:(String)->Unit
+    onCopy:(String)->Unit,activationOnly:Boolean=false
 ) {
     var shown by remember { mutableStateOf(25) }
     val eligible=(rows.count {
@@ -184,7 +184,7 @@ fun AdminAddressRecords(
         }
         val base=AdminRecordFilters.addresses(rows,search,source,
             if(state=="可激活")"全部" else state)
-        val filtered=if(state=="可激活")base.filter {
+        val filtered=if(state=="可激活"||activationOnly)base.filter {
             AdminMailboxActivationPolicy.forRecord(it,allowedDomains,activeMailboxes)!=null
         } else base
         Text("已读取 "+rows.size+" 条 · 匹配 "+filtered.size+" 条 · 可激活 "+eligible+" 条",

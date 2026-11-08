@@ -5,6 +5,8 @@ on:
     paths:
       - "app/build.gradle.kts"
       - "app/src/compactPreview/**"
+      - "app/src/main/**"
+      - "app/src/test/**"
       - "app/src/test/java/de/kango99w/orbitadmin/OrbitNativeReinstallContractTest.kt"
       - ".github/workflows/android-compact-side-by-side.yml"
       - "scripts/ci/smoke-compact-side-by-side.sh"
