@@ -202,7 +202,7 @@ class MainActivity : FragmentActivity() {
     private var adminRegistrationSearch by mutableStateOf("")
     private var adminRegistrationSourceFilter by mutableStateOf("全部")
     private var adminRegisteredAccounts by mutableStateOf<List<AdminRegisteredAccount>>(emptyList())
-    private var adminRegistrationFetchLimit by mutableIntStateOf(100)
+    private var adminRegistrationFetchLimit by mutableStateOf(100)
     private var adminSelectedRegistration by mutableStateOf<AdminRegisteredAccount?>(null)
     private var adminDomainSearch by mutableStateOf("")
     private var adminDomainSourceFilter by mutableStateOf("全部")
