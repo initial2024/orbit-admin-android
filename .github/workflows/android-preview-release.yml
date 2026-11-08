@@ -96,6 +96,9 @@ jobs:
             "CI Debug signing is temporary and not the previous v0.9.4 key. Never claim a compatible in-place update." \
             "You authorized a fresh install and new login. All old local state is lost on uninstall, including trusted sessions and saved data." \
             "Ordinary account direct native password/TOTP API requires undeployed backend Draft PR #620." \
+            "Registration schedule/quota editor requires undeployed Worker/D1 Draft PR #625; this APK cannot independently change production registration state." \
+            "FCM new-mail notifications require public Firebase identifiers and Worker Draft PR #621; no real-device delivery has been verified." \
+            "Offline metadata cache excludes message bodies, passwords and OTP codes, and is never treated as proof of a current session." \
             "Administrator production accounts and real mail content remain unverified on physical Android hardware." > INSTALL_NOTES.txt
           ZIP="Orbit-Mail-v${VERSION}-debug.zip"
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null
@@ -125,7 +128,7 @@ jobs:
           gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" \
             --target "$GITHUB_SHA" \
             --title "Orbit Mail $TAG (native Compose debug/reinstall)" \
-            --notes "$VERSION ANDROID DEBUG REINSTALL. Original Android package de.kango99w.orbitadmin; uninstall incompatible v0.9.4 before installing, which erases old local data and requires re-login. APK signed by ephemeral CI Debug key and not proven compatible with old installed APK. Administrator is a native Jetpack Compose + first-party protected admin API (not WebView). Advanced domain/security links use external browser only. Regular-account native credential backend PR #620 is NOT deployed. Real-phone administrator login/TOTP/mailbox acceptance remains unverified. Do not treat as stable production release." \
+            --notes "$VERSION ANDROID DEBUG REINSTALL. Original Android package de.kango99w.orbitadmin; uninstall incompatible v0.9.4 before installing, which erases old local data and requires re-login. APK signed by ephemeral CI Debug key and not proven compatible with old installed APK. Administrator is a native Jetpack Compose + first-party protected admin API (not WebView). Advanced domain/security links use external browser only. Regular-account native credential backend PR #620 is NOT deployed. Registration policy Worker PR #625 and FCM Worker PR #621 are NOT deployed; server rollout and Firebase device testing remain required. Real-phone administrator login/TOTP/mailbox acceptance remains unverified. Do not treat as stable production release." \
             --prerelease
           echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
           echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
