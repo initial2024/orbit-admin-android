@@ -46,6 +46,20 @@ android {
         }
     }
     buildTypes {
+        // Experimental storage-optimized *test* variant. It uses exactly the
+        // same package name, features and debug signing as the baseline.
+        // Keep the normal debug variant until the size, runtime, and
+        // auth/WebView/FCM instrumentation gates pass for this variant.
+        create("compact") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
         // Debug uses the same application ID as the user's installed app.
         // Its ephemeral CI signature requires uninstalling the old APK first.
         // No signing keys are generated, copied, or claimed to be reusable.
