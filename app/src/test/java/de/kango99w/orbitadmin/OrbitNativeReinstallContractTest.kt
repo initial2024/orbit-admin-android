@@ -21,7 +21,7 @@ class OrbitNativeReinstallContractTest {
                 .containsMatchIn(gradle)
         )
         assertTrue("Only one deliberate preview suffix may exist",
-            Regex("""applicationIdSuffix\\s*=""").findAll(gradle).count() == 1)
+            gradle.lines().count { it.trimStart().startsWith("applicationIdSuffix = ") } == 1)
         assertTrue(gradle.contains("create(\"compactPreview\")"))
         assertTrue(gradle.contains("applicationIdSuffix = \".compactpreview\""))
         assertFalse(
