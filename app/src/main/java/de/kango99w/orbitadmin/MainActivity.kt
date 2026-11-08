@@ -3371,8 +3371,11 @@ class MainActivity : FragmentActivity() {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement=Arrangement.spacedBy(9.dp)
                 ) {
-                    Text("来源："+item.source+" · "+
+                    Text("归并来源："+item.sources.joinToString(" / "))
+                    Text("优先来源："+item.source+" · "+
                         (if(item.source=="托管库存")"证据状态：" else "登记状态：")+item.state)
+                    Text("来源重复只算一个域名；网站绑定、邮件配置、申请记录均不等于已证实拥有。",
+                        style=MaterialTheme.typography.bodySmall)
                     if(item.ingress.isNotBlank())Text("收件接入："+item.ingress)
                     if(inventory==null) {
                         Text("此域名来自邮箱或网站登记数据；独立托管库存未提供可用元数据。",
