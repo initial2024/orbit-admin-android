@@ -1,4 +1,4 @@
-name: Publish pinned compact Android smoke-tested preview (NOT STABLE)
+name: Export compact Android 35 smoke-tested preview (no release API)
 on:
   push:
     branches: [feat/secure-admin-shell-v0-20261107]
@@ -99,21 +99,15 @@ jobs:
             echo "ZIP=$ZIP"
             echo "CHECKSUM=$NAME.sha256"
           } >> "$GITHUB_ENV"
-      - name: Publish non-stable preview with explicit limits
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG='orbit-mail-v0.9.25-compact-smoke-881e2602bf0c'
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo 'Immutable preview already exists; refuse overwrite' >&2
-            exit 1
-          fi
-          gh release create "$TAG" "$APK" "$ZIP" "$CHECKSUM" \
-            --target '881e2602bf0cdd5ee7b4402fa085d9549733a4d0' \
-            --title 'Orbit Mail v0.9.25 compact, Android 35 startup-only test preview' \
-            --notes-file INSTALL_NOTES.txt \
-            --prerelease
-          echo "APK https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK"
-          echo "ZIP https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ZIP"
+      - name: Upload compact APK, ZIP and SHA256 as immutable workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-mail-v0.9.25-compact-smoke-test-package
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.apk
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.apk.sha256
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.zip
+            INSTALL_NOTES.txt
+            ANDROID35_SMOKE_SUMMARY.md
