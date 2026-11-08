@@ -3428,18 +3428,20 @@ class MainActivity : FragmentActivity() {
             return
         }
         val mode=adminRegMode
-        if(mode !in setOf("open","closed","once","cycle"))return
-        val timed=mode=="once" || mode=="cycle"
+        if(mode !in setOf("open","closed","once","cycle","pause_once"))return
+        val timed=mode=="once" || mode=="cycle" || mode=="pause_once"
         val start=if(timed) try {
             java.time.LocalDateTime.parse(adminRegStart.trim(),
                 java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
                 .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         } catch (_: Exception) { -1L } else 0L
-        val minutes=if(timed)adminRegOpen.toIntOrNull() ?: -1 else 0
-        val closed=if(mode=="cycle")adminRegClosed.toIntOrNull() ?: -1 else 0
+        val minutes=if(timed && mode!="pause_once")adminRegOpen.toIntOrNull() ?: -1 else 0
+        val closed=if(mode=="cycle" || mode=="pause_once")
+            adminRegClosed.toIntOrNull() ?: -1 else 0
         val quota=if(mode=="closed"||adminRegQuota.isBlank())null else adminRegQuota.toIntOrNull()
-        if((timed&&(start<1577836800000L || minutes !in 1..43200 ||
-            (mode=="cycle"&&closed !in 1..43200))) ||
+        if((timed&&(start<1577836800000L ||
+            (mode!="pause_once"&&minutes !in 1..43200) ||
+            ((mode=="cycle"||mode=="pause_once")&&closed !in 1..43200))) ||
             (mode!="closed" && adminRegQuota.isNotBlank() && (quota==null || quota !in 1..10000))) {
             adminRegMessage="时间、开放/关闭时长或名额无效，请检查。"
             return
@@ -3506,6 +3508,7 @@ class MainActivity : FragmentActivity() {
                     Text(when(adminRegMode){
                         "closed"->"立即暂停（手动恢复）"
                         "once"->"指定时间开放一次"
+                        "pause_once"->"指定时间关闭，到期自动开放"
                         "cycle"->"周期性开放与关闭"
                         else->"持续开放"
                     }+" ▾")
@@ -3516,6 +3519,7 @@ class MainActivity : FragmentActivity() {
                         "open" to "持续开放",
                         "closed" to "立即暂停（手动恢复）",
                         "once" to "定时开放一次",
+                        "pause_once" to "定时关闭一次，到期自动开放",
                         "cycle" to "周期开放/关闭"
                     ).forEach { item ->
                         DropdownMenuItem(text={Text(item.second)},
@@ -3523,17 +3527,21 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
-            if(adminRegMode=="once"||adminRegMode=="cycle"){
+            if(adminRegMode=="once"||adminRegMode=="cycle"||
+                adminRegMode=="pause_once"){
                 OutlinedTextField(value=adminRegStart,
                     onValueChange={adminRegStart=it.take(16)},
-                    label={Text("首次开放时间（本机时区）")},
+                    label={Text(if(adminRegMode=="pause_once")
+                        "计划关闭时间（本机时区）" else "首次开放时间（本机时区）")},
                     placeholder={Text("2026-11-09T09:00")},
                     singleLine=true,modifier=Modifier.fillMaxWidth())
-                OutlinedTextField(value=adminRegOpen,
-                    onValueChange={adminRegOpen=it.filter(Char::isDigit).take(5)},
-                    label={Text("开放分钟数（1–43200）")},
-                    singleLine=true,modifier=Modifier.fillMaxWidth())
-                if(adminRegMode=="cycle") {
+                if(adminRegMode!="pause_once"){
+                    OutlinedTextField(value=adminRegOpen,
+                        onValueChange={adminRegOpen=it.filter(Char::isDigit).take(5)},
+                        label={Text("开放分钟数（1–43200）")},
+                        singleLine=true,modifier=Modifier.fillMaxWidth())
+                }
+                if(adminRegMode=="cycle"||adminRegMode=="pause_once") {
                     OutlinedTextField(value=adminRegClosed,
                         onValueChange={adminRegClosed=it.filter(Char::isDigit).take(5)},
                         label={Text("每次关闭分钟数（1–43200）")},
