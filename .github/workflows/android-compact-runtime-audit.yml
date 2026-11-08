@@ -46,7 +46,7 @@ jobs:
           profile: pixel_6
           emulator-boot-timeout: 600
           script: |
-            gradle --no-daemon :app:assembleDebug :app:assembleCompact :app:connectedCompactAndroidTest
+            gradle --no-daemon -Porbit.instrumentCompact=true :app:assembleDebug :app:assembleCompact :app:connectedCompactAndroidTest
             bash scripts/ci/audit-compact-installed-storage.sh
       - name: Upload minified instrumentation and storage audit evidence
         if: always()

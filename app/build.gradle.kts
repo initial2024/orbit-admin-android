@@ -15,6 +15,10 @@ val orbitReleaseSigningReady = listOf(
 ).all { it != null }
 
 android {
+    // Only the separate compact instrumentation job opts into minified tests.
+    // Every existing Debug/Keystore workflow continues using debug by default.
+    testBuildType = if (providers.gradleProperty("orbit.instrumentCompact").orNull == "true")
+        "compact" else "debug"
     namespace = "de.kango99w.orbitadmin"
     compileSdk = 36
 
