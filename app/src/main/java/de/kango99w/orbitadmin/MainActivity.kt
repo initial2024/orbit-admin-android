@@ -226,6 +226,10 @@ class MainActivity : FragmentActivity() {
     private var adminInventoryStatus by mutableStateOf("")
     private var adminSelectedDomain by mutableStateOf<AdminManagedDomain?>(null)
     private var adminRecordedAddresses by mutableStateOf<List<AdminRecordedAddress>>(emptyList())
+    private var adminActivationTarget by mutableStateOf<AdminMailboxActivationIntent?>(null)
+    private var adminActivationError by mutableStateOf("")
+    private var adminActivationNotice by mutableStateOf("")
+    private val adminActivationGeneration = AtomicLong(0)
     private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
     // Administrator-owned registration policy, never shared with ordinary login.
     private var adminRegPolicy by mutableStateOf<JSONObject?>(null)
