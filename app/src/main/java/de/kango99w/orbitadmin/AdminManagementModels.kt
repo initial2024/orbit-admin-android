@@ -39,7 +39,7 @@ object AdminManagementModels {
         val grouped = LinkedHashMap<String, AdminManagedDomain>()
         for (row in rows) {
             val key = row.domain.trim().lowercase(java.util.Locale.ROOT)
-            if (!domainPattern.matches(key)) continue
+            if (key.length > 253 || !domainPattern.matches(key)) continue
             val previous = grouped[key]
             val labels = ((previous?.sources ?: emptyList()) + row.sources)
                 .filter { it.isNotBlank() }.distinct().take(8)
@@ -48,7 +48,7 @@ object AdminManagementModels {
         return grouped.values.sortedBy { it.domain }
     }
 
-    private val domainPattern = Regex("^[a-z0-9][a-z0-9.-]{1,148}[a-z0-9]$")
+    private val domainPattern = Regex("^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9-]{2,63}$")
     private val mailPattern = Regex("^[^@\\s]{1,64}@[a-z0-9.-]{3,150}$")
 
     private fun domainRows(array: JSONArray?, source: String): List<AdminManagedDomain> {
@@ -56,7 +56,7 @@ object AdminManagementModels {
         return (0 until minOf(array.length(), 100)).mapNotNull { index ->
             val row = array.optJSONObject(index) ?: return@mapNotNull null
             val domain = row.optString("domain").trim().lowercase()
-            if (!domainPattern.matches(domain)) return@mapNotNull null
+            if (domain.length > 253 || !domainPattern.matches(domain)) return@mapNotNull null
             AdminManagedDomain(
                 domain, source,
                 row.optString("state").ifBlank {
