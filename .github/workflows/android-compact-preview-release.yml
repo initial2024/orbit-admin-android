@@ -50,14 +50,42 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
           set -o pipefail
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
-          # A transient 504 in the GitHub cache API has blocked setup-gradle.
-          # Do not weaken tests; bypass cache only for these critical gates.
-          cache-disabled: true
+      - name: Install Gradle 8.13 directly from official CDN (SHA256-pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/gradle-8.13-bin.zip"
+          SHA="20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78"
+          for attempt in 1 2 3 4; do
+            if curl --fail --location --silent --show-error \
+                  --connect-timeout 20 --max-time 220 \
+                  "https://downloads.gradle.org/distributions/gradle-8.13-bin.zip" -o "$ZIP"; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Official Gradle distribution unavailable: stop without publishing" >&2
+              exit 1
+            fi
+            sleep $((attempt * 8))
+          done
+          printf '%s  %s\n' "$SHA" "$ZIP" | sha256sum --check --status ||
+            { echo "Gradle distribution SHA256 mismatch" >&2; exit 1; }
+          unzip -q "$ZIP" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
       - name: Baseline and R8 compact unit tests and APKs
-        run: gradle --no-daemon :app:testDebugUnitTest :app:testCompactUnitTest :app:assembleDebug :app:assembleCompact
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if gradle --no-daemon --no-configuration-cache \
+                :app:testDebugUnitTest :app:testCompactUnitTest \
+                :app:assembleDebug :app:assembleCompact; then break; fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Gradle or Kotlin official dependency unavailable; no release" >&2
+              exit 1
+            fi
+            sleep $((attempt * 12))
+          done
       - name: Enable Android emulator KVM
         shell: bash
         run: |
