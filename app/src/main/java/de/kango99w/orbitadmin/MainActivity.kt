@@ -4146,6 +4146,10 @@ class MainActivity : FragmentActivity() {
                         showAdminCreateDialog=true
                     }) { Text("＋ 新建邮箱") }
                 }
+                if(adminActivationNotice.isNotBlank())
+                    Text(adminActivationNotice,
+                        modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
+                        style=MaterialTheme.typography.labelSmall)
                 OutlinedTextField(
                     value=adminSearchQuery,
                     onValueChange={adminSearchQuery=it.take(70)},
@@ -4181,8 +4185,12 @@ class MainActivity : FragmentActivity() {
                     modifier=Modifier.padding(20.dp))
                 LazyColumn(modifier=Modifier.weight(1f)) {
                     items(boxes,key={"${if(it.privateMailbox) "p" else "o"}:${it.id}"}) { box ->
+                        val isActive=box.status=="active" &&
+                            (box.privateMailbox || box.expiresAt>System.currentTimeMillis())
+                        val activation=AdminMailboxActivationPolicy.forMailbox(
+                            box,adminOrdinaryDomainOptions.map{it.domain}.toSet())
                         Row(modifier=Modifier.fillMaxWidth()
-                            .clickable(enabled=!adminBusy && box.status=="active") {
+                            .clickable(enabled=!adminBusy && isActive) {
                                 openNativeAdminMailbox(box)
                             }
                             .padding(horizontal=16.dp,vertical=12.dp),
@@ -4193,12 +4201,19 @@ class MainActivity : FragmentActivity() {
                                 Text(box.address,maxLines=1,
                                     style=MaterialTheme.typography.titleSmall)
                                 Text((if(box.privateMailbox) "固定邮箱" else "临时邮箱") +
-                                    " · " + (if(box.status=="active") "已启用" else box.status),
+                                    " · " + (if(isActive) "已启用" else "已过期 / 离线"),
                                     style=MaterialTheme.typography.labelSmall)
                             }
-                            if (box.unread > 0) Text("${box.unread} 未读",
-                                style=MaterialTheme.typography.labelMedium)
-                            Text("  ›")
+                            if(activation!=null) {
+                                TextButton(enabled=!adminBusy,
+                                    onClick={requestAdminMailboxActivation(activation)}) {
+                                    Text("一键激活")
+                                }
+                            } else {
+                                if (box.unread > 0) Text("${box.unread} 未读",
+                                    style=MaterialTheme.typography.labelMedium)
+                                if(isActive)Text("  ›")
+                            }
                         }
                         HorizontalDivider()
                     }
