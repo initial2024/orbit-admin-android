@@ -3856,6 +3856,7 @@ class MainActivity : FragmentActivity() {
                                 allowedDomains=adminOrdinaryDomainOptions.map{it.domain}.toSet(),
                                 activeMailboxes=adminMailboxes,
                                 onActivate=::requestAdminMailboxActivation,
+                                onCopy=::copyMailboxAddress,
                                 onOpenActive={
                                     adminPane="mailboxes"
                                     openNativeAdminMailbox(it)
@@ -4061,6 +4062,9 @@ class MainActivity : FragmentActivity() {
                         Text(if (selected.privateMailbox) "管理员固定邮箱" else "管理员临时邮箱",
                             style=MaterialTheme.typography.labelSmall)
                     }
+                    TextButton(onClick={copyMailboxAddress(selected.address)}) {
+                        Text("复制")
+                    }
                     if (adminBusy) Text("加载中…",style=MaterialTheme.typography.labelSmall)
                 }
                 Row(modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=4.dp),
@@ -4260,16 +4264,14 @@ class MainActivity : FragmentActivity() {
                                     " · " + (if(isActive) "已启用" else "已过期 / 离线"),
                                     style=MaterialTheme.typography.labelSmall)
                             }
-                            if(activation!=null) {
-                                TextButton(enabled=!adminBusy,
-                                    onClick={requestAdminMailboxActivation(activation)}) {
-                                    Text("一键激活")
-                                }
-                            } else {
-                                if (box.unread > 0) Text("${box.unread} 未读",
-                                    style=MaterialTheme.typography.labelMedium)
-                                if(isActive)Text("  ›")
+                            TextButton(onClick={copyMailboxAddress(box.address)}) {
+                                Text("复制")
                             }
+                            if(activation!=null) Text("可恢复 · 前往一键激活",
+                                style=MaterialTheme.typography.labelSmall)
+                            else if(box.unread>0) Text("${box.unread} 未读",
+                                style=MaterialTheme.typography.labelMedium)
+                            else if(isActive) Text("  ›")
                         }
                         HorizontalDivider()
                     }

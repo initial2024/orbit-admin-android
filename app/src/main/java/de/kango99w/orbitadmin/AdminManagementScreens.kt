@@ -104,7 +104,12 @@ fun AdminDomainManagement(
             "来源"->matching.sortedWith(compareBy<AdminManagedDomain>{it.source}.thenBy{it.domain})
             else->matching.sortedWith(compareBy<AdminManagedDomain>{it.domain}.thenBy{it.source})
         }
-        Text("匹配 "+filtered.size+"/"+rows.size+" 个不重复域名 · 未核实记录不代表拥有",
+        val mailboxRegistry=rows.count {
+            "管理员邮箱" in it.sources || "临时邮箱" in it.sources
+        }
+        val otherRegistry=rows.size-mailboxRegistry
+        Text("不重复域名："+rows.size+"（各来源并集） · 邮箱登记 "+mailboxRegistry+
+            " · 网站/申请/库存专有 "+otherRegistry+" · 未核实记录不代表拥有",
             modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -147,7 +152,8 @@ fun AdminAddressRecords(
     expanded:Boolean,onExpand:()->Unit,busy:Boolean,
     allowedDomains:Set<String>,activeMailboxes:List<AdminNativeMailbox>,
     onActivate:(AdminMailboxActivationIntent)->Unit,
-    onOpenActive:(AdminNativeMailbox)->Unit
+    onOpenActive:(AdminNativeMailbox)->Unit,
+    onCopy:(String)->Unit
 ) {
     var shown by remember { mutableStateOf(25) }
     val eligible=(rows.count {
@@ -225,6 +231,7 @@ fun AdminAddressRecords(
                                 style=MaterialTheme.typography.labelSmall,
                                 color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        TextButton(onClick={onCopy(item.address)}) { Text("复制") }
                         if(live!=null) {
                             TextButton(enabled=!busy,onClick={onOpenActive(live)}) {
                                 Text("收件箱")

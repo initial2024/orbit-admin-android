@@ -81,7 +81,7 @@ jobs:
           "$SIGNER" verify --verbose "$TRIAL"
           "$AAPT" dump badging "$BASE" | grep -F "package: name='de.kango99w.orbitadmin'"
           "$AAPT" dump badging "$TRIAL" | grep -F "package: name='de.kango99w.orbitadmin.compactpreview'"
-          "$AAPT" dump badging "$TRIAL" | grep -F "application-label:'Orbit Mail Compact Test'"
+          "$AAPT" dump badging "$TRIAL" | grep -F "application-label:'Orbit Mail'"
           BASE_BYTES="$(wc -c < "$BASE")"
           TRIAL_BYTES="$(wc -c < "$TRIAL")"
           test "$TRIAL_BYTES" -lt "$((BASE_BYTES * 80 / 100))"
