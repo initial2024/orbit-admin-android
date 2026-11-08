@@ -1,0 +1,61 @@
+name: Android compact runtime and installed-storage audit
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - ".github/workflows/android-compact-runtime-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-compact-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compact-android35:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Enable KVM for Android 35 emulator
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          else
+            echo "KVM unavailable; cannot validate compact runtime" >&2
+            exit 1
+          fi
+      - name: Run minified Android instrumentation and size/RAM comparison
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: |
+            gradle --no-daemon :app:assembleDebug :app:assembleCompact :app:connectedCompactAndroidTest
+            bash scripts/ci/audit-compact-installed-storage.sh
+      - name: Upload minified instrumentation and storage audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-compact-android35-runtime-audit
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            compact-storage-audit/
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
