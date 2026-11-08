@@ -26,8 +26,8 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 42
-        versionName = "0.9.25-dev"
+        versionCode = 43
+        versionName = "0.9.26-dev"
         // Firebase mobile config values are public identifiers, not service-account secrets.
         // All four must be provided or the optional background push client stays off.
         val fcmNames = listOf("ORBIT_FIREBASE_APP_ID", "ORBIT_FIREBASE_API_KEY",

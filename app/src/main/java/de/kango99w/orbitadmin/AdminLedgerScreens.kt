@@ -49,7 +49,11 @@ fun AdminLedgerTabStrip(selected:String,onSelect:(String)->Unit) {
 /** Condensed record list. Full usage details are fetched on user tap. */
 @Composable
 fun AdminExternalEmailLedger(rows:List<AdminExternalEmail>,busy:Boolean,
-    onSelect:(AdminExternalEmail)->Unit) {
+    onSelect:(AdminExternalEmail)->Unit,
+    recorded:List<AdminRecordedAddress>,allowedDomains:Set<String>,
+    activeMailboxes:List<AdminNativeMailbox>,
+    onCopy:(String)->Unit,onActivate:(AdminMailboxActivationIntent)->Unit
+) {
     var search by remember { mutableStateOf("") }
     var filters by remember { mutableStateOf(false) }
     var provider by remember { mutableStateOf("全部") }
@@ -106,6 +110,11 @@ fun AdminExternalEmailLedger(rows:List<AdminExternalEmail>,busy:Boolean,
                     modifier=Modifier.padding(12.dp))
             }
             items(filtered.take(shown),key={it.id}) { mail ->
+                val reserved=recorded.firstOrNull { it.externalId==mail.id &&
+                    it.address.equals(mail.address,ignoreCase=true) }
+                val activation=reserved?.let {
+                    AdminMailboxActivationPolicy.forRecord(it,allowedDomains,activeMailboxes)
+                }
                 Card(modifier=Modifier.fillMaxWidth().clickable { onSelect(mail) }) {
                     Column(modifier=Modifier.padding(horizontal=12.dp,vertical=9.dp),
                         verticalArrangement=Arrangement.spacedBy(2.dp)) {
@@ -117,6 +126,13 @@ fun AdminExternalEmailLedger(rows:List<AdminExternalEmail>,busy:Boolean,
                         if(mail.label.isNotBlank()||mail.purpose.isNotBlank())
                             Text((mail.label+" · "+mail.purpose).trim(' ','·'),
                                 maxLines=1,style=MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                            TextButton(onClick={onCopy(mail.address)}) { Text("复制邮箱") }
+                            if(activation!=null)
+                                TextButton(enabled=!busy,onClick={onActivate(activation)}) {
+                                    Text(activation.label)
+                                }
+                        }
                     }
                 }
             }

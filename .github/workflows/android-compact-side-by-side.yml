@@ -105,14 +105,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          NAME=Orbit-Mail-v0.9.25-compact-side-by-side-test.apk
+          NAME=Orbit-Mail-v0.9.26-dev.apk
           cp app/build/outputs/apk/compactPreview/app-compactPreview.apk "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
           cat > INSTALL_NOTES.txt <<'EOF'
           Orbit Mail Compact SIDE-BY-SIDE DEBUG TEST. Not a stable release.
           Installs independently as de.kango99w.orbitadmin.compactpreview.
           No overwrite/uninstall of existing de.kango99w.orbitadmin is required.
-          App label: Orbit Mail Compact Test. Data, Keystore, cookies and cache isolated.
+          App label: Orbit Mail. Data, Keystore, cookies and cache isolated.
           Firebase/FCM is intentionally disabled in THIS test variant.
           Existing compact and stable variants retain FCM client code.
           Built using R8; two packages installed and both launch on Android 35 emulator.
@@ -121,20 +121,20 @@ jobs:
           Debug signing is ephemeral; future preview APK may not update this test installation.
           Deleting the test app removes its independent cache, not the existing app's data.
           EOF
-          ZIP=Orbit-Mail-v0.9.25-compact-side-by-side-test.zip
+          ZIP=Orbit-Mail-v0.9.26-dev.zip
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt compact-preview-evidence/summary.md >/dev/null
           unzip -t "$ZIP" >/dev/null
           cat compact-preview-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload test package, independent of Release API permissions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: orbit-mail-compact-side-by-side-test
+          name: orbit-mail-v0.9.26-compact-preview
           retention-days: 14
           if-no-files-found: error
           path: |
-            Orbit-Mail-v0.9.25-compact-side-by-side-test.apk
-            Orbit-Mail-v0.9.25-compact-side-by-side-test.apk.sha256
-            Orbit-Mail-v0.9.25-compact-side-by-side-test.zip
+            Orbit-Mail-v0.9.26-dev.apk
+            Orbit-Mail-v0.9.26-dev.apk.sha256
+            Orbit-Mail-v0.9.26-dev.zip
             INSTALL_NOTES.txt
             compact-preview-evidence/summary.md
       - name: Upload failure traces

@@ -3172,6 +3172,7 @@ class MainActivity : FragmentActivity() {
                 adminMailboxes=adminMailboxes.filterNot {
                     !it.privateMailbox && it.address.equals(confirmed.address,ignoreCase=true)
                 } + confirmed
+                adminLoadedAt.remove("activation")
                 adminLoadedAt.remove("records:reserved")
                 adminLoadedAt.remove("records:external")
                 adminActivationTarget=null
@@ -3312,9 +3313,11 @@ class MainActivity : FragmentActivity() {
                     primary = nativeAdminClient.get(route, epoch)
                     // An activation button needs a fresh server-approved
                     // ordinary-domain list; its failure keeps records read-only.
-                    secondary = if(recordTab=="reserved")
-                        nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
-                        else null
+                    secondary = when(recordTab) {
+                        "reserved" -> nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
+                        "external" -> nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses",epoch)
+                        else -> null
+                    }
                 }
                 "registration" -> {
                     primary = nativeAdminClient.get("/api/admin/registration-control",epoch)
@@ -3331,16 +3334,29 @@ class MainActivity : FragmentActivity() {
                     secondary = nativeAdminClient.get("/api/admin/trusted-devices", epoch)
                 }
             }
+            val tertiary=if(pane=="records" && recordTab=="external")
+                nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
+                else null
             val valid = primary.status == 200 &&
                 (secondary == null || secondary.status == 200 ||
-                    (pane=="records" && recordTab=="reserved") || pane=="activation")
-            val recordAllowedDomains=if((pane=="activation" ||
-                (pane=="records" && recordTab=="reserved")) && secondary?.status==200) AdminDomainSelection.temporary(secondary.value)
-                else emptyList()
+                    (pane=="records" && recordTab in setOf("reserved","external")) ||
+                    pane=="activation")
+            val recordAllowedDomains=when {
+                (pane=="activation" || (pane=="records" && recordTab=="reserved")) &&
+                    secondary?.status==200 -> AdminDomainSelection.temporary(secondary.value)
+                pane=="records" && recordTab=="external" && tertiary?.status==200 ->
+                    AdminDomainSelection.temporary(tertiary.value)
+                else -> emptyList()
+            }
             val domains = if (pane == "domains" && valid)
                 AdminManagementModels.domains(primary.value, secondary?.value) else emptyList()
-            val records = if ((pane=="activation" || (pane=="records" && recordTab=="reserved")) && valid)
-                AdminManagementModels.recordedAddresses(primary.value) else emptyList()
+            val records=when {
+                valid && (pane=="activation" || (pane=="records" && recordTab=="reserved")) ->
+                    AdminManagementModels.recordedAddresses(primary.value)
+                valid && pane=="records" && recordTab=="external" && secondary?.status==200 ->
+                    AdminManagementModels.recordedAddresses(secondary.value)
+                else -> emptyList()
+            }
             val external = if (pane == "records" && recordTab=="external" && valid)
                 AdminExternalEmailModels.list(primary.value) else emptyList()
             val recordRegistrations=if(pane=="records" && recordTab=="internal" && valid)
@@ -3354,7 +3370,8 @@ class MainActivity : FragmentActivity() {
                     (pane=="records"&&recordTab!=adminLedgerTab))
                     return@runOnUiThread
                 adminBusy = false
-                if (primary.status == 401 || secondary?.status == 401) {
+                if (primary.status == 401 || secondary?.status == 401 ||
+                    tertiary?.status == 401) {
                     adminAuthenticated = false
                     adminRegPassword = ""
                     adminRegTotp = ""
@@ -3409,7 +3426,15 @@ class MainActivity : FragmentActivity() {
                             adminActivationNotice="收信域名授权核验失败；激活入口已锁定。"
                     }
                     "records" -> when(recordTab) {
-                        "external" -> adminExternalEmails = external
+                        "external" -> {
+                            adminExternalEmails=external
+                            adminRecordedAddresses=records
+                            adminOrdinaryDomainOptions=recordAllowedDomains
+                            adminActivationEvidenceReady=
+                                secondary?.status==200 && tertiary?.status==200
+                            if(!adminActivationEvidenceReady)
+                                adminActivationNotice="关联地址或域名核验失败；外部邮箱只能查看和复制。"
+                        }
                         "reserved" -> {
                             adminRecordedAddresses = records
                             adminOrdinaryDomainOptions=recordAllowedDomains
@@ -3865,7 +3890,10 @@ class MainActivity : FragmentActivity() {
                         adminOrdinaryDomainOptions.map{it.domain}.toSet() else emptySet(),
                     activeMailboxes=adminMailboxes,
                     onActivate=::requestAdminMailboxActivation,
-                    onOpenActive={openNativeAdminMailbox(it)},
+                    onOpenActive={
+                        adminPane="mailboxes"
+                        openNativeAdminMailbox(it)
+                    },
                     onCopy=::copyMailboxAddress,activationOnly=true
                 )
                 "records" -> Column(modifier=Modifier.fillMaxSize()) {
@@ -3878,7 +3906,14 @@ class MainActivity : FragmentActivity() {
                         when(adminLedgerTab) {
                             "external" -> AdminExternalEmailLedger(
                                 rows=adminExternalEmails,busy=adminBusy,
-                                onSelect=::loadAdminExternalDetail)
+                                onSelect=::loadAdminExternalDetail,
+                                recorded=if(adminActivationEvidenceReady)
+                                    adminRecordedAddresses else emptyList(),
+                                allowedDomains=if(adminActivationEvidenceReady)
+                                    adminOrdinaryDomainOptions.map{it.domain}.toSet() else emptySet(),
+                                activeMailboxes=adminMailboxes,
+                                onCopy=::copyMailboxAddress,
+                                onActivate=::requestAdminMailboxActivation)
                             "reserved" -> AdminAddressRecords(
                                 rows=adminRecordedAddresses,
                                 search=adminRecordSearch,setSearch={adminRecordSearch=it},
