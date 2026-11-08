@@ -35,6 +35,16 @@ class NativeAdminClientPolicyTest {
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/ordinary-inbox/recorded-addresses"))
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/pieterj-mail/status"))
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/domain-control/inventory"))
+        assertTrue(NativeAdminClient.allows("GET", "/api/admin/external-emails"))
+        assertTrue(NativeAdminClient.allows("GET",
+            "/api/admin/external-emails/11111111-1111-4111-8111-111111111111"))
+        assertFalse(NativeAdminClient.allows("GET",
+            "/api/admin/external-emails/other-user/registrations"))
+        assertFalse(NativeAdminClient.allows("POST", "/api/admin/external-emails"))
+        assertFalse(NativeAdminClient.allows("DELETE",
+            "/api/admin/external-emails/11111111-1111-4111-8111-111111111111"))
+        assertFalse(NativeAdminClient.allows("GET",
+            "/api/admin/external-emails?scope=all"))
         assertFalse(NativeAdminClient.allows("POST", "/api/admin/domain-control/inventory"))
         assertFalse(NativeAdminClient.allows("GET", "/api/admin/domain-control/inventory?limit=500"))
         assertFalse(NativeAdminClient.allows("GET", "/api/admin/domain-control/connections"))
