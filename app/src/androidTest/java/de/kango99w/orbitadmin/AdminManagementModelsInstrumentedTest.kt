@@ -88,9 +88,13 @@ class AdminManagementModelsInstrumentedTest {
             listOf(AdminManagedDomain("yues.blogu.tc","网站域名","pending","Pages")),
             inventory
         )
-        assertEquals(2,rows.size)
-        assertEquals("托管库存",rows.last().source)
-        assertEquals("unverified",rows.last().state)
+        // A site and inventory record describe ONE hostname, not two domains.
+        assertEquals(1,rows.size)
+        assertEquals("网站域名",rows.single().source)
+        assertEquals("pending",rows.single().state)
+        assertTrue("托管库存" in rows.single().sources)
+        // The provider evidence is not promoted to verified ownership.
+        assertEquals("unverified",inventory.single().evidenceStatus)
         assertTrue(AdminDomainInventoryModels.parse(null).isEmpty())
     }
 
