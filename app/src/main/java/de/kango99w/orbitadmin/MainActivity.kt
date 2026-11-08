@@ -5339,6 +5339,7 @@ class MainActivity : FragmentActivity() {
         } // First-party inbox/notification bridge belongs only to public mail.
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
+                if (view == null || sectionBrowsers[key] !== view) return true
                 if (!request.isForMainFrame) return false
                 val url = request.url.toString()
                 if (AdminUrlPolicy.isTrustedMainFrame(url)) return false
@@ -5356,6 +5357,7 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                if (view == null || sectionBrowsers[key] !== view) return
                 // Do not display a stale native inbox during any new full-page navigation.
                 if (key == MailSection.INBOX) {
                     nativeInbox = null
@@ -5369,6 +5371,7 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (view == null || sectionBrowsers[key] !== view) return
                 if (url != null && AdminUrlPolicy.isTrustedMainFrame(url) &&
                     BrowserSessionRouting.key(activeSection) == key) {
                     message = ""
@@ -5382,6 +5385,7 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
+                if (view == null || sectionBrowsers[key] !== view) return
                 if (request.isForMainFrame) {
                     if (key == MailSection.INBOX) nativeInbox = null
                     if (BrowserSessionRouting.key(activeSection) == key)
@@ -5390,7 +5394,10 @@ class MainActivity : FragmentActivity() {
             }
 
             override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
-                (view?.parent as? ViewGroup)?.removeView(view)
+                // A renderer can report termination after its old WebView was
+                // already evicted. It may not invalidate a newly created page.
+                if (view == null || sectionBrowsers[key] !== view) return true
+                (view.parent as? ViewGroup)?.removeView(view)
                 view?.destroy()
                 pendingFileCallback?.onReceiveValue(null)
                 pendingFileCallback = null
@@ -5414,7 +5421,8 @@ class MainActivity : FragmentActivity() {
                 filePathCallback: android.webkit.ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
-                if (!unlocked || filePathCallback == null) return false
+                if (!unlocked || webView == null ||
+                    sectionBrowsers[key] !== webView || filePathCallback == null) return false
                 pendingFileCallback?.onReceiveValue(null)
                 pendingFileCallback = filePathCallback
                 allowMultipleFiles = fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
