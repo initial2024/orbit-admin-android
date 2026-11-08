@@ -66,12 +66,14 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
           SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
           for variant in debug compact; do
             apk="app/build/outputs/apk/$variant/app-$variant.apk"
             test -s "$apk"
             "$SIGNER" verify "$apk"
             "$AAPT" dump badging "$apk" | grep -F "package: name='de.kango99w.orbitadmin'"
-            "$AAPT" dump badging "$apk" | grep -F "versionName='0.9.25-dev'"
+            "$AAPT" dump badging "$apk" | grep -F "versionName='$VERSION'"
           done
       - name: Measure file sizes and package contents
         shell: bash
