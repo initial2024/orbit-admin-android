@@ -148,6 +148,13 @@ class MainActivity : FragmentActivity() {
     private var pendingPairNonce: String? = null
     private var showNativeMail by mutableStateOf(true)
     private var showNativeAccountDetails by mutableStateOf(false)
+    private var showNativeClosureInfo by mutableStateOf(false)
+    private val accountOverviewClient by lazy { NativeAccountOverviewClient() }
+    private val accountOverviewIo = Executors.newSingleThreadExecutor()
+    private val accountOverviewGeneration = AtomicLong(0)
+    private var accountOverview by mutableStateOf<NativeAccountOverview?>(null)
+    private var accountOverviewBusy by mutableStateOf(false)
+    private var accountOverviewError by mutableStateOf("")
     // All regular tabs are Compose surfaces. Website views are explicit fallback only.
     private var showNativeToolsPanel by mutableStateOf(true)
     private var adminSearchQuery by mutableStateOf("")
@@ -837,6 +844,11 @@ class MainActivity : FragmentActivity() {
         adminSelectedRegistration = null
         adminSelectedDomain = null
         showNativeAccountDetails = false
+        showNativeClosureInfo=false
+        accountOverviewGeneration.incrementAndGet()
+        accountOverviewClient.invalidate()
+        accountOverview=null
+        accountOverviewBusy=false
         // Selecting even the active workspace closes the menu without reloading mail.
         workspaceSwitcherExpanded = false
         if (workspace == next) return
@@ -1398,8 +1410,14 @@ class MainActivity : FragmentActivity() {
             onDismissRequest = { showCreateMailbox = false },
             title = { Text("创建邮箱") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("邮箱归属、配额和安全验证仍由网站服务器检查。",
+                Column(modifier=Modifier.heightIn(max=430.dp)
+                    .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NativeMailboxQuotaSummary(accountOverview,accountOverviewBusy)
+                    TextButton(onClick=::refreshAccountOverview,enabled=!accountOverviewBusy) {
+                        Text("重新校验额度")
+                    }
+                    Text("邮箱归属、最终容量和安全验证仍由网站服务器检查。",
                         style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(
                         onClick = { expanded = true },
@@ -1410,7 +1428,8 @@ class MainActivity : FragmentActivity() {
                             DropdownMenuItem(text = { Text("@$option") }, onClick = {
                                 expanded = false
                                 nativeCreateDomain = option
-                                if (!sendNativeMailboxCommand("select_domain",option)) {
+                                if(!nativeApiActive && !nativeDeviceClient.isBound() &&
+                                    !sendNativeMailboxCommand("select_domain",option)) {
                                     message = "网页尚未准备好，请使用完整网页创建。"
                                 }
                             })
@@ -1434,10 +1453,17 @@ class MainActivity : FragmentActivity() {
             },
             confirmButton = {
                 TextButton(
-                    enabled = snapshot.canCreate && !snapshot.busy &&
+                    enabled = (nativeApiActive || nativeDeviceClient.isBound()) ||
+                        (snapshot.canCreate && !snapshot.busy &&
                         chosen.isNotEmpty() && chosen == snapshot.selectedDomain &&
-                        (nativeCreateLocal.isBlank() || validPrefix),
+                        (nativeCreateLocal.isBlank() || validPrefix)),
                     onClick = {
+                        if(nativeApiActive || nativeDeviceClient.isBound()) {
+                            showCreateMailbox=false
+                            navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
+                            message="已打开服务端创建流程；这里展示的容量快照不代表创建成功。"
+                            return@TextButton
+                        }
                         val prefix = nativeCreateLocal.trim().lowercase()
                         val success = sendNativeMailboxCommand(
                             if (prefix.isEmpty()) "create_random" else "create_custom",
@@ -1449,7 +1475,8 @@ class MainActivity : FragmentActivity() {
                             message = "请求已提交；只有邮箱列表更新才代表创建成功。"
                         } else message = "当前网页未准备好，请使用完整网页。"
                     }
-                ) { Text("创建") }
+                ) { Text(if(nativeApiActive || nativeDeviceClient.isBound())
+                    "继续安全创建" else "创建") }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateMailbox = false }) { Text("取消") }
@@ -1459,14 +1486,10 @@ class MainActivity : FragmentActivity() {
 
     /** Creating account-owned mailboxes still requires the existing server's CSRF/Turnstile checks. */
     private fun requestMailboxCreation(snapshot: NativeInboxSnapshot) {
-        if (nativeApiActive || nativeDeviceClient.isBound()) {
-            navigateTo("https://inbox.kango99w.de/?orbit_app=android#orbit-create")
-            message = "创建邮箱暂由网站验证配额及人机验证；成功后返回原生邮箱点击刷新。"
-            return
-        }
         nativeCreateDomain = snapshot.selectedDomain
         nativeCreateLocal = ""
         showCreateMailbox = true
+        refreshAccountOverview()
     }
 
     /** Stay in Compose, even when the server-side native reader is not yet deployed. */
@@ -1613,25 +1636,81 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Ordinary website account data is a separate identity from the native P-256 grant. */
+    private fun refreshAccountOverview() {
+        if (!unlocked || workspace != MailWorkspace.ORDINARY || accountOverviewBusy) return
+        val generation = accountOverviewGeneration.incrementAndGet()
+        val epoch = accountOverviewClient.epoch()
+        accountOverviewBusy = true
+        accountOverviewError = ""
+        accountOverviewIo.execute {
+            val status = accountOverviewClient.read("/api/account/status",epoch)
+            val authenticated = status.status==200 &&
+                status.value?.optBoolean("authenticated")==true
+            val upgrade = if(authenticated)
+                accountOverviewClient.read("/api/upgrade/status",epoch) else null
+            val closure = if(authenticated)
+                accountOverviewClient.read("/api/account/closure/options",epoch) else null
+            val parsed = if(authenticated)
+                NativeAccountOverviewModels.read(status.value,
+                    upgrade?.value?.takeIf { upgrade.status==200 },
+                    closure?.value?.takeIf { closure.status==200 }) else null
+            runOnUiThread {
+                if(!unlocked || workspace != MailWorkspace.ORDINARY ||
+                    accountOverviewGeneration.get()!=generation) return@runOnUiThread
+                accountOverviewBusy=false
+                accountOverview=parsed
+                accountOverviewError=when {
+                    !authenticated -> "普通网页登录账号未验证；本机设备授权不等于会员身份。"
+                    upgrade?.status != 200 -> "账号已核验；额度服务不可用，未猜测剩余。"
+                    else -> ""
+                }
+            }
+        }
+    }
+
+    private fun openAccountOverview() {
+        if(!unlocked || workspace!=MailWorkspace.ORDINARY) return
+        showNativeAccountDetails=true
+        refreshAccountOverview()
+    }
+
     @Composable
-    private fun NativeAccountDetailDialog(snapshot: NativeInboxSnapshot) {
-        AlertDialog(
-            onDismissRequest={showNativeAccountDetails=false},
-            title={Text("普通邮箱 · 当前账户")},
+    private fun NativeAccountDetailDialog() {
+        NativeAccountOverviewDialog(
+            data=accountOverview,loading=accountOverviewBusy,
+            error=accountOverviewError,
+            onRefresh=::refreshAccountOverview,
+            onDismiss={showNativeAccountDetails=false},
+            onClosure={
+                showNativeAccountDetails=false
+                showNativeClosureInfo=true
+            }
+        )
+    }
+
+    @Composable
+    private fun NativeAccountClosureInfo() {
+        val current=accountOverview
+        AlertDialog(onDismissRequest={showNativeClosureInfo=false},
+            title={Text("注销账号 · 二次验证要求")},
             text={
-                Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                    Text("本机原生授权："+if(nativeDeviceClient.isBound()) "已绑定" else "未绑定")
-                    Text("当前邮箱："+snapshot.currentAddress.ifBlank{"无"})
-                    Text("可访问邮箱："+snapshot.mailboxes.size+" 个")
-                    Text("当前收件箱："+snapshot.messages.size+" 封")
-                    Text("原生邮件阅读："+if(snapshot.nativeReadSupported)"服务端已声明支持" else "尚未确认")
-                    Text("这不是网站全部个人资料；只有服务端返回的当前邮箱信息会显示。"+
-                        "服务器的账户详情、订阅及其他设备记录仍需独立受权接口。",
+                Column(verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                    Text("服务器账号："+(current?.closureEmail ?: "未提供"),
+                        style=MaterialTheme.typography.bodySmall)
+                    Text("可用验证方式："+(current?.closureMethods?.joinToString("、") ?: "未核验"),
+                        style=MaterialTheme.typography.bodySmall)
+                    Text("冷静期："+
+                        (current?.closureCoolingMs?.let { (it/86400000L).toString()+" 天" } ?: "未核验"),
+                        style=MaterialTheme.typography.bodySmall)
+                    Text("申请后可关闭邮箱、失去套餐与字符奖励，且可能无法用同一邮箱重新注册。须完成密码/2FA、邮箱原文和不可逆确认。此只读页不会提交注销申请。",
                         style=MaterialTheme.typography.bodySmall,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        color=MaterialTheme.colorScheme.error)
+                    Text("完整注销提交需要经过单独审查的原生二次验证流程；当前不借管理员权限执行。",
+                        style=MaterialTheme.typography.labelSmall)
                 }
             },
-            confirmButton={TextButton(onClick={showNativeAccountDetails=false}) { Text("关闭") }}
+            confirmButton={TextButton(onClick={showNativeClosureInfo=false}){Text("返回")}}
         )
     }
 
@@ -1655,7 +1734,7 @@ class MainActivity : FragmentActivity() {
                         maxLines=1,style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("账户详情 ›",
-                        modifier=Modifier.clickable { showNativeAccountDetails=true },
+                        modifier=Modifier.clickable { openAccountOverview() },
                         style=MaterialTheme.typography.labelSmall,
                         color=MaterialTheme.colorScheme.primary)
                 }
@@ -3457,6 +3536,11 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            if(workspace==MailWorkspace.ORDINARY)
+                OutlinedButton(onClick=::openAccountOverview,
+                    modifier=Modifier.fillMaxWidth()) {
+                    Text("账号详情 · 会员额度 · 注销")
+                }
             Card(modifier=Modifier.fillMaxWidth(),
                 colors=CardDefaults.cardColors(
                     containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.54f))) {
@@ -3707,8 +3791,10 @@ class MainActivity : FragmentActivity() {
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
             NativeGlyphBuyDialog()
         if (showCreateMailbox && nativeInbox != null) NativeCreateMailboxDialog(nativeInbox!!)
-        if (showNativeAccountDetails && nativeInbox != null && workspace == MailWorkspace.ORDINARY)
-            NativeAccountDetailDialog(nativeInbox!!)
+        if (showNativeAccountDetails && workspace == MailWorkspace.ORDINARY)
+            NativeAccountDetailDialog()
+        if (showNativeClosureInfo && workspace == MailWorkspace.ORDINARY)
+            NativeAccountClosureInfo()
         Scaffold(
             topBar = {
                 val nativeMailTab = (activeSection == MailSection.INBOX ||
@@ -3979,6 +4065,12 @@ class MainActivity : FragmentActivity() {
     private fun lock() {
         unlocked = false
         nativeDeviceClient.cancelPendingLogin()
+        accountOverviewGeneration.incrementAndGet()
+        accountOverviewClient.invalidate()
+        accountOverview = null
+        accountOverviewBusy = false
+        accountOverviewError = ""
+        showNativeClosureInfo = false
         privateMailGeneration.incrementAndGet()
         privateMailClient.invalidate()
         privateMailBusy = false
