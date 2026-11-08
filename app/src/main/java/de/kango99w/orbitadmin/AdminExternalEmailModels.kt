@@ -21,7 +21,7 @@ object AdminExternalEmailModels {
         "icloud","gmail","outlook","qq","other")
     private val states=setOf("active","disabled","unknown")
     private val stages=setOf("registered","active","attention","closed")
-    private val emailPattern=Regex("^[^@\\s<>]{1,64}@[A-Za-z0-9.-]{3,150}$")
+    private val emailPattern=Regex("^[^@\\s<>]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
     fun validId(id:String)=AdminNativeModels.validId(id)
     fun providerLabel(provider:String)=when(provider) {
         "apple_hide_my_email"->"Apple 隐藏邮箱"
