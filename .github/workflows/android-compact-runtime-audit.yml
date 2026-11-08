@@ -13,6 +13,12 @@ concurrency:
   group: android-compact-runtime-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+  ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+  ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+  ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
+
 jobs:
   compact-android35:
     runs-on: ubuntu-24.04
@@ -37,6 +43,16 @@ jobs:
             echo "KVM unavailable; cannot validate compact runtime" >&2
             exit 1
           fi
+      - name: Require Firebase project for representative compact measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -z "${!key}" ]; then
+              echo "Missing $key: a compact APK without Firebase cannot be compared to the full-feature preview" >&2
+              exit 1
+            fi
+          done
       - name: Run minified Android instrumentation and size/RAM comparison
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:

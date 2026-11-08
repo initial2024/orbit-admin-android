@@ -15,6 +15,12 @@ concurrency:
   group: android-compact-size-audit-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+  ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+  ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+  ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
+
 jobs:
   measure-apk:
     runs-on: ubuntu-24.04
@@ -41,6 +47,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Require Firebase project for representative compact measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -z "${!key}" ]; then
+              echo "Missing $key: a compact APK without Firebase cannot be compared to the full-feature preview" >&2
+              exit 1
+            fi
+          done
       - name: Test baseline and optimized variants, build both
         run: gradle --no-daemon :app:testDebugUnitTest :app:testCompactUnitTest :app:assembleDebug :app:assembleCompact
       - name: Verify identical package, version and signed artifacts
