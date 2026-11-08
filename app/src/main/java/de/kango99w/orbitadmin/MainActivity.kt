@@ -227,6 +227,18 @@ class MainActivity : FragmentActivity() {
     private var adminSelectedDomain by mutableStateOf<AdminManagedDomain?>(null)
     private var adminRecordedAddresses by mutableStateOf<List<AdminRecordedAddress>>(emptyList())
     private var adminSecurityState by mutableStateOf<AdminSecurityState?>(null)
+    // Administrator-owned registration policy, never shared with ordinary login.
+    private var adminRegPolicy by mutableStateOf<JSONObject?>(null)
+    private var adminRegMode by mutableStateOf("open")
+    private var adminRegStart by mutableStateOf("")
+    private var adminRegOpen by mutableStateOf("60")
+    private var adminRegClosed by mutableStateOf("1380")
+    private var adminRegQuota by mutableStateOf("")
+    private var adminRegPassword by mutableStateOf("")
+    private var adminRegTotp by mutableStateOf("")
+    private var adminRegMessage by mutableStateOf("")
+    private var adminRegMenuOpen by mutableStateOf(false)
+    private var showAdminRegConfirm by mutableStateOf(false)
     private var adminDeleteTarget by mutableStateOf<AdminNativeMailbox?>(null)
     private var adminDeleteError by mutableStateOf("")
     private var adminRevokeTrustedTarget by mutableStateOf<AdminTrustedDevice?>(null)
@@ -2158,6 +2170,25 @@ class MainActivity : FragmentActivity() {
             }
             Text("这里只允许普通账号绑定 account_mail_read 权限，不能取得管理员权限。",
                 style = MaterialTheme.typography.labelSmall)
+            OutlinedButton(
+                enabled = !nativeLoginBusy,
+                onClick = {
+                    // One-time signup must retain the first-party Turnstile and
+                    // invitation-capacity checks; no native bypass is offered.
+                    nativeLoginPassword = ""
+                    nativeLoginTotp = ""
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://inbox.kango99w.de/?register=1"))
+                            .addCategory(Intent.CATEGORY_BROWSABLE))
+                    } catch (_: ActivityNotFoundException) {
+                        nativeLoginError = "设备没有可用浏览器；请手动打开官方注册网站。"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("创建普通账号 · 首次验证注册") }
+            Text("注册时会打开官方注册页完成人机验证。完成后返回本软件，使用新账号进行原生登录。",
+                style = MaterialTheme.typography.labelSmall)
             HorizontalDivider()
             OutlinedButton(
                 onClick = {
@@ -3020,7 +3051,7 @@ class MainActivity : FragmentActivity() {
 
     private fun openAdminNativePane(pane: String,force:Boolean=false) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
-            pane !in setOf("mailboxes", "domains", "records", "security", "users", "glyphs")) return
+            pane !in setOf("mailboxes", "domains", "records", "security", "users", "registration", "glyphs")) return
         val cacheKey=if(pane=="records")"records:"+adminLedgerTab else pane
         val recent=adminLoadedAt[cacheKey]?.let {
             val elapsed=SystemClock.elapsedRealtime()-it
@@ -3091,6 +3122,10 @@ class MainActivity : FragmentActivity() {
                     primary = nativeAdminClient.get(route, epoch)
                     secondary = null
                 }
+                "registration" -> {
+                    primary = nativeAdminClient.get("/api/admin/registration-control",epoch)
+                    secondary = null
+                }
                 "users" -> {
                     primary = nativeAdminClient.get(
                         "/api/admin/account-registry/registrations?limit="+
@@ -3154,6 +3189,25 @@ class MainActivity : FragmentActivity() {
                         else -> adminRegisteredAccounts = recordRegistrations
                     }
                     "users" -> adminRegisteredAccounts = registrations
+                    "registration" -> {
+                        adminRegPolicy=primary.value
+                        adminRegMode=primary.value?.optString("mode","open") ?: "open"
+                        val start=primary.value?.optLong("start_at",0L) ?: 0L
+                        adminRegStart=if(start>0L) try {
+                            java.time.Instant.ofEpochMilli(start)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toLocalDateTime()
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
+                        }catch (_: Exception){""} else ""
+                        adminRegOpen=(primary.value?.optInt("open_minutes",60) ?: 60)
+                            .takeIf { it>0 }?.toString() ?: "60"
+                        adminRegClosed=(primary.value?.optInt("closed_minutes",1380) ?: 1380)
+                            .takeIf { it>0 }?.toString() ?: "1380"
+                        adminRegQuota=if(primary.value?.isNull("max_accounts") == false)
+                            primary.value?.optInt("max_accounts",0)?.takeIf{it>0}?.toString() ?: ""
+                            else ""
+                        adminRegMessage=""
+                    }
                     else -> adminSecurityState = security
                 }
                 adminLoadedAt[cacheKey]=SystemClock.elapsedRealtime()
@@ -3364,6 +3418,156 @@ class MainActivity : FragmentActivity() {
         )
     }
 
+
+    private fun submitAdminRegistrationControl() {
+        if (!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+            adminPane!="registration" || adminBusy || adminRegPolicy==null) return
+        val revision=adminRegPolicy?.optInt("revision",0) ?: 0
+        if(revision<=0 || adminRegPassword.isBlank()) {
+            adminRegMessage="需先读取服务器配置，并输入当前管理员密码。"
+            return
+        }
+        val mode=adminRegMode
+        if(mode !in setOf("open","closed","once","cycle"))return
+        val timed=mode=="once" || mode=="cycle"
+        val start=if(timed) try {
+            java.time.LocalDateTime.parse(adminRegStart.trim(),
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
+                .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } catch (_: Exception) { -1L } else 0L
+        val minutes=if(timed)adminRegOpen.toIntOrNull() ?: -1 else 0
+        val closed=if(mode=="cycle")adminRegClosed.toIntOrNull() ?: -1 else 0
+        val quota=if(mode=="closed"||adminRegQuota.isBlank())null else adminRegQuota.toIntOrNull()
+        if((timed&&(start<1577836800000L || minutes !in 1..43200 ||
+            (mode=="cycle"&&closed !in 1..43200))) ||
+            (mode!="closed" && adminRegQuota.isNotBlank() && (quota==null || quota !in 1..10000))) {
+            adminRegMessage="时间、开放/关闭时长或名额无效，请检查。"
+            return
+        }
+        val body=JSONObject().put("revision",revision).put("mode",mode)
+            .put("start_at",if(timed)start else JSONObject.NULL)
+            .put("open_minutes",minutes).put("closed_minutes",closed)
+            .put("max_accounts",quota ?: JSONObject.NULL)
+            .put("current_password",adminRegPassword)
+            .put("current_totp",adminRegTotp)
+        adminBusy=true
+        adminRegMessage="正在验证并更新服务端注册策略…"
+        val generation=adminGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminIo.execute {
+            val result=nativeAdminClient.post("/api/admin/registration-control",body,epoch)
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    generation!=adminGeneration.get())return@runOnUiThread
+                adminBusy=false
+                adminRegPassword=""
+                adminRegTotp=""
+                if(result.status==200 && result.value!=null) {
+                    adminRegPolicy=result.value
+                    adminRegMessage="服务器已保存。网页和 APK 共用本规则。"
+                    adminLoadedAt.remove("registration")
+                } else {
+                    adminRegMessage="注册规则未保存（HTTP " + result.status +
+                        " / "+(result.error?:"UNKNOWN")+"）；如其他设备修改过规则，请刷新。"
+                    if(result.status==401)adminAuthenticated=false
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun NativeRegistrationControlContent() {
+        Column(modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Text("新用户注册 · 统一服务端规则",
+                style=MaterialTheme.typography.titleLarge)
+            Text("仅影响新用户注册，包括邀请码与自助注册。已有账号的登录、邮箱和历史数据保持不变。",
+                style=MaterialTheme.typography.bodySmall)
+            val policy=adminRegPolicy
+            if(policy==null) {
+                Text("暂未取得服务器规则。可能尚未部署或迁移。",
+                    style=MaterialTheme.typography.bodyMedium)
+                if(adminError.isNotBlank())Text(adminError,
+                    color=MaterialTheme.colorScheme.error)
+                return@Column
+            }
+            Text(if(policy.optBoolean("open"))"当前：开放中" else "当前：已暂停",
+                style=MaterialTheme.typography.titleMedium)
+            Text("本轮已注册："+policy.optInt("used")+
+                " · 剩余："+if(policy.isNull("remaining"))"不设额外上限"
+                        else policy.optInt("remaining").toString(),
+                style=MaterialTheme.typography.bodySmall)
+            val next=policy.optLong("next_transition_at",0L)
+            if(next>0L)Text("下次自动切换："+formatNativeMessageTime(next),
+                style=MaterialTheme.typography.bodySmall)
+            Box {
+                OutlinedButton(enabled=!adminBusy,
+                    onClick={adminRegMenuOpen=true}) {
+                    Text(when(adminRegMode){
+                        "closed"->"立即暂停（手动恢复）"
+                        "once"->"指定时间开放一次"
+                        "cycle"->"周期性开放与关闭"
+                        else->"持续开放"
+                    }+" ▾")
+                }
+                DropdownMenu(expanded=adminRegMenuOpen,
+                    onDismissRequest={adminRegMenuOpen=false}) {
+                    listOf(
+                        "open" to "持续开放",
+                        "closed" to "立即暂停（手动恢复）",
+                        "once" to "定时开放一次",
+                        "cycle" to "周期开放/关闭"
+                    ).forEach { item ->
+                        DropdownMenuItem(text={Text(item.second)},
+                            onClick={adminRegMode=item.first;adminRegMenuOpen=false})
+                    }
+                }
+            }
+            if(adminRegMode=="once"||adminRegMode=="cycle"){
+                OutlinedTextField(value=adminRegStart,
+                    onValueChange={adminRegStart=it.take(16)},
+                    label={Text("首次开放时间（本机时区）")},
+                    placeholder={Text("2026-11-09T09:00")},
+                    singleLine=true,modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(value=adminRegOpen,
+                    onValueChange={adminRegOpen=it.filter(Char::isDigit).take(5)},
+                    label={Text("开放分钟数（1–43200）")},
+                    singleLine=true,modifier=Modifier.fillMaxWidth())
+                if(adminRegMode=="cycle") {
+                    OutlinedTextField(value=adminRegClosed,
+                        onValueChange={adminRegClosed=it.filter(Char::isDigit).take(5)},
+                        label={Text("每次关闭分钟数（1–43200）")},
+                        singleLine=true,modifier=Modifier.fillMaxWidth())
+                }
+            }
+            if(adminRegMode!="closed"){
+                OutlinedTextField(value=adminRegQuota,
+                    onValueChange={adminRegQuota=it.filter(Char::isDigit).take(5)},
+                    label={Text("每轮开放名额（1–10000，留空不额外限制）")},
+                    singleLine=true,modifier=Modifier.fillMaxWidth())
+            }
+            HorizontalDivider()
+            OutlinedTextField(value=adminRegPassword,
+                onValueChange={adminRegPassword=it.take(128)},
+                label={Text("管理员当前密码 · 必填")},
+                visualTransformation=PasswordVisualTransformation(),
+                singleLine=true,modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(value=adminRegTotp,
+                onValueChange={adminRegTotp=it.filter(Char::isDigit).take(6)},
+                label={Text("管理员 2FA（已启用时必填）")},
+                singleLine=true,modifier=Modifier.fillMaxWidth())
+            if(adminRegMessage.isNotBlank())Text(adminRegMessage,
+                style=MaterialTheme.typography.bodySmall)
+            Button(enabled=!adminBusy && adminRegPassword.isNotBlank(),
+                onClick={showAdminRegConfirm=true},
+                modifier=Modifier.fillMaxWidth()) {
+                Text(if(adminBusy)"服务器验证中…" else "验证并保存规则")
+            }
+            Text("时间由服务器计算，不依赖 APK 保持运行。名额仅是额外控制，现有全站上限与风控仍然有效。",
+                style=MaterialTheme.typography.labelSmall)
+        }
+    }
+
     @Composable
     private fun NativeAdminManagementContent() {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -3376,6 +3580,7 @@ class MainActivity : FragmentActivity() {
                     "domains" -> "域名管理"
                     "records" -> "邮箱使用记录"
                     "users" -> "用户与登记详情"
+                    "registration" -> "新用户注册控制"
                     "glyphs" -> "管理员字符"
                     else -> "管理员安全中心"
                 }, style = MaterialTheme.typography.titleLarge,
@@ -3438,6 +3643,7 @@ class MainActivity : FragmentActivity() {
                     onEquip={mutateAdminGlyph("equip",it)},
                     onBuy={adminGlyphBuyTarget=it}
                 )
+                "registration" -> NativeRegistrationControlContent()
                 "users" -> AdminAccountRegistrations(
                     rows=adminRegisteredAccounts,
                     admin=adminUsername,
@@ -3519,6 +3725,8 @@ class MainActivity : FragmentActivity() {
                                 onClick={adminQuickMenuOpen=false;openAdminNativePane("domains")})
                             DropdownMenuItem(text={Text("用户与登记详情")},
                                 onClick={adminQuickMenuOpen=false;openAdminNativePane("users")})
+                            DropdownMenuItem(text={Text("新用户注册规则")},
+                                onClick={adminQuickMenuOpen=false;openAdminNativePane("registration")})
                             DropdownMenuItem(text={Text("退出管理员")},
                                 onClick={adminQuickMenuOpen=false;logoutNativeAdmin()})
                         }
@@ -4248,6 +4456,16 @@ class MainActivity : FragmentActivity() {
                 })
         }
         if (adminDeleteTarget != null && adminAuthenticated) NativeAdminDeleteDialog()
+        if (showAdminRegConfirm && adminAuthenticated && workspace==MailWorkspace.ADMIN)
+            AlertDialog(onDismissRequest={showAdminRegConfirm=false},
+                title={Text("确认更改全站注册规则？")},
+                text={Text("变更会同时影响网页和 APK 的新用户注册。旧账号登录、收信不变。必须通过管理员密码与已启用的 2FA 验证。")},
+                confirmButton={Button(onClick={
+                    showAdminRegConfirm=false
+                    submitAdminRegistrationControl()
+                }){Text("确认保存")}},
+                dismissButton={TextButton(onClick={showAdminRegConfirm=false}){Text("取消")}})
+
         if (adminRevokeTrustedTarget != null && adminAuthenticated) NativeAdminTrustedRevokeDialog()
         if(glyphBuyTarget!=null && workspace==MailWorkspace.ORDINARY)
             NativeGlyphBuyDialog()
@@ -4572,6 +4790,11 @@ class MainActivity : FragmentActivity() {
         adminBusy = false
         adminAuthenticated = false
         adminSignInPassword = ""
+        adminRegPassword = ""
+        adminRegTotp = ""
+        adminRegPolicy = null
+        adminRegMessage = ""
+        showAdminRegConfirm = false
         adminTotpCode = ""
         adminTotpRequired = false
         adminMailboxes = emptyList()
