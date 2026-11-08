@@ -41,7 +41,7 @@ object AdminDomainSelection {
         return (0 until minOf(rows.length(), 150)).mapNotNull { i ->
             val item = rows.optJSONObject(i) ?: return@mapNotNull null
             val domain = item.optString("domain").lowercase().trim()
-            if (!valid(domain) || !found.add(domain)) return@mapNotNull null
+            if (!valid(domain) || (item.has("enabled") && !item.optBoolean("enabled")) || !found.add(domain)) return@mapNotNull null
             AdminCreateDomainOption(
                 domain, item.optString("label").ifBlank { domain }.take(70),
                 "管理员临时邮箱", "ordinary"

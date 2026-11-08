@@ -3176,6 +3176,7 @@ class MainActivity : FragmentActivity() {
                 adminLoadedAt.remove("activation")
                 adminLoadedAt.remove("records:reserved")
                 adminLoadedAt.remove("records:external")
+                adminLoadedAt.remove("records:internal")
                 adminActivationTarget=null
                 adminActivationError=""
                 adminActivationNotice="服务器已确认重新激活 "+confirmed.address+
@@ -3316,7 +3317,8 @@ class MainActivity : FragmentActivity() {
                     // ordinary-domain list; its failure keeps records read-only.
                     secondary = when(recordTab) {
                         "reserved" -> nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
-                        "external" -> nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses",epoch)
+                        "external","internal" -> nativeAdminClient.get(
+                            "/api/admin/ordinary-inbox/recorded-addresses",epoch)
                         else -> null
                     }
                 }
@@ -3335,17 +3337,18 @@ class MainActivity : FragmentActivity() {
                     secondary = nativeAdminClient.get("/api/admin/trusted-devices", epoch)
                 }
             }
-            val tertiary=if(pane=="records" && recordTab=="external")
+            val tertiary=if(pane=="records" && recordTab in setOf("external","internal"))
                 nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
                 else null
             val valid = primary.status == 200 &&
                 (secondary == null || secondary.status == 200 ||
-                    (pane=="records" && recordTab in setOf("reserved","external")) ||
+                    (pane=="records" && recordTab in setOf("reserved","external","internal")) ||
                     pane=="activation")
             val recordAllowedDomains=when {
                 (pane=="activation" || (pane=="records" && recordTab=="reserved")) &&
                     secondary?.status==200 -> AdminDomainSelection.temporary(secondary.value)
-                pane=="records" && recordTab=="external" && tertiary?.status==200 ->
+                pane=="records" && recordTab in setOf("external","internal") &&
+                    tertiary?.status==200 ->
                     AdminDomainSelection.temporary(tertiary.value)
                 else -> emptyList()
             }
@@ -3354,7 +3357,8 @@ class MainActivity : FragmentActivity() {
             val records=when {
                 valid && (pane=="activation" || (pane=="records" && recordTab=="reserved")) ->
                     AdminManagementModels.recordedAddresses(primary.value)
-                valid && pane=="records" && recordTab=="external" && secondary?.status==200 ->
+                valid && pane=="records" && recordTab in setOf("external","internal") &&
+                    secondary?.status==200 ->
                     AdminManagementModels.recordedAddresses(secondary.value)
                 else -> emptyList()
             }
@@ -3443,7 +3447,15 @@ class MainActivity : FragmentActivity() {
                             if(secondary?.status!=200)
                                 adminActivationNotice="域名允许列表读取失败；当前记录只读，不能申请激活。"
                         }
-                        else -> adminRegisteredAccounts = recordRegistrations
+                        else -> {
+                            adminRegisteredAccounts=recordRegistrations
+                            adminRecordedAddresses=records
+                            adminOrdinaryDomainOptions=recordAllowedDomains
+                            adminActivationEvidenceReady=
+                                secondary?.status==200 && tertiary?.status==200
+                            if(!adminActivationEvidenceReady)
+                                adminActivationNotice="平台注册记录可查看；邮箱恢复授权核验失败，激活不可用。"
+                        }
                     }
                     "users" -> adminRegisteredAccounts = registrations
                     "registration" -> {
@@ -3979,7 +3991,14 @@ class MainActivity : FragmentActivity() {
                                 onExpand={adminRegistrationFiltersExpanded=!adminRegistrationFiltersExpanded},
                                 busy=adminBusy,onSelect={adminSelectedRegistration=it},
                                 maxFetched=adminRegistrationFetchLimit,
-                                onExpandHistory=::expandAdminRegistrationHistory)
+                                onExpandHistory=::expandAdminRegistrationHistory,
+                                recorded=if(adminActivationEvidenceReady)
+                                    adminRecordedAddresses else emptyList(),
+                                allowedDomains=if(adminActivationEvidenceReady)
+                                    adminOrdinaryDomainOptions.map{it.domain}.toSet() else emptySet(),
+                                activeMailboxes=adminMailboxes,
+                                onCopy=::copyMailboxAddress,
+                                onActivate=::requestAdminMailboxActivation)
                         }
                     }
                 }

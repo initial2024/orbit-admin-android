@@ -258,7 +258,12 @@ fun AdminAccountRegistrations(
     rows:List<AdminRegisteredAccount>,admin:String,search:String,setSearch:(String)->Unit,
     source:String,setSource:(String)->Unit,expanded:Boolean,onExpand:()->Unit,
     busy:Boolean,onSelect:(AdminRegisteredAccount)->Unit,
-    maxFetched:Int=100,onExpandHistory:(()->Unit)?=null
+    maxFetched:Int=100,onExpandHistory:(()->Unit)?=null,
+    recorded:List<AdminRecordedAddress> = emptyList(),
+    allowedDomains:Set<String> = emptySet(),
+    activeMailboxes:List<AdminNativeMailbox> = emptyList(),
+    onCopy:((String)->Unit)?=null,
+    onActivate:((AdminMailboxActivationIntent)->Unit)?=null
 ) {
     var lifecycle by remember { mutableStateOf("全部") }
     var status by remember { mutableStateOf("全部") }
@@ -331,6 +336,24 @@ fun AdminAccountRegistrations(
                     detail=(if(item.source=="pieterj") "固定邮箱" else "临时邮箱")+
                         " · "+item.status+"  · 查看详情 ›",
                     onClick={onSelect(item)})
+                if(onCopy!=null) {
+                    val actionRecord=if(item.source=="ordinary")
+                        recorded.firstOrNull { it.ordinaryRegistrationId!=null &&
+                            it.address.equals(item.address,ignoreCase=true) }
+                        else null
+                    val activation=actionRecord?.let {
+                        AdminMailboxActivationPolicy.forRecord(
+                            it,allowedDomains,activeMailboxes)
+                    }
+                    Row(modifier=Modifier.fillMaxWidth().padding(horizontal=8.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick={onCopy(item.address)}) { Text("复制邮箱") }
+                        if(activation!=null && onActivate!=null)
+                            TextButton(enabled=!busy,onClick={onActivate(activation)}) {
+                                Text("一键激活")
+                            }
+                    }
+                }
             }
             if(shown<filtered.size)item {
                 TextButton(onClick={shown+=20},modifier=Modifier.fillMaxWidth()){
