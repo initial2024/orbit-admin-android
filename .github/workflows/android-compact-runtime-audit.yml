@@ -36,20 +36,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+          # A transient 504 in the GitHub cache API has blocked setup-gradle.
+          # Do not weaken tests; bypass cache only for these critical gates.
+          cache-disabled: true
       - name: Prewarm Kotlin toolchain with bounded transient network retries
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
             if gradle --no-daemon --no-configuration-cache :app:assembleDebug :app:assembleCompact; then
               echo "Kotlin and Android dependencies ready."
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq 5 ]; then
               echo "Kotlin compiler dependency unavailable after three attempts" >&2
               exit 1
             fi
-            sleep $((attempt * 15))
+            sleep $((attempt * 12))
           done
       - name: Enable KVM for Android 35 emulator
         shell: bash
