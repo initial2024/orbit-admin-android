@@ -34,6 +34,22 @@ class NativeRegistrationControlContractTest {
   assertTrue(ui.contains("showAdminRegConfirm=true"))
   assertFalse(ui.contains("ordinaryAccountGrantForAdmin"))
  }
+ @Test fun registrationStepUpClearsAfterLogoutExpiryAndNavigation() {
+  val ui=source("MainActivity.kt")
+  val logout=ui.substringAfter("private fun logoutNativeAdmin()")
+    .substringBefore("private fun refreshAdminGlyphs()")
+  val pane=ui.substringAfter("private fun openAdminNativePane(")
+    .substringBefore("private fun updateNativeAdminMailbox(")
+  assertTrue(logout.contains("adminRegPassword = \"\""))
+  assertTrue(logout.contains("adminRegTotp = \"\""))
+  assertTrue(logout.contains("adminRegPolicy = null"))
+  assertTrue(pane.contains("if (pane != \"registration\")"))
+  assertTrue(pane.contains("adminRegPassword = \"\""))
+  assertTrue(pane.contains("adminRegTotp = \"\""))
+  assertTrue(pane.contains("adminRegPolicy = null"))
+  assertTrue(pane.contains("服务器读取失败") || pane.contains("服务器读取失败（"))
+  assertTrue(pane.contains("尚未上线或数据库尚未迁移"))
+ }
  @Test fun credentialsClearedOnLockAndNoUnverifiedSaveClaim() {
   val ui=source("MainActivity.kt")
   val lock=ui.substringAfter("private fun lock() {").substringBefore("@SuppressLint")
