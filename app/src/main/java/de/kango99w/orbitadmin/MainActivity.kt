@@ -953,6 +953,29 @@ class MainActivity : FragmentActivity() {
         if (workspace == next) return
         if (next == MailWorkspace.ADMIN) glyphBuyTarget = null
         else {
+            // Leaving admin is a presentation change, not server logout.
+            // Clear all in-memory privileged rows; a return requires checking
+            // the still-valid independent admin session via /api/admin/status.
+            adminGeneration.incrementAndGet()
+            nativeAdminClient.invalidatePendingResponses()
+            adminAuthenticated=false
+            adminBusy=false
+            adminLoadedAt.clear()
+            adminMailboxes=emptyList()
+            adminMessages=emptyList()
+            adminSelectedMailbox=null
+            adminSelectedMessage=null
+            adminSelectedMessageId=null
+            adminManagedDomains=emptyList()
+            adminInventoryDomains=emptyList()
+            adminRecordedAddresses=emptyList()
+            adminRegisteredAccounts=emptyList()
+            adminExternalEmails=emptyList()
+            adminSelectedExternalEmail=null
+            adminSelectedExternalDetail=null
+            adminExternalDetailGeneration.incrementAndGet()
+            adminExternalDetailBusy=false
+            adminSecurityState=null
             adminGlyphGeneration.incrementAndGet()
             adminGlyphSnapshot=null
             adminGlyphBuyTarget=null
