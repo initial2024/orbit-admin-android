@@ -311,6 +311,45 @@ class MainActivity : FragmentActivity() {
     private var glyphBuyTarget by mutableStateOf<NativeGlyphItem?>(null)
     private var previousWebSection = MailSection.INBOX
     private val sectionBrowsers = mutableMapOf<MailSection,WebView>()
+
+    /**
+     * Release only selected, optional first-party HTML renderers.
+     * Native Compose state, Android Keystore grants and website cookies persist.
+     * Inactive views are not discarded on normal tab switches.
+     */
+    private fun disposeRetainedBrowsers(keys: Set<MailSection>) {
+        if(keys.isEmpty() || pickerPending) return
+        val disposed=keys.mapNotNull { key ->
+            sectionBrowsers.remove(key)?.let { key to it }
+        }
+        for((key, web) in disposed) {
+            try {
+                web.stopLoading()
+                web.onPause()
+                (web.parent as? ViewGroup)?.removeView(web)
+                web.removeAllViews()
+                web.destroy()
+            } catch (_: RuntimeException) {
+                // Disposal is best effort; a renderer may have already exited.
+            }
+            if(key==MailSection.INBOX && !nativeDeviceClient.isBound()) {
+                // In this mode the old website bridge was the only source.
+                // Its snapshot is not proof of a still-active document.
+                nativeInbox=null
+                nativeMailDetail=null
+                pendingNativeMessageId=null
+            }
+        }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // API 34+ mostly sends UI_HIDDEN. Never force a refresh while the
+        // foreground user is reading or an SAF picker owns the WebView.
+        disposeRetainedBrowsers(OrbitWebMemoryPolicy.releaseOnTrim(
+            level=level,unlocked=unlocked,pickerPending=pickerPending,
+            active=activeSection,retained=sectionBrowsers.keys.toSet()))
+    }
     private val browser: WebView? get() = sectionBrowsers[BrowserSessionRouting.key(activeSection)]
     private fun publicWebView(): WebView? = sectionBrowsers[MailSection.INBOX]
     private var pendingTransferUrl: String? = null
@@ -5057,6 +5096,12 @@ class MainActivity : FragmentActivity() {
         pendingNativeMessageId=null
         browser?.onPause()
         browser?.pauseTimers()
+        if (OrbitWebMemoryPolicy.mayReleaseOnLock(
+                pickerPending=pickerPending,validPickerReturn=pickerReturnAllowed())) {
+            // The application is locked; keeping an old WebView DOM alive wastes
+            // private memory and preserves unnecessary off-screen page state.
+            disposeRetainedBrowsers(sectionBrowsers.keys.toSet())
+        }
         message = "已锁定。需要再次通过设备身份验证。"
     }
 
@@ -5407,6 +5452,9 @@ class MainActivity : FragmentActivity() {
         }
         view.loadUrl(initial)
         if (BrowserSessionRouting.key(activeSection) != key) view.onPause()
+        else if (unlocked) view.resumeTimers()
+        // resumeTimers is process-wide: re-arm it only for a visibly opened
+        // first-party fallback after a previous lock suspended the engine.
         return view
     }
 
@@ -5528,11 +5576,8 @@ class MainActivity : FragmentActivity() {
         nativeInbox = null
         pickerPending = false
         pickerLaunchedAtMs = 0
-        sectionBrowsers.values.toList().forEach { web ->
-            (web.parent as? ViewGroup)?.removeView(web)
-            web.destroy()
-        }
-        sectionBrowsers.clear()
+        // onDestroy is final disposal; it must not touch account authorization.
+        disposeRetainedBrowsers(sectionBrowsers.keys.toSet())
         super.onDestroy()
     }
 }
