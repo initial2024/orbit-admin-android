@@ -95,7 +95,7 @@ fun AdminDomainManagement(
                 inv?.registrar.orEmpty(),inv?.dnsProvider.orEmpty(),
                 inv?.websiteHost.orEmpty(),inv?.emailProvider.orEmpty())
                 .any { it.contains(q,ignoreCase=true) }) &&
-            (source=="全部"||item.source==source) &&
+            (source=="全部"||source in item.sources) &&
             (state=="全部"||item.state==state) &&
             (provider=="全部"||inv?.registrar==provider||inv?.dnsProvider==provider)
         }
@@ -104,7 +104,7 @@ fun AdminDomainManagement(
             "来源"->matching.sortedWith(compareBy<AdminManagedDomain>{it.source}.thenBy{it.domain})
             else->matching.sortedWith(compareBy<AdminManagedDomain>{it.domain}.thenBy{it.source})
         }
-        Text("匹配 "+filtered.size+"/"+rows.size+" 个域名 · 仅代表登记及观测数据",
+        Text("匹配 "+filtered.size+"/"+rows.size+" 个不重复域名 · 未核实记录不代表拥有",
             modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -124,7 +124,7 @@ fun AdminDomainManagement(
                 val evidence=inventoryByName[item.domain]
                 AdminSummaryCard(glyph=item.domain.take(1).uppercase(),
                     primary=item.domain,
-                    secondary=item.source+" · "+item.state,
+                    secondary=item.sources.joinToString(" / ")+" · "+item.state,
                     detail=listOfNotNull(evidence?.dnsProvider?.takeIf{it.isNotBlank()}
                         ?.let{"DNS："+it},evidence?.registrar?.takeIf{it.isNotBlank()}
                         ?.let{"注册商："+it}).joinToString(" · ")
