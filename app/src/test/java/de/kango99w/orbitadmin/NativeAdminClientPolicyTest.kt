@@ -6,6 +6,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeAdminClientPolicyTest {
+    @Test fun administratorGlyphsAreStrictlyAdminOwned() {
+        assertTrue(NativeAdminClient.allows("GET","/api/admin/lucky-glyphs/status"))
+        for(path in listOf("/api/admin/lucky-glyphs/checkin",
+            "/api/admin/lucky-glyphs/draw",
+            "/api/admin/lucky-glyphs/equip",
+            "/api/admin/lucky-glyphs/shop/buy"))
+            assertTrue(NativeAdminClient.allows("POST",path))
+        for(path in listOf("/api/lucky-glyphs/status",
+            "/api/admin/lucky-glyphs/users/another/status",
+            "/api/admin/lucky-glyphs/status?user=another",
+            "/api/admin/lucky-glyphs/sell",
+            "/api/admin/lucky-glyphs/../status")) {
+            assertFalse(NativeAdminClient.allows("GET",path))
+            assertFalse(NativeAdminClient.allows("POST",path))
+        }
+        assertFalse(NativeAdminClient.allows("POST","/api/admin/lucky-glyphs/status"))
+        assertFalse(NativeAdminClient.allows("GET","/api/admin/lucky-glyphs/draw"))
+        assertFalse(NativeAdminClient.allows("DELETE","/api/admin/lucky-glyphs/checkin"))
+    }
+
     @Test fun administratorApiAllowsOnlyKnownReadWriteRoutes() {
         assertTrue(NativeAdminClient.allows("GET", "/api/admin/status"))
         assertTrue(NativeAdminClient.allows("POST", "/api/admin/login"))
