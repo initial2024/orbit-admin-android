@@ -199,7 +199,8 @@ fun AdminAddressRecords(
 fun AdminAccountRegistrations(
     rows:List<AdminRegisteredAccount>,admin:String,search:String,setSearch:(String)->Unit,
     source:String,setSource:(String)->Unit,expanded:Boolean,onExpand:()->Unit,
-    busy:Boolean,onSelect:(AdminRegisteredAccount)->Unit
+    busy:Boolean,onSelect:(AdminRegisteredAccount)->Unit,
+    maxFetched:Int=100,onExpandHistory:(()->Unit)?=null
 ) {
     var lifecycle by remember { mutableStateOf("全部") }
     var status by remember { mutableStateOf("全部") }
@@ -253,7 +254,8 @@ fun AdminAccountRegistrations(
         }
         val filtered=AdminRecordFilters.registrations(
             rows,search,nativeSource,lifecycle,status,sort)
-        Text("最近 "+rows.size+" 条登记 · 匹配 "+filtered.size+" 条",
+        Text("已读取 "+rows.size+" 条（服务器窗口上限 "+maxFetched+
+            "）· 匹配 "+filtered.size+" 条",
             modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
             style=MaterialTheme.typography.labelSmall)
         LazyColumn(modifier=Modifier.fillMaxSize(),
@@ -275,6 +277,12 @@ fun AdminAccountRegistrations(
             if(shown<filtered.size)item {
                 TextButton(onClick={shown+=20},modifier=Modifier.fillMaxWidth()){
                     Text("显示更多 · 剩余 "+(filtered.size-shown))
+                }
+            }
+            if(maxFetched<500 && rows.size>=maxFetched && onExpandHistory!=null)item {
+                TextButton(enabled=!busy,onClick=onExpandHistory,
+                    modifier=Modifier.fillMaxWidth()) {
+                    Text("按需读取更早历史（最多 500 条）")
                 }
             }
         }
