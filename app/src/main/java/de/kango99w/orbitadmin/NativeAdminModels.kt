@@ -11,7 +11,9 @@ data class AdminNativeMailbox(
     val messageCount: Int = 0,
     val status: String = "active",
     val expiresAt: Long = 0,
-    val starred: Boolean = false
+    val starred: Boolean = false,
+    val registrationId: String? = null,
+    val revivable: Boolean = false
 )
 
 data class AdminNativeMessage(
@@ -54,15 +56,23 @@ object AdminNativeModels {
             val o = rows.optJSONObject(i) ?: return@mapNotNull null
             val id = o.optString("id")
             val address = o.optString("address")
-            if (!validId(id) || address.isBlank() || address.length > 254)
-                return@mapNotNull null
+            val registrationId = o.optString("registration_id")
+                .takeIf(::validId)
+            // Historical ordinary registration rows use a synthetic
+            // "registration:<uuid>" list key. It is NEVER a mailbox API ID.
+            val historical = !privateMailbox && registrationId != null &&
+                id == "registration:$registrationId"
+            if ((!validId(id) && !historical) || address.isBlank() ||
+                address.length > 254) return@mapNotNull null
             AdminNativeMailbox(
                 id, address, privateMailbox,
                 o.optInt("unread_count").coerceIn(0, 100_000),
                 o.optInt("message_count").coerceIn(0, 100_000),
                 o.optString("status").take(24),
                 o.optLong("expires_at"),
-                o.optInt("is_starred") == 1 || o.optBoolean("is_starred", false)
+                o.optInt("is_starred") == 1 || o.optBoolean("is_starred", false),
+                registrationId,
+                !privateMailbox && registrationId != null && o.optBoolean("revivable", false)
             )
         }
     }
