@@ -132,6 +132,15 @@ class MainActivity : FragmentActivity() {
     // Mail detail reads must not queue behind mailbox sync, transfers or FCM calls.
     private val nativeReadIo = Executors.newSingleThreadExecutor()
     private val nativeRequestGeneration = AtomicLong(0)
+    private val nativeOfflineCache by lazy { NativeOfflineMailboxCache(applicationContext) }
+    private var nativeLastSuccessfulSyncMs = 0L
+    // Skip duplicate HTTP requests when a successful snapshot is still fresh.
+    private fun refreshNativeApiIfNeeded() {
+        val age=SystemClock.elapsedRealtime()-nativeLastSuccessfulSyncMs
+        if(nativeApiActive && nativeInbox != null && nativeLastSuccessfulSyncMs>0L &&
+            age in 0..45_000L) return
+        refreshNativeApi()
+    }
     private var nativeApiActive by mutableStateOf(false)
     private var nativeApiLoading by mutableStateOf(false)
     private var nativeApiNotice by mutableStateOf("")
@@ -449,7 +458,7 @@ class MainActivity : FragmentActivity() {
                     message = ""
                     browser?.resumeTimers()
                     browser?.onResume()
-                    if (nativeDeviceClient.isBound()) refreshNativeApi()
+                    if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
                     else requestMissingNativeSnapshot()
                     if (activeSection == MailSection.ADMIN && showNativeToolsPanel)
                         refreshNativeAdmin()
@@ -925,7 +934,7 @@ class MainActivity : FragmentActivity() {
         // Native tabs never loadUrl; any website state remains in its private scope.
         sectionBrowsers[nextKey]?.onResume()
         if (section == MailSection.INBOX || section == MailSection.MAILBOXES) {
-            if (nativeDeviceClient.isBound()) refreshNativeApi()
+            if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
             else requestMissingNativeSnapshot()
         } else if (section == MailSection.ADMIN && showNativeToolsPanel) {
             refreshNativeAdmin()
@@ -1033,6 +1042,8 @@ class MainActivity : FragmentActivity() {
                     nativeLoginTotp = ""
                     nativeLoginError = ""
                     nativeInbox = null
+                    nativeOfflineCache.clear()
+                    nativeLastSuccessfulSyncMs=0L
                     nativeApiActive = false
                     message = "账号已安全绑定到本机，正在同步邮件。"
                     refreshNativeApi()
@@ -1043,13 +1054,24 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Signed, cookie-free native API reads. Only account-owned and unlocked data is displayed. */
+    /** Signed native API with a read-only encrypted offline metadata fallback. */
     private fun refreshNativeApi() {
         if (!unlocked || !nativeDeviceClient.isBound() || nativeApiLoading) return
         val deviceId = nativeDeviceClient.currentId() ?: return
         val generation = nativeRequestGeneration.incrementAndGet()
+        val cacheEpoch = nativeOfflineCache.epoch()
         nativeApiLoading = true
         nativeIo.execute {
+            val cached = nativeOfflineCache.restore(deviceId)
+            if(cached != null) runOnUiThread {
+                if(unlocked && nativeDeviceClient.currentId()==deviceId &&
+                    nativeRequestGeneration.get()==generation && nativeInbox==null) {
+                    nativeInbox=cached
+                    nativeApiActive=false
+                    nativeApiNotice="离线历史列表；联网验证后才可阅读正文。"
+                    showNativeMail=true
+                }
+            }
             val mailboxes = nativeDeviceClient.fetch("/api/account/native-device/mailboxes")
             if (mailboxes.status != 200 || mailboxes.value == null) {
                 runOnUiThread {
@@ -1061,13 +1083,19 @@ class MainActivity : FragmentActivity() {
                             503 -> "服务器原生接口尚未启用，现有数据未被更改。"
                             else -> "原生邮箱同步失败：HTTP ${mailboxes.status}"
                         }
-                        // Never leave stale sensitive data visible after a failed authorization/read.
                         nativeApiActive = false
-                        nativeInbox = null
                         pendingNativeMessageId = null
                         nativeMailDetail = null
+                        // A revoked grant must not expose cached metadata. Transient
+                        // outages preserve history but never authorize message reads.
+                        val transient = mailboxes.status == 503 || mailboxes.status == 0
+                        nativeInbox = if(transient)
+                            (nativeInbox ?: cached)?.copy(
+                                statusText="离线历史列表 · 未验证最新授权",
+                                nativeReadSupported=false) else null
                         if (mailboxes.status == 401) {
-                            // A revoked device must not trap the app in website login fallback.
+                            nativeOfflineCache.clear()
+                            nativeLastSuccessfulSyncMs=0L
                             nativeDeviceClient.clearLocalBinding()
                             setPushOptIn(false)
                             nativeLoginPassword = ""
@@ -1121,11 +1149,19 @@ class MainActivity : FragmentActivity() {
                 mailboxes = rows,
                 messages = mail,
             )
+            // Only successful, unprotected metadata is persisted. UI state remains
+            // guarded by a generation and the non-exportable Keystore binding.
+            if(selected != null && !locked && messageResult?.status == 200 &&
+                nativeRequestGeneration.get()==generation &&
+                nativeDeviceClient.currentId()==deviceId) {
+                nativeOfflineCache.store(deviceId,snapshot,cacheEpoch)
+            }
             runOnUiThread {
                 if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                 nativeApiLoading = false
                 if (!unlocked || nativeDeviceClient.currentId() != deviceId) return@runOnUiThread
                 nativeApiActive = true
+                nativeLastSuccessfulSyncMs=SystemClock.elapsedRealtime()
                 nativeApiNotice = if (selected != null && !locked && messageResult?.status != 200)
                     "邮件列表暂不可用；请刷新重试。" else ""
                 if (nativeInbox?.currentId != snapshot.currentId) {
@@ -4172,6 +4208,8 @@ class MainActivity : FragmentActivity() {
     private fun lock() {
         unlocked = false
         nativeDeviceClient.cancelPendingLogin()
+        nativeOfflineCache.cancelPendingWrites()
+        nativeLastSuccessfulSyncMs=0L
         accountOverviewGeneration.incrementAndGet()
         accountOverviewClient.invalidate()
         accountOverview = null
@@ -4567,7 +4605,7 @@ class MainActivity : FragmentActivity() {
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
-            if (nativeDeviceClient.isBound()) refreshNativeApi()
+            if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
             else requestMissingNativeSnapshot()
             tryRegisterPush()
         }
