@@ -996,10 +996,12 @@ class MainActivity : FragmentActivity() {
             return
         }
         val generation = nativeRequestGeneration.incrementAndGet()
+        val loginGrantEpoch = nativeDeviceClient.snapshotLoginEpoch()
+        val loginLabel = nativePairLabel
         nativeLoginBusy = true
         nativeLoginError = ""
         nativeIo.execute {
-            val result = nativeDeviceClient.login(email, password, totp, nativePairLabel)
+            val result = nativeDeviceClient.login(email, password, totp, loginLabel, loginGrantEpoch)
             runOnUiThread {
                 if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                 nativeLoginBusy = false
@@ -3976,6 +3978,7 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        nativeDeviceClient.cancelPendingLogin()
         privateMailGeneration.incrementAndGet()
         privateMailClient.invalidate()
         privateMailBusy = false

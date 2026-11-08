@@ -67,6 +67,23 @@ class NativeDeviceSecurityContractTest {
         assertFalse(submit.contains("publicWebView("))
     }
 
+    @Test fun lockInvalidatesPendingNativeLoginBeforeItsNetworkReplyCanPersist() {
+        val client = source("NativeDeviceClient.kt")
+        val activity = source("MainActivity.kt")
+        val login = client.substringAfter("fun login(email: String").substringBefore("fun completePair(")
+        val logout = client.substringAfter("fun clearLocalBinding()").substringBefore("/** Execute off")
+        val lock = activity.substringAfter("private fun lock() {").substringBefore("@SuppressLint")
+        val submit = activity.substringAfter("private fun submitNativeLogin()")
+            .substringBefore("/** Signed, cookie-free native API reads.")
+        assertTrue(login.contains("loginCommitGate.isCurrent(loginEpoch)"))
+        assertTrue(login.contains("completeLoginGrant(loginEpoch"))
+        assertTrue(login.contains("loginCommitGate.commitIfCurrent(epoch)"))
+        assertTrue(submit.contains("val loginGrantEpoch = nativeDeviceClient.snapshotLoginEpoch()"))
+        assertTrue(submit.contains("nativeDeviceClient.login(email, password, totp, loginLabel, loginGrantEpoch)"))
+        assertTrue(logout.contains("cancelPendingLogin()"))
+        assertTrue(lock.contains("nativeDeviceClient.cancelPendingLogin()"))
+    }
+
     @Test fun websiteBridgeCannotOverwriteBoundNativeMailData() {
         val source = source("MainActivity.kt")
         assertTrue(source.contains("if (!unlocked || nativeDeviceClient.isBound()) return@runOnUiThread"))

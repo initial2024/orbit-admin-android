@@ -23,6 +23,8 @@ import javax.net.ssl.HttpsURLConnection
 class NativeDeviceClient(context: Context) {
     private val prefs = context.getSharedPreferences("orbit_native_device_v1", Context.MODE_PRIVATE)
     private val pushPrefs = context.getSharedPreferences("orbit_push", Context.MODE_PRIVATE)
+    // In-flight HTTPS responses must not install grants after the app is locked.
+    private val loginCommitGate = AdminCookieCommitGate()
     companion object {
         private const val ALIAS = "orbit_mail_device_p256_v1"
         private const val ORIGIN = "https://inbox.kango99w.de"
@@ -104,7 +106,8 @@ class NativeDeviceClient(context: Context) {
      * TOTP produces a revocable Keystore-bound device grant. Never opens WebView,
      * stores a password, stores an account cookie, or receives admin privileges.
      */
-    fun login(email: String, password: String, totp: String, label: String): Response {
+    fun login(email: String, password: String, totp: String, label: String,
+              loginEpoch: Long = snapshotLoginEpoch()): Response {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Native login on UI thread" }
         val trimmed = email.trim().lowercase(java.util.Locale.ROOT)
         if (!Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(trimmed) ||
@@ -113,6 +116,9 @@ class NativeDeviceClient(context: Context) {
             label.contains('\n') || label.contains('\r')) {
             return Response(400, null, "NATIVE_LOGIN_INPUT_INVALID")
         }
+        // A login queued before lock must not begin HTTP or persist a device grant.
+        if (!loginCommitGate.isCurrent(loginEpoch))
+            return Response(499, null, "NATIVE_LOGIN_CANCELLED")
         // AndroidKeyStore can fail before any HTTPS request (e.g. secure hardware
         // unavailable). Never leave the Compose login spinner stuck or misreport
         // a local signer failure as a server authorization failure.
@@ -153,9 +159,10 @@ class NativeDeviceClient(context: Context) {
                 if (count > limit) throw IOException("Native login response too large")
                 JSONObject(String(buffer, 0, count, Charsets.UTF_8))
             }
-            if (code == 201 && value.optString("scope") == "account_mail_read" &&
-                completePair(value.optString("device_id"), value.optLong("expires_at"))) {
-                return Response(201, value)
+            if (code == 201 && value.optString("scope") == "account_mail_read") {
+                return if (completeLoginGrant(loginEpoch, value.optString("device_id"),
+                        value.optLong("expires_at"))) Response(201, value)
+                else Response(499, null, "NATIVE_LOGIN_BINDING_REJECTED")
             }
             Response(code, value, value.optString("error", "NATIVE_LOGIN_FAILED"))
         } catch (_: Exception) {
@@ -163,6 +170,20 @@ class NativeDeviceClient(context: Context) {
         } finally {
             connection?.disconnect()
         }
+    }
+
+    /** Lock, local sign-out and account reset cancel unfinished login commits. */
+    fun cancelPendingLogin() = loginCommitGate.invalidate()
+
+    internal fun snapshotLoginEpoch(): Long = loginCommitGate.snapshot()
+
+    /** Atomic grant persistence relative to a concurrent lock or sign-out. */
+    internal fun completeLoginGrant(epoch: Long, deviceId: String, expiresAt: Long): Boolean {
+        var stored = false
+        val current = loginCommitGate.commitIfCurrent(epoch) {
+            stored = completePair(deviceId, expiresAt)
+        }
+        return current && stored
     }
 
     fun completePair(deviceId: String, expiresAt: Long): Boolean {
@@ -187,6 +208,7 @@ class NativeDeviceClient(context: Context) {
     fun localExpiry(): Long = prefs.getLong("expires_at", 0L)
 
     fun clearLocalBinding() {
+        cancelPendingLogin()
         // Local-only sign-out cannot prove server revocation. Immediately disable
         // delivery on this device even if a remote FCM registration still exists.
         pushPrefs.edit().putBoolean("opt_in", false).commit()

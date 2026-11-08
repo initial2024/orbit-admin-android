@@ -117,6 +117,32 @@ class NativeDeviceClientInstrumentedTest {
         }
     }
 
+    @Test fun lockingOrSigningOutRejectsAnInFlightLoginGrant() {
+        val client = NativeDeviceClient(context)
+        client.clearLocalBinding()
+        try {
+            // Synthetic local key and device identifier only; no HTTP or account access.
+            client.createPairPayload("Orbit Emulator", "", "")
+            val stale = client.snapshotLoginEpoch()
+            client.cancelPendingLogin()
+            assertFalse(client.completeLoginGrant(stale,
+                "11111111-1111-4111-8111-111111111111",
+                System.currentTimeMillis() + 600_000L))
+            assertFalse(client.isBound())
+
+            val current = client.snapshotLoginEpoch()
+            assertTrue(client.completeLoginGrant(current,
+                "11111111-1111-4111-8111-111111111111",
+                System.currentTimeMillis() + 600_000L))
+            assertTrue(client.isBound())
+            client.clearLocalBinding()
+            assertFalse(client.completeLoginGrant(current,
+                "22222222-2222-4222-8222-222222222222",
+                System.currentTimeMillis() + 600_000L))
+            assertFalse(client.isBound())
+        } finally { client.clearLocalBinding() }
+    }
+
     @Test fun expiredDeviceGrantCannotRemainBound() {
         val client=NativeDeviceClient(context)
         client.clearLocalBinding()
