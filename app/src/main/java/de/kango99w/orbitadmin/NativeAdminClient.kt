@@ -36,6 +36,7 @@ class NativeAdminClient {
             "^/api/admin/(?:pieterj-mail|ordinary-inbox)/mailboxes/$UUID/messages(?:/$UUID)?$"
         )
         private val PRIVATE_MESSAGE = Regex("^/api/admin/pieterj-mail/messages/$UUID$")
+        private val EXTERNAL_EMAIL_DETAIL = Regex("^/api/admin/external-emails/$UUID$")
         private val PRIVATE_MAILBOX = Regex("^/api/admin/pieterj-mail/mailboxes/$UUID$")
         private val ORDINARY_RENEW = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID/renew$")
         private val ORDINARY_MAILBOX = Regex("^/api/admin/ordinary-inbox/mailboxes/$UUID$")
@@ -50,6 +51,7 @@ class NativeAdminClient {
             "/api/admin/domain-control/inventory",
             "/api/admin/trusted-devices",
             "/api/admin/2fa/status",
+            "/api/admin/external-emails",
             "/api/admin/lucky-glyphs/status"
         )
         private val POST_PATHS = setOf(
@@ -69,7 +71,7 @@ class NativeAdminClient {
                     it == '\n' || it == '\r' }) return false
             return when (method) {
                 "GET" -> path in GET_PATHS || MAILBOX_MESSAGES.matches(path) ||
-                    PRIVATE_MESSAGE.matches(path)
+                    PRIVATE_MESSAGE.matches(path) || EXTERNAL_EMAIL_DETAIL.matches(path)
                 "POST" -> path in POST_PATHS || ORDINARY_RENEW.matches(path) ||
                     TRUSTED_REVOKE.matches(path)
                 "PATCH" -> PRIVATE_MAILBOX.matches(path)
