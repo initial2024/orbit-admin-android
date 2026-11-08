@@ -49,11 +49,14 @@ class NativeAdminClient {
             "/api/admin/pieterj-mail/status",
             "/api/admin/domain-control/inventory",
             "/api/admin/trusted-devices",
-            "/api/admin/2fa/status"
+            "/api/admin/2fa/status",
+            "/api/admin/lucky-glyphs/status"
         )
         private val POST_PATHS = setOf(
             "/api/admin/login", "/api/admin/login/totp", "/api/admin/logout",
             "/api/admin/private-mail-handoff",
+            "/api/admin/lucky-glyphs/checkin", "/api/admin/lucky-glyphs/draw",
+            "/api/admin/lucky-glyphs/equip", "/api/admin/lucky-glyphs/shop/buy",
             "/api/admin/pieterj-mail/mailboxes", "/api/admin/ordinary-inbox/mailboxes"
         )
 
