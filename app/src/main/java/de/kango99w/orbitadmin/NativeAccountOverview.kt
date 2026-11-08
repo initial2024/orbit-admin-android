@@ -73,6 +73,14 @@ class NativeAccountOverviewClient {
 
 data class NativeAccountQuota(val key: String, val title: String,
     val used: Long, val limit: Long, val unit: String = "")
+data class NativeMailboxCapacity(
+    val checkedAt: Long, val globalUsed: Long, val globalLimit: Long,
+    val globalRemaining: Long, val pool: String,
+    val freeUsed: Long, val freeLimit: Long,
+    val nonpaidUsed: Long, val nonpaidLimit: Long,
+    val estimatedAvailable: Long
+)
+
 data class NativeAccountOverview(
     val label: String, val email: String, val sessionExpiresAt: Long,
     val planLabel: String?, val planKey: String?, val planExpiresAt: Long?,
@@ -80,7 +88,8 @@ data class NativeAccountOverview(
     val usageCoverage: String, val expiryReminder: Boolean,
     val latestExpiredAt: Long?, val closureState: String?, val closureEmail: String?,
     val closureCoolingMs: Long?, val closureMethods: List<String>,
-    val quotaAvailable: Boolean, val closureAvailable: Boolean
+    val quotaAvailable: Boolean, val closureAvailable: Boolean,
+    val mailboxCapacity: NativeMailboxCapacity?
 )
 
 /** Server values, not a locally hardcoded plan entitlement. Null means unknown. */
@@ -123,6 +132,33 @@ object NativeAccountOverviewModels {
             if (used >= 0 && limit >= 0) quotas.add(NativeAccountQuota(
                 "large_drop", "文件月/周期用量", used, limit, "bytes"))
         }
+        val rawCapacity = verifiedUpgrade?.optJSONObject("mailbox_capacity")
+            ?.takeIf { it.optBoolean("verified") }
+        val global = rawCapacity?.optJSONObject("global")
+        val freePool = rawCapacity?.optJSONObject("free_pool")
+        val nonpaidPool = rawCapacity?.optJSONObject("nonpaid_pool")
+        fun boundedCount(obj: JSONObject?, key: String): Long? {
+            if (obj == null || !obj.has(key) || obj.isNull(key)) return null
+            val value = obj.optLong(key,-1)
+            return value.takeIf { it in 0..1_000_000L }
+        }
+        val capacity = if (rawCapacity != null &&
+            rawCapacity.optString("pool") in setOf("free","trial","plus") &&
+            listOf(global,freePool,nonpaidPool).all { it != null }) {
+            val values=listOf(
+                boundedCount(global,"used"),boundedCount(global,"limit"),
+                boundedCount(global,"remaining"),boundedCount(freePool,"used"),
+                boundedCount(freePool,"limit"),boundedCount(nonpaidPool,"used"),
+                boundedCount(nonpaidPool,"limit"))
+            val estimated=rawCapacity.optLong("estimated_plan_pool_remaining",-1)
+            val checked=rawCapacity.optLong("checked_at",0)
+            if(values.all { it != null } && estimated in 0..150 &&
+                checked in 946684800000L..4102444800000L) {
+                NativeMailboxCapacity(checked,values[0]!!,values[1]!!,
+                    values[2]!!,rawCapacity.optString("pool"),values[3]!!,
+                    values[4]!!,values[5]!!,values[6]!!,estimated)
+            } else null
+        } else null
         val reminders = verifiedUpgrade?.optJSONObject("expiry_reminder")
         val benefitArray = usage?.optJSONArray("unused_benefits")
         val unused = mutableListOf<String>()
@@ -165,7 +201,8 @@ object NativeAccountOverviewModels {
             closureCoolingMs = closure?.optLong("cooling_period_ms")?.takeIf { it > 0 },
             closureMethods = methods,
             quotaAvailable = verifiedUpgrade != null,
-            closureAvailable = closure?.optBoolean("enabled") == true
+            closureAvailable = closure?.optBoolean("enabled") == true,
+            mailboxCapacity = capacity
         )
     }
 }
