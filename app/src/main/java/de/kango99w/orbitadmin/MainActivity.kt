@@ -66,6 +66,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -3878,24 +3879,62 @@ class MainActivity : FragmentActivity() {
                     onExpand={adminDomainFiltersExpanded=!adminDomainFiltersExpanded},
                     busy=adminBusy
                 )
-                "activation" -> AdminAddressRecords(
-                    rows=adminRecordedAddresses,
-                    search=adminRecordSearch,setSearch={adminRecordSearch=it},
-                    source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
-                    state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
-                    expanded=adminRecordFiltersExpanded,
-                    onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
-                    busy=adminBusy,
-                    allowedDomains=if(adminActivationEvidenceReady)
-                        adminOrdinaryDomainOptions.map{it.domain}.toSet() else emptySet(),
-                    activeMailboxes=adminMailboxes,
-                    onActivate=::requestAdminMailboxActivation,
-                    onOpenActive={
-                        adminPane="mailboxes"
-                        openNativeAdminMailbox(it)
-                    },
-                    onCopy=::copyMailboxAddress,activationOnly=true
-                )
+                "activation" -> Column(modifier=Modifier.fillMaxSize()) {
+                    // An expired but revivable mailbox may have no recorded-address
+                    // entry. Preserve that legitimate server-owned recovery path.
+                    val permitted=if(adminActivationEvidenceReady)
+                        adminOrdinaryDomainOptions.map{it.domain}.toSet()
+                        else emptySet()
+                    val historical=adminMailboxes.mapNotNull { box ->
+                        AdminMailboxActivationPolicy.forMailbox(box,permitted)?.let {
+                            box to it
+                        }
+                    }.distinctBy { it.first.address.lowercase() }
+                    if(historical.isNotEmpty()) {
+                        Text("历史邮箱可恢复 · "+historical.size+" 条",
+                            modifier=Modifier.padding(horizontal=14.dp,vertical=4.dp),
+                            style=MaterialTheme.typography.titleSmall)
+                        Row(modifier=Modifier.fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal=10.dp),
+                            horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                            historical.take(100).forEach { (mailbox,intent) ->
+                                Card(modifier=Modifier.width(250.dp)) {
+                                    Column(modifier=Modifier.padding(9.dp)) {
+                                        Text(mailbox.address,maxLines=1)
+                                        Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                                            TextButton(onClick={
+                                                copyMailboxAddress(mailbox.address)
+                                            }){Text("复制")}
+                                            TextButton(enabled=!adminBusy,
+                                                onClick={requestAdminMailboxActivation(intent)}) {
+                                                Text("一键激活")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Box(modifier=Modifier.weight(1f)) {
+                        AdminAddressRecords(
+                            rows=adminRecordedAddresses,
+                            search=adminRecordSearch,setSearch={adminRecordSearch=it},
+                            source=adminRecordSourceFilter,setSource={adminRecordSourceFilter=it},
+                            state=adminRecordStateFilter,setState={adminRecordStateFilter=it},
+                            expanded=adminRecordFiltersExpanded,
+                            onExpand={adminRecordFiltersExpanded=!adminRecordFiltersExpanded},
+                            busy=adminBusy,allowedDomains=permitted,
+                            activeMailboxes=adminMailboxes,
+                            onActivate=::requestAdminMailboxActivation,
+                            onOpenActive={
+                                adminPane="mailboxes"
+                                openNativeAdminMailbox(it)
+                            },
+                            onCopy=::copyMailboxAddress,activationOnly=true
+                        )
+                    }
+                }
                 "records" -> Column(modifier=Modifier.fillMaxSize()) {
                     AdminLedgerTabStrip(selected=adminLedgerTab,onSelect=::selectAdminLedgerTab)
                     if(adminActivationNotice.isNotBlank())
