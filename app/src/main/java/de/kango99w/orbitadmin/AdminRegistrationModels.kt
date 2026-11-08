@@ -25,9 +25,9 @@ object AdminRegistrationModels {
     private val addressPattern=Regex("^[^@\\s]{1,64}@[A-Za-z0-9.-]{3,150}$")
     fun parse(value: JSONObject?): List<AdminRegisteredAccount> {
         val array=value?.optJSONArray("registrations") ?: return emptyList()
-        val result=ArrayList<AdminRegisteredAccount>(minOf(array.length(),150))
+        val result=ArrayList<AdminRegisteredAccount>(minOf(array.length(),500))
         val seen=HashSet<String>()
-        for(i in 0 until minOf(array.length(),150)){
+        for(i in 0 until minOf(array.length(),500)){
             val row=array.optJSONObject(i) ?: continue
             val id=row.optString("id")
             val address=row.optString("mailbox_address").trim().lowercase()
