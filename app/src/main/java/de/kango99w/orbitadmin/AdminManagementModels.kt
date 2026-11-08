@@ -45,7 +45,7 @@ object AdminManagementModels {
                 .filter { it.isNotBlank() }.distinct().take(8)
             grouped[key] = (previous ?: row).copy(domain = key, sources = labels)
         }
-        return grouped.values.sortedBy { it.domain }
+        return grouped.values.toList() // preserve registry order; presentation layer applies sorting
     }
 
     private val domainPattern = Regex("^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9-]{2,63}$")
