@@ -16,7 +16,11 @@ data class AdminManagedDomain(
 data class AdminRecordedAddress(
     val address: String,
     val source: String,
-    val reserved: Boolean
+    val reserved: Boolean,
+    val externalId: String? = null,
+    val privateId: String? = null,
+    val ordinaryRegistrationId: String? = null,
+    val privateRegistrationId: String? = null
 )
 data class AdminTrustedDevice(
     val id: String,
@@ -82,10 +86,16 @@ object AdminManagementModels {
             val row = rows.optJSONObject(index) ?: return@mapNotNull null
             val address = row.optString("address").take(254)
             if (!mailPattern.matches(address)) return@mapNotNull null
+            fun id(field: String): String? = row.optString(field)
+                .takeIf(AdminNativeModels::validId)
             AdminRecordedAddress(
                 address,
                 row.optString("source").take(48),
-                row.optBoolean("reserved", false)
+                row.optBoolean("reserved", false),
+                id("external_id"),
+                id("private_id"),
+                id("ordinary_registration_id"),
+                id("private_registration_id")
             )
         }
     }
