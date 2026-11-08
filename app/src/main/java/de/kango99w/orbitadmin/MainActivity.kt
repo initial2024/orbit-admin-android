@@ -3248,7 +3248,11 @@ class MainActivity : FragmentActivity() {
                         else->"/api/admin/ordinary-inbox/recorded-addresses"
                     }
                     primary = nativeAdminClient.get(route, epoch)
-                    secondary = null
+                    // An activation button needs a fresh server-approved
+                    // ordinary-domain list; its failure keeps records read-only.
+                    secondary = if(recordTab=="reserved")
+                        nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
+                        else null
                 }
                 "registration" -> {
                     primary = nativeAdminClient.get("/api/admin/registration-control",epoch)
@@ -3266,7 +3270,11 @@ class MainActivity : FragmentActivity() {
                 }
             }
             val valid = primary.status == 200 &&
-                (secondary == null || secondary.status == 200)
+                (secondary == null || secondary.status == 200 ||
+                    (pane=="records" && recordTab=="reserved"))
+            val recordAllowedDomains=if(pane=="records" && recordTab=="reserved" &&
+                secondary?.status==200) AdminDomainSelection.temporary(secondary.value)
+                else emptyList()
             val domains = if (pane == "domains" && valid)
                 AdminManagementModels.domains(primary.value, secondary?.value) else emptyList()
             val records = if (pane == "records" && recordTab=="reserved" && valid)
@@ -3329,7 +3337,12 @@ class MainActivity : FragmentActivity() {
                     "domains" -> adminManagedDomains = domains
                     "records" -> when(recordTab) {
                         "external" -> adminExternalEmails = external
-                        "reserved" -> adminRecordedAddresses = records
+                        "reserved" -> {
+                            adminRecordedAddresses = records
+                            adminOrdinaryDomainOptions=recordAllowedDomains
+                            if(secondary?.status!=200)
+                                adminActivationNotice="域名允许列表读取失败；当前记录只读，不能申请激活。"
+                        }
                         else -> adminRegisteredAccounts = recordRegistrations
                     }
                     "users" -> adminRegisteredAccounts = registrations
