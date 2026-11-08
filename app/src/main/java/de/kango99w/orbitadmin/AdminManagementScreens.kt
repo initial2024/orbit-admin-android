@@ -144,50 +144,101 @@ fun AdminDomainManagement(
 fun AdminAddressRecords(
     rows: List<AdminRecordedAddress>,search:String,setSearch:(String)->Unit,
     source:String,setSource:(String)->Unit,state:String,setState:(String)->Unit,
-    expanded:Boolean,onExpand:()->Unit,busy:Boolean
+    expanded:Boolean,onExpand:()->Unit,busy:Boolean,
+    allowedDomains:Set<String>,activeMailboxes:List<AdminNativeMailbox>,
+    onActivate:(AdminMailboxActivationIntent)->Unit,
+    onOpenActive:(AdminNativeMailbox)->Unit
 ) {
     var shown by remember { mutableStateOf(25) }
+    val eligible=(rows.count {
+        AdminMailboxActivationPolicy.forRecord(it,allowedDomains,activeMailboxes)!=null
+    })
     Column(modifier=Modifier.fillMaxSize()) {
         OutlinedTextField(value=search,onValueChange={setSearch(it.take(100))},
-            label={Text("搜索邮箱地址、来源")},singleLine=true,
+            label={Text("搜索已登记邮箱地址、来源")},singleLine=true,
             modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=4.dp))
         AdminFilterFold(label="记录筛选",expanded=expanded,
             activeSummary="状态："+state+" · 来源："+source,onToggle=onExpand) {
             Row(modifier=Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                listOf("全部","已保留","已释放").forEach { value ->
-                    FilterChip(selected=state==value,onClick={setState(value)},
+                listOf("全部","已保留","已释放","可激活").forEach { value ->
+                    FilterChip(selected=state==value,onClick={setState(value);shown=25},
                         label={Text(value,maxLines=1)})
                 }
             }
             Row(modifier=Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                 (listOf("全部")+rows.map{it.source}.filter{it.isNotBlank()}.distinct()).forEach { value ->
-                    FilterChip(selected=source==value,onClick={setSource(value)},
+                    FilterChip(selected=source==value,onClick={setSource(value);shown=25},
                         label={Text(value,maxLines=1)})
                 }
             }
             if(source!="全部"||state!="全部")
                 TextButton(onClick={setSource("全部");setState("全部")}){Text("清空筛选")}
         }
-        val filtered=AdminRecordFilters.addresses(rows,search,source,state)
-        Text("匹配 "+filtered.size+"/"+rows.size+" 条 · 记录不代表仍可收件",
+        val base=AdminRecordFilters.addresses(rows,search,source,
+            if(state=="可激活")"全部" else state)
+        val filtered=if(state=="可激活")base.filter {
+            AdminMailboxActivationPolicy.forRecord(it,allowedDomains,activeMailboxes)!=null
+        } else base
+        Text("已读取 "+rows.size+" 条 · 匹配 "+filtered.size+" 条 · 可激活 "+eligible+" 条",
             modifier=Modifier.padding(horizontal=15.dp,vertical=3.dp),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(modifier=Modifier.fillMaxSize(),
             contentPadding=androidx.compose.foundation.layout.PaddingValues(
                 horizontal=12.dp,vertical=8.dp),
-            verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            if(filtered.isEmpty()&&!busy) item {
-                Text("没有匹配的使用记录。",modifier=Modifier.padding(14.dp))
+            verticalArrangement=Arrangement.spacedBy(7.dp)) {
+            if(filtered.isEmpty()&&!busy)item {
+                Text("没有可恢复的邮箱或匹配记录。未验证的域名不允许一键激活。",
+                    modifier=Modifier.padding(14.dp))
             }
-            items(filtered.take(shown)) { item ->
-                AdminSummaryCard(item.address.take(1).uppercase(),item.address,
-                    item.source+" · "+if(item.reserved)"已保留" else "已释放")
+            items(filtered.take(shown),key={it.address}) { item ->
+                val live=activeMailboxes.firstOrNull {
+                    !it.privateMailbox && it.status=="active" &&
+                    it.expiresAt>System.currentTimeMillis() &&
+                    it.address.equals(item.address,ignoreCase=true)
+                }
+                val activation=AdminMailboxActivationPolicy.forRecord(
+                    item,allowedDomains,activeMailboxes)
+                Card(modifier=Modifier.fillMaxWidth(),
+                    shape=RoundedCornerShape(14.dp),
+                    colors=CardDefaults.cardColors(
+                        containerColor=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.44f))) {
+                    Row(modifier=Modifier.fillMaxWidth()
+                            .padding(horizontal=12.dp,vertical=7.dp),
+                        verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        Column(modifier=Modifier.weight(1f),
+                            verticalArrangement=Arrangement.spacedBy(2.dp)) {
+                            Text(item.address,maxLines=1,
+                                style=MaterialTheme.typography.titleSmall)
+                            val label=when {
+                                live!=null -> "已激活 · 由服务器确认收信状态"
+                                item.privateId!=null||item.privateRegistrationId!=null ->
+                                    "管理员专属记录 · 不可转换为普通邮箱"
+                                activation!=null -> "保留原地址 · 需实时检查路由容量"
+                                item.reserved -> "历史保留 · 无已授权的恢复路径"
+                                else -> "已释放 · 仍需按普通创建流程核验"
+                            }
+                            Text(label,maxLines=2,
+                                style=MaterialTheme.typography.labelSmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if(live!=null) {
+                            TextButton(enabled=!busy,onClick={onOpenActive(live)}) {
+                                Text("收件箱")
+                            }
+                        } else if(activation!=null) {
+                            TextButton(enabled=!busy,onClick={onActivate(activation)}) {
+                                Text(activation.label)
+                            }
+                        }
+                    }
+                }
             }
             if(shown<filtered.size)item {
-                TextButton(onClick={shown+=25},modifier=Modifier.fillMaxWidth()){
+                TextButton(onClick={shown+=25},modifier=Modifier.fillMaxWidth()) {
                     Text("显示更多 · 剩余 "+(filtered.size-shown))
                 }
             }
