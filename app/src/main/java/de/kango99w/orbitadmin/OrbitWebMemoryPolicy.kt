@@ -1,24 +1,22 @@
 package de.kango99w.orbitadmin
 
 /**
- * Native-first RAM policy.
+ * Native-first RAM policy with cache continuity.
  *
- * A regular tab switch retains its already-loaded first-party document.
- * A locked Activity can discard its optional WebViews without clearing
- * CookieManager, WebStorage or the native account's Keystore grant.
+ * Normal tab switches, screen lock and UI_HIDDEN preserve the already loaded
+ * first-party fallback pages. Only genuine memory pressure evicts WebViews.
+ * Native encrypted mailbox metadata, account grants and login cookies are
+ * stored elsewhere and must never be wiped by renderer eviction.
  */
 object OrbitWebMemoryPolicy {
     private const val RUNNING_LOW = 10
     private const val UI_HIDDEN = 20
-
-    /** Never tear down a document while Android's file chooser owns its callback. */
-    fun mayReleaseOnLock(pickerPending: Boolean, validPickerReturn: Boolean): Boolean =
-        !pickerPending || !validPickerReturn
+    private const val MODERATE = 60
 
     /**
-     * Android 14+ generally reports UI_HIDDEN, not the deprecated running
-     * levels. On older devices a running-low signal may discard only dormant
-     * fallback WebViews, not the active first-party page.
+     * A memory-pressure callback may evict off-screen fallback documents.
+     * A locked app may release all optional HTML only under real pressure.
+     * No WebView is evicted simply because the app became invisible.
      */
     fun releaseOnTrim(
         level: Int,
@@ -27,9 +25,9 @@ object OrbitWebMemoryPolicy {
         active: MailSection,
         retained: Set<MailSection>
     ): Set<MailSection> {
-        if (pickerPending) return emptySet()
-        if (!unlocked && level >= UI_HIDDEN) return retained
-        if (unlocked && level in RUNNING_LOW until UI_HIDDEN) {
+        if (pickerPending || level == UI_HIDDEN) return emptySet()
+        if (!unlocked && level >= MODERATE) return retained
+        if (level in RUNNING_LOW until UI_HIDDEN || level >= MODERATE) {
             val activeScope = BrowserSessionRouting.key(active)
             return retained.filterTo(linkedSetOf()) { it != activeScope }
         }

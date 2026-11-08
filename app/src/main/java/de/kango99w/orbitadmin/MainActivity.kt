@@ -104,7 +104,6 @@ import androidx.fragment.app.FragmentActivity
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import androidx.webkit.WebMessageCompat
-import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 
 /**
@@ -1526,7 +1525,7 @@ class MainActivity : FragmentActivity() {
 
     private fun tryRegisterPush() {
         if (!BackgroundPushConsent.mayDeliver(backgroundPushOptIn,backgroundPushRevokePending) ||
-            !OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty() || !unlocked)
+            !unlocked || !OrbitPushConfig.ensureInitialized(this))
             return
         // Never open a hidden WebView to acquire a site cookie for native mail push.
         if (!nativeDeviceClient.isBound()) {
@@ -1572,7 +1571,7 @@ class MainActivity : FragmentActivity() {
             backgroundPushStatus = "服务端撤销尚未确认。请在普通邮箱完成撤销，避免旧令牌继续收信。"
             return
         }
-        if (!OrbitPushConfig.configured || FirebaseApp.getApps(this).isEmpty()) {
+        if (!OrbitPushConfig.configured) {
             backgroundPushStatus = "Firebase 项目未配置，暂不能启用后台通知。"
             return
         }
@@ -5096,12 +5095,6 @@ class MainActivity : FragmentActivity() {
         pendingNativeMessageId=null
         browser?.onPause()
         browser?.pauseTimers()
-        if (OrbitWebMemoryPolicy.mayReleaseOnLock(
-                pickerPending=pickerPending,validPickerReturn=pickerReturnAllowed())) {
-            // The application is locked; keeping an old WebView DOM alive wastes
-            // private memory and preserves unnecessary off-screen page state.
-            disposeRetainedBrowsers(sectionBrowsers.keys.toSet())
-        }
         message = "已锁定。需要再次通过设备身份验证。"
     }
 
