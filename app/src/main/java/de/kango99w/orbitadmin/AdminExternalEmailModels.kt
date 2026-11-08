@@ -63,9 +63,10 @@ object AdminExternalEmailModels {
     }
     fun detail(body:JSONObject?,expectedId:String):AdminExternalEmailDetail? {
         if(!validId(expectedId))return null
-        val email=row(body?.optJSONObject("email"))?.takeIf { it.id==expectedId }
+        val response=body ?: return null
+        val email=row(response.optJSONObject("email"))?.takeIf { it.id==expectedId }
             ?:return null
-        val arr=body.optJSONArray("registrations")?:return null
+        val arr=response.optJSONArray("registrations")?:return null
         if(arr.length()>200)return null
         val seen=HashSet<String>()
         val records=(0 until arr.length()).mapNotNull { index ->
