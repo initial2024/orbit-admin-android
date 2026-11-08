@@ -1,0 +1,111 @@
+name: Android compact prebuilt smoke (no Gradle download)
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths: [".github/workflows/android-compact-prebuilt-smoke.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke-android35:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch immutable successful-size-audit compact APK
+        uses: actions/download-artifact@v4
+        with:
+          name: orbit-compact-diagnostic-not-release
+          run-id: 42464089115
+          github-token: ${{ github.token }}
+          path: prebuilt
+      - name: Verify source commit, APK signature and package before starting
+        shell: bash
+        run: |
+          set -euo pipefail
+          export APK="$(find prebuilt -type f -name app-compact.apk -print -quit)"
+          test -n "$APK" && test -s "$APK"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifests=list(Path('prebuilt').rglob('apk-size-audit.json'))
+          assert len(manifests)==1, 'size manifest missing or duplicate'
+          evidence=json.loads(manifests[0].read_text())
+          assert evidence['commit']=='881e2602bf0cdd5ee7b4402fa085d9549733a4d0', 'wrong source commit'
+          apk=list(Path('prebuilt').rglob('app-compact.apk'))
+          assert len(apk)==1
+          assert apk[0].stat().st_size==14_210_870, 'APK changed since sealed size audit'
+          PY
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "versionName='0.9.25-dev'"
+          mkdir -p smoke-evidence
+          sha256sum "$APK" > smoke-evidence/compact.apk.sha256
+          printf 'source=881e2602bf0cdd5ee7b4402fa085d9549733a4d0\nsize_bytes=14210870\n' > smoke-evidence/source.txt
+      - name: Enable emulator KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm || { echo 'Cannot run real Android 35 checks without KVM' >&2; exit 1; }
+          sudo chmod 666 /dev/kvm
+      - name: Android 35 cold/warm startup, smoke, fresh installed storage and PSS
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: |
+            set -euo pipefail
+            APK="$(find prebuilt -type f -name app-compact.apk -print -quit)"
+            PKG=de.kango99w.orbitadmin
+            adb install "$APK"
+            for count in 1 2; do
+              if [ "$count" -gt 1 ]; then adb shell am force-stop "$PKG"; fi
+              adb shell am start -W -n "$PKG/.MainActivity" | tee "smoke-evidence/start-$count.txt"
+              sleep 7
+              pid="$(adb shell pidof "$PKG" | tr -d '\r' | awk '{print $1}')"
+              test -n "$pid" || { echo "App terminated on start #$count" >&2; exit 1; }
+              adb shell dumpsys meminfo "$PKG" > "smoke-evidence/mem-$count.txt"
+            done
+            adb shell pm path "$PKG" > smoke-evidence/installed-code.txt
+            adb shell run-as "$PKG" du -sk . > smoke-evidence/private-storage-kib.txt
+            adb shell am force-stop "$PKG"
+            python3 - <<'PY'
+            from pathlib import Path
+            import re
+            folder=Path('smoke-evidence')
+            records=[]
+            for i in [1,2]:
+                s=(folder/f'start-{i}.txt').read_text()
+                assert 'Status: ok' in s, 'Android am start did not report success'
+                m=(folder/f'mem-{i}.txt').read_text()
+                k=re.search(r'^\s*TOTAL\s+([0-9,]+)\s',m,re.MULTILINE)
+                if not k:
+                    k=re.search(r'TOTAL PSS:\s*([0-9,]+)',m)
+                records.append(int(k.group(1).replace(',','')) if k else None)
+            out=['# Android 35 compact-only first-run smoke','',
+                 'Baseline: immutable successful R8 size audit from source commit 881e2602.',
+                 'No live account/login, no network mail content, no real-user phone state.',
+                 'Both cold and warm Android launch survived for at least 7 s.',
+                 'RAM total PSS KiB cold/warm: '+str(records),
+                 'Fresh private-data storage KiB: '+
+                    (folder/'private-storage-kib.txt').read_text().strip(),
+                 'Does not prove account login, WebView navigation or FCM delivery.']
+            (folder/'summary.md').write_text('\n'.join(out)+'\n')
+            print('\n'.join(out))
+            PY
+      - name: Upload smoke results (not a release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-compact-android35-smoke-evidence
+          retention-days: 7
+          if-no-files-found: ignore
+          path: smoke-evidence/
