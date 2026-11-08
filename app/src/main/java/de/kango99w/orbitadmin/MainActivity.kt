@@ -864,8 +864,6 @@ class MainActivity : FragmentActivity() {
             adminGlyphSnapshot=null
             adminGlyphBuyTarget=null
             adminGlyphBusy=false
-        }
-        else {
             adminDeleteTarget = null
             adminRevokeTrustedTarget = null
             showAdminCreateDialog = false
