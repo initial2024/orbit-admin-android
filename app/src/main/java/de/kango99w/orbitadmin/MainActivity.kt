@@ -1349,8 +1349,11 @@ class MainActivity : FragmentActivity() {
                 if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                 nativeApiLoading = false
                 if (!unlocked || nativeDeviceClient.currentId() != deviceId) return@runOnUiThread
-                nativeApiActive = messageListVerified && selected!=null && !locked
-                nativeLastSuccessfulSyncMs=if(nativeApiActive)
+                // Successful signed mailbox enumeration establishes the device
+                // grant independently of the selected mailbox's message fetch.
+                // A transient message error must not block switching mailboxes.
+                nativeApiActive = true
+                nativeLastSuccessfulSyncMs=if(messageListVerified || selected==null || locked)
                     SystemClock.elapsedRealtime() else 0L
                 nativeApiNotice = if (selected != null && !locked && !messageListVerified) {
                     "已核验邮箱 "+selected.address+"，但邮件列表读取失败（HTTP "+
@@ -2146,10 +2149,10 @@ class MainActivity : FragmentActivity() {
                     Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
                         tint=MaterialTheme.colorScheme.primary)
                     Text(if(snapshot.locked)"邮箱需解锁" else if(nativeApiLoading)
-                        "正在与服务器同步…" else if(!nativeApiActive)
+                        "正在与服务器同步…" else if(!snapshot.nativeReadSupported)
                         "邮件列表未核验" else "暂无邮件",
                         style=MaterialTheme.typography.titleLarge)
-                    Text(if(!nativeApiActive)
+                    Text(if(!snapshot.nativeReadSupported)
                         nativeApiNotice.ifBlank {
                             "尚未确认服务器邮件列表；离线历史不等于收件箱为空。"
                         } else "服务器已确认当前账号下该邮箱的邮件列表为空。"+
