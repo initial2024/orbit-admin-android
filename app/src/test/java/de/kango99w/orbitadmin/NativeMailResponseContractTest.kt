@@ -11,7 +11,7 @@ class NativeMailResponseContractTest {
             File("app/src/main/java/de/kango99w/orbitadmin/MainActivity.kt")
         ).first { it.isFile }.readText()
         val handler=src.substringAfter("private fun openNativeAdminMessage(id: String)")
-            .substringBefore("private fun createNativeAdminMailbox()")
+            .substringBefore("private fun openNativeAdminCreateDialog()")
         assertFalse(handler.contains("|| adminBusy ||"))
         assertTrue(handler.contains("adminReadIo.execute"))
         assertTrue(handler.contains("adminSelectedMessageId != id"))
