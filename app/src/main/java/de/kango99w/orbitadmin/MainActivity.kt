@@ -192,6 +192,8 @@ class MainActivity : FragmentActivity() {
     private var adminMessages by mutableStateOf<List<AdminNativeMessage>>(emptyList())
     private var adminMessagesLoaded by mutableStateOf(false)
     private var adminMessagesError by mutableStateOf("")
+    private var adminLastMessageSyncMs=0L
+    private var adminLastMailboxSyncMs=0L
     private var adminSelectedMailbox by mutableStateOf<AdminNativeMailbox?>(null)
     private var adminSelectedMessage by mutableStateOf<AdminNativeDetail?>(null)
     private var adminSelectedMessageId by mutableStateOf<String?>(null)
@@ -2779,6 +2781,7 @@ class MainActivity : FragmentActivity() {
                 if(adminAuthenticated)
                     workspacePrefs.edit().putString("last_workspace","admin").apply()
                 adminMailboxes = mailboxes
+                if(valid)adminLastMailboxSyncMs=SystemClock.elapsedRealtime()
                 adminPrivateDomainOptions = privateOptions
                 adminOrdinaryDomainOptions = ordinaryOptions
                 if (!adminAuthenticated) {
@@ -2891,13 +2894,18 @@ class MainActivity : FragmentActivity() {
     private fun openNativeAdminMailbox(mailbox: AdminNativeMailbox) {
         if (!unlocked || !adminAuthenticated || adminBusy ||
             !AdminNativeModels.validId(mailbox.id) || mailbox.status != "active") return
+        val sameMailbox=adminSelectedMailbox?.id==mailbox.id &&
+            adminSelectedMailbox?.privateMailbox==mailbox.privateMailbox
         adminSelectedMailbox = mailbox
         adminSelectedMessage = null
         adminSelectedMessageId = null
-        adminSearchQuery=""
-        adminMessages = emptyList()
+        if(!sameMailbox) {
+            adminSearchQuery=""
+            adminMessages=emptyList()
+        }
         adminMessagesLoaded=false
-        adminMessagesError=""
+        adminMessagesError=if(sameMailbox)
+            "正在重新同步；原有列表仅供参考，尚未验证新邮件。" else ""
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
@@ -2922,6 +2930,7 @@ class MainActivity : FragmentActivity() {
                     adminMessages=rows
                     adminMessagesLoaded=true
                     adminMessagesError=""
+                    adminLastMessageSyncMs=SystemClock.elapsedRealtime()
                 } else {
                     adminMessagesLoaded=false
                     adminMessagesError="原生收件箱未同步成功（HTTP "+response.status+
@@ -5812,6 +5821,16 @@ class MainActivity : FragmentActivity() {
             if(workspace==MailWorkspace.ORDINARY && !adminRestoreChecking) {
                 if (nativeDeviceClient.isBound()) refreshNativeApiIfNeeded()
                 else requestMissingNativeSnapshot()
+            } else if(workspace==MailWorkspace.ADMIN && adminAuthenticated && !adminBusy) {
+                val now=SystemClock.elapsedRealtime()
+                val selected=adminSelectedMailbox
+                if(selected!=null && (adminLastMessageSyncMs==0L ||
+                    now-adminLastMessageSyncMs>30_000L)) {
+                    openNativeAdminMailbox(selected)
+                } else if(selected==null && (adminLastMailboxSyncMs==0L ||
+                    now-adminLastMailboxSyncMs>30_000L)) {
+                    refreshNativeAdmin()
+                }
             }
             tryRegisterPush()
         }
