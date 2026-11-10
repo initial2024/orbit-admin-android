@@ -253,6 +253,12 @@ class MainActivity : FragmentActivity() {
     private var adminCreateDomain by mutableStateOf("")
     private var adminCreateDomainQuery by mutableStateOf("")
     private var adminCreateDomainExpanded by mutableStateOf(false)
+    private var adminCreateLookupRows by mutableStateOf<List<AdminRecordedAddress>>(emptyList())
+    private var adminCreateLookupAllowed by mutableStateOf<Set<String>>(emptySet())
+    private var adminCreateLookupReady by mutableStateOf(false)
+    private var adminCreateLookupBusy by mutableStateOf(false)
+    private var adminCreateLookupNotice by mutableStateOf("")
+    private val adminCreateLookupGeneration = AtomicLong(0)
     // Private mail is a separate sender service with a separate mail_session.
     private val privateMailClient by lazy { NativePrivateMailClient() }
     private val privateMailIo = Executors.newSingleThreadExecutor()
@@ -2905,8 +2911,91 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Verify recorded address ownership and enabled domains before offering
+     * restore inside Create. Never construct authorization from the text field. */
+    private fun openNativeAdminCreateDialog() {
+        if(!unlocked || !adminAuthenticated || adminBusy ||
+            workspace!=MailWorkspace.ADMIN)return
+        showAdminCreateDialog=true
+        adminCreateLookupRows=emptyList()
+        adminCreateLookupAllowed=emptySet()
+        adminCreateLookupReady=false
+        adminCreateLookupBusy=true
+        adminCreateLookupNotice=""
+        val token=adminCreateLookupGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminReadIo.execute {
+            val recorded=nativeAdminClient.get("/api/admin/ordinary-inbox/recorded-addresses",epoch)
+            val domains=nativeAdminClient.get("/api/admin/ordinary-inbox/domains",epoch)
+            val ok=recorded.status==200 && domains.status==200 &&
+                recorded.value?.optJSONArray("records")!=null &&
+                domains.value?.optJSONArray("domains")!=null
+            val rows=if(ok)AdminManagementModels.recordedAddresses(recorded.value)
+                else emptyList()
+            val allowed=if(ok)AdminDomainSelection.temporary(domains.value)
+                .map { it.domain }.toSet() else emptySet()
+            runOnUiThread {
+                if(!unlocked || !adminAuthenticated || workspace!=MailWorkspace.ADMIN ||
+                    !showAdminCreateDialog || token!=adminCreateLookupGeneration.get())
+                    return@runOnUiThread
+                adminCreateLookupBusy=false
+                adminCreateLookupReady=ok
+                adminCreateLookupRows=rows
+                adminCreateLookupAllowed=allowed
+                if(!ok)adminCreateLookupNotice=
+                    "地址登记或域名校验失败。自定义临时邮箱暂不可创建，"+
+                    "请关闭窗口后重试（HTTP "+recorded.status+"/"+domains.status+"）。"
+            }
+        }
+    }
+
+    private fun adminCreateExactAddress():String? {
+        val local=adminCreateLocal.trim()
+        val domain=adminCreateDomain.trim().lowercase(java.util.Locale.ROOT)
+        if(local.isEmpty() ||
+            !local.matches(Regex("^[a-zA-Z0-9._-]{1,64}$")) || domain.isBlank())
+            return null
+        return (local+"@"+domain).lowercase(java.util.Locale.ROOT)
+    }
+
+    private fun adminCreateActivation():AdminMailboxActivationIntent? {
+        if(adminCreatePrivate || !adminCreateLookupReady)return null
+        val addr=adminCreateExactAddress()?:return null
+        if(adminMailboxes.any { !it.privateMailbox &&
+                it.address.equals(addr,ignoreCase=true) && it.status=="active" &&
+                it.expiresAt>System.currentTimeMillis() })return null
+        val registered=adminCreateLookupRows.firstOrNull {
+            it.address.equals(addr,ignoreCase=true)
+        }?.let {
+            AdminMailboxActivationPolicy.forRecord(it,adminCreateLookupAllowed,adminMailboxes)
+        }
+        return registered ?: adminMailboxes.firstOrNull {
+            !it.privateMailbox && it.address.equals(addr,ignoreCase=true)
+        }?.let { AdminMailboxActivationPolicy.forMailbox(it,adminCreateLookupAllowed) }
+    }
+
+    private fun activateFromAdminCreate(intent:AdminMailboxActivationIntent) {
+        if(!showAdminCreateDialog || adminCreatePrivate || !adminCreateLookupReady ||
+            adminCreateActivation()!=intent)return
+        adminCreateLookupGeneration.incrementAndGet()
+        showAdminCreateDialog=false
+        adminCreateDomainExpanded=false
+        requestAdminMailboxActivation(intent)
+    }
+
     private fun createNativeAdminMailbox() {
         if (!unlocked || !adminAuthenticated || adminBusy) return
+        if(!adminCreatePrivate && adminCreateLocal.isNotBlank()) {
+            if(!adminCreateLookupReady) {
+                adminCreateLookupNotice="该自定义地址尚未完成登记核验，不允许盲目创建。"
+                return
+            }
+            val action=adminCreateActivation()
+            if(action!=null) {
+                activateFromAdminCreate(action)
+                return
+            }
+        }
         val local = adminCreateLocal.trim()
         val domain = adminCreateDomain.trim().lowercase(java.util.Locale.ROOT)
         val allowed = if (adminCreatePrivate) adminPrivateDomainOptions
@@ -4332,7 +4421,7 @@ class MainActivity : FragmentActivity() {
                         adminCreateDomain=adminPrivateDomainOptions.firstOrNull()?.domain.orEmpty()
                         adminCreateDomainQuery=""
                         adminCreateDomainExpanded=false
-                        showAdminCreateDialog=true
+                        openNativeAdminCreateDialog()
                     }) { Text("＋ 新建邮箱") }
                 }
                 if(adminActivationNotice.isNotBlank())
@@ -4450,6 +4539,13 @@ class MainActivity : FragmentActivity() {
         val options = if (adminCreatePrivate) adminPrivateDomainOptions
             else adminOrdinaryDomainOptions
         val displayed = AdminDomainSelection.filter(options, adminCreateDomainQuery)
+        val exact=adminCreateExactAddress()
+        val existing=if(exact==null)null else adminMailboxes.firstOrNull {
+            it.address.equals(exact,ignoreCase=true) &&
+                it.privateMailbox==adminCreatePrivate && it.status=="active" &&
+                (it.privateMailbox || it.expiresAt>System.currentTimeMillis())
+        }
+        val activation=adminCreateActivation()
         AlertDialog(
             onDismissRequest={ if(!adminBusy) {
                 showAdminCreateDialog=false
@@ -4531,19 +4627,51 @@ class MainActivity : FragmentActivity() {
                         "没有可创建的域名。需要先在服务端完成域名验证和接入，不能通过手填绕过。",
                         color=MaterialTheme.colorScheme.error,
                         style=MaterialTheme.typography.bodySmall)
+                    if(exact!=null) {
+                        when {
+                            existing!=null -> Text("该邮箱已启用，可直接打开收件箱。")
+                            !adminCreatePrivate && adminCreateLookupBusy ->
+                                Text("正在核对登记地址和恢复资格…")
+                            activation!=null -> Text("找到已登记的原地址及可恢复路径。"+
+                                "直接激活，不重复创建；已删除的旧邮件不会恢复。")
+                            !adminCreatePrivate && adminCreateLookupReady &&
+                                adminCreateLookupRows.any {
+                                    it.address.equals(exact,ignoreCase=true) } ->
+                                Text("该邮箱地址已保留，但服务器未授予恢复操作。"+
+                                    "不能绕过原有保留及容量检查。")
+                        }
+                    }
+                    if(adminCreateLookupNotice.isNotBlank())
+                        Text(adminCreateLookupNotice,
+                            color=MaterialTheme.colorScheme.error,
+                            style=MaterialTheme.typography.bodySmall)
                     Text("创建前核对域名。只有服务器确认创建成功后才会刷新邮箱列表。",
                         style=MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton={
-                Button(enabled=!adminBusy &&
-                    options.any{it.domain==adminCreateDomain},
-                    onClick=::createNativeAdminMailbox) {
-                    Text(if(adminBusy) "创建中…" else "创建邮箱")
+                when {
+                    existing!=null -> Button(enabled=!adminBusy,onClick={
+                        adminCreateLookupGeneration.incrementAndGet()
+                        showAdminCreateDialog=false
+                        openNativeAdminMailbox(existing)
+                    }) { Text("打开已有邮箱") }
+                    activation!=null -> Button(enabled=!adminBusy&&!adminCreateLookupBusy,
+                        onClick={activateFromAdminCreate(activation)}) {
+                        Text("一键激活原邮箱")
+                    }
+                    else -> Button(enabled=!adminBusy &&
+                        options.any{it.domain==adminCreateDomain} &&
+                        (adminCreatePrivate || adminCreateLocal.isBlank() ||
+                            adminCreateLookupReady),
+                        onClick=::createNativeAdminMailbox) {
+                        Text(if(adminBusy) "创建中…" else "创建邮箱")
+                    }
                 }
             },
             dismissButton={
                 TextButton(enabled=!adminBusy,onClick={
+                    adminCreateLookupGeneration.incrementAndGet()
                     showAdminCreateDialog=false
                     adminCreateDomainExpanded=false
                 }) { Text("取消") }
