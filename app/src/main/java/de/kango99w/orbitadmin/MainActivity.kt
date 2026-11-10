@@ -2751,12 +2751,19 @@ class MainActivity : FragmentActivity() {
             val ordinaryRows = receive(ordinaryFuture)
             val domainRows = receive(tempDomainFuture)
             val managedRows = receive(managedDomainFuture)
-            val valid = authorized && privateRows?.status == 200 &&
-                ordinaryRows?.status == 200
-            val mailboxes = if (valid)
-                AdminNativeModels.mailboxes(privateRows?.value, true) +
-                    AdminNativeModels.mailboxes(ordinaryRows?.value, false)
-                else emptyList()
+            val privateVerified = authorized && privateRows?.status == 200 &&
+                privateRows.value?.optJSONArray("mailboxes") != null
+            val ordinaryVerified = authorized && ordinaryRows?.status == 200 &&
+                ordinaryRows.value?.optJSONArray("mailboxes") != null
+            val valid = privateVerified && ordinaryVerified
+            // The mail backends have independent schemas and failure modes.
+            // Preserve the verified scope rather than treating one failure as
+            // proof that *both* sources contain no messages.
+            val mailboxes =
+                (if(privateVerified) AdminNativeModels.mailboxes(privateRows?.value,true)
+                    else emptyList()) +
+                (if(ordinaryVerified) AdminNativeModels.mailboxes(ordinaryRows?.value,false)
+                    else emptyList())
             val privateOptions = if (managedRows?.status == 200)
                 AdminDomainSelection.permanent(managedRows.value) else emptyList()
             val ordinaryOptions = if (domainRows?.status == 200)
@@ -2789,17 +2796,25 @@ class MainActivity : FragmentActivity() {
                     if (status.status != 200) adminTotpRequired = false
                     adminError = if (status.status == 200) ""
                         else "管理员状态校验失败：HTTP ${status.status}；不会调用普通账号接口。"
-                } else if (!valid) {
-                    adminError = "管理员身份已验证，但邮箱列表暂不可用。请刷新重试。"
-                    adminMessages = emptyList()
-                    adminSelectedMessage = null
-                } else if (adminSelectedMailbox != null &&
-                    mailboxes.none { it.id == adminSelectedMailbox?.id &&
-                        it.privateMailbox == adminSelectedMailbox?.privateMailbox }) {
-                    adminSelectedMailbox = null
-                    adminSelectedMessage = null
-                    adminSelectedMessageId = null
-                    adminMessages = emptyList()
+                } else {
+                    if(!valid) adminError =
+                        "部分邮箱来源读取失败：固定邮箱 HTTP "+
+                        (privateRows?.status ?: 0)+"，临时邮箱 HTTP "+
+                        (ordinaryRows?.status ?: 0)+
+                        "。只显示本次已核验的邮箱；其他来源未核验不代表空邮箱。"
+                    val selected=adminSelectedMailbox
+                    val selectedScopeVerified=if(selected?.privateMailbox==true)
+                        privateVerified else ordinaryVerified
+                    if(selected!=null && (!selectedScopeVerified ||
+                        mailboxes.none { it.id==selected.id &&
+                            it.privateMailbox==selected.privateMailbox })) {
+                        adminSelectedMailbox=null
+                        adminSelectedMessage=null
+                        adminSelectedMessageId=null
+                        adminMessages=emptyList()
+                        adminMessagesLoaded=false
+                        adminMessagesError="所选邮箱未在本次服务器核验中返回；请重新同步。"
+                    }
                 }
             }
         }
