@@ -190,6 +190,8 @@ class MainActivity : FragmentActivity() {
     private var adminError by mutableStateOf("")
     private var adminMailboxes by mutableStateOf<List<AdminNativeMailbox>>(emptyList())
     private var adminMessages by mutableStateOf<List<AdminNativeMessage>>(emptyList())
+    private var adminMessagesLoaded by mutableStateOf(false)
+    private var adminMessagesError by mutableStateOf("")
     private var adminSelectedMailbox by mutableStateOf<AdminNativeMailbox?>(null)
     private var adminSelectedMessage by mutableStateOf<AdminNativeDetail?>(null)
     private var adminSelectedMessageId by mutableStateOf<String?>(null)
@@ -1252,7 +1254,8 @@ class MainActivity : FragmentActivity() {
                 }
             }
             val mailboxes = nativeDeviceClient.fetch("/api/account/native-device/mailboxes")
-            if (mailboxes.status != 200 || mailboxes.value == null) {
+            if (mailboxes.status != 200 || mailboxes.value == null ||
+                mailboxes.value.optJSONArray("mailboxes")==null) {
                 runOnUiThread {
                     if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                     nativeApiLoading = false
@@ -1260,7 +1263,9 @@ class MainActivity : FragmentActivity() {
                         nativeApiNotice = when (mailboxes.status) {
                             401 -> "设备授权失效或被撤销，需要重新绑定。"
                             503 -> "服务器原生接口尚未启用，现有数据未被更改。"
-                            else -> "原生邮箱同步失败：HTTP ${mailboxes.status}"
+                            else -> if(mailboxes.status==200)
+                                "服务器邮箱列表格式不完整；未清空本地邮件。" else
+                                "原生邮箱同步失败：HTTP ${mailboxes.status}"
                         }
                         nativeApiActive = false
                         pendingNativeMessageId = null
@@ -1305,7 +1310,8 @@ class MainActivity : FragmentActivity() {
                 else null
             val mail = mutableListOf<NativeMailRow>()
             val messages = messageResult?.value?.optJSONArray("messages")
-            if (messageResult?.status == 200 && messages != null) {
+            val messageListVerified=messageResult?.status==200 && messages!=null
+            if (messageListVerified && messages != null) {
                 for (i in 0 until minOf(messages.length(), 30)) {
                     val item = messages.optJSONObject(i) ?: continue
                     val id = item.optString("id")
@@ -1322,9 +1328,11 @@ class MainActivity : FragmentActivity() {
                 selectedDomain = "",
                 availableDomains = emptyList(),
                 canCreate = false,
-                nativeReadSupported = true,
+                nativeReadSupported = messageListVerified && !locked,
                 busy = false,
-                statusText = "使用 Android 设备授权 API（账号自有邮箱）",
+                statusText = if(selected!=null && !locked && !messageListVerified)
+                    "邮件列表未同步成功，不能判定暂无邮件"
+                    else "使用 Android 设备授权 API（账号自有邮箱）",
                 mailboxes = rows,
                 messages = mail,
             )
@@ -1339,21 +1347,34 @@ class MainActivity : FragmentActivity() {
                 if (nativeRequestGeneration.get() != generation) return@runOnUiThread
                 nativeApiLoading = false
                 if (!unlocked || nativeDeviceClient.currentId() != deviceId) return@runOnUiThread
-                nativeApiActive = true
-                nativeLastSuccessfulSyncMs=SystemClock.elapsedRealtime()
-                nativeApiNotice = if (selected != null && !locked && messageResult?.status != 200)
-                    "邮件列表暂不可用；请刷新重试。" else ""
+                nativeApiActive = messageListVerified && selected!=null && !locked
+                nativeLastSuccessfulSyncMs=if(nativeApiActive)
+                    SystemClock.elapsedRealtime() else 0L
+                nativeApiNotice = if (selected != null && !locked && !messageListVerified) {
+                    "已核验邮箱 "+selected.address+"，但邮件列表读取失败（HTTP "+
+                    (messageResult?.status ?: 0)+
+                    if(messageResult?.status==200) "，响应缺少 messages）。" else "）。"+
+                    "不能判定为空邮箱，请稍后刷新。"
+                } else if(selected==null)
+                    "此普通账号尚未返回可访问的邮箱。管理员收件箱需在独立管理员入口查看。"
+                else ""
                 if (nativeInbox?.currentId != snapshot.currentId) {
                     pendingNativeMessageId = null
                     nativeMailDetail = null
                 }
                 val prior = nativeInbox
-                if (NewMailArrivalPolicy.hasArrival(prior,snapshot)) {
+                if (messageListVerified && NewMailArrivalPolicy.hasArrival(prior,snapshot)) {
                     val stamp=SystemClock.elapsedRealtime()
                     if (MailNoticePolicy.canDeliver(stamp,lastNewMailNoticeAtMs) &&
                         showMailNotification()) lastNewMailNoticeAtMs=stamp
                 }
-                nativeInbox = NativeIncrementalMerge.snapshot(prior,snapshot)
+                nativeInbox = if(selected!=null && !locked && !messageListVerified &&
+                    prior!=null && prior.currentId==selected.id)
+                    prior.copy(
+                        mailboxes=NativeIncrementalMerge.mailboxes(prior.mailboxes,rows),
+                        nativeReadSupported=false,
+                        statusText="邮件列表读取失败；保留本机历史元数据，未核实最新邮件")
+                else NativeIncrementalMerge.snapshot(prior,snapshot)
                 showNativeMail = true
             }
         }
@@ -1814,6 +1835,7 @@ class MainActivity : FragmentActivity() {
                 .putString("selected_mailbox_id", id).apply()
             nativeInbox = nativeInbox?.copy(currentId = id, currentAddress = item.address,
                 locked = item.isProtected, messages = emptyList())
+            nativeSearchQuery=""
             pendingNativeMessageId = null
             nativeMailDetail = null
             showNativeMail = true
@@ -2121,8 +2143,15 @@ class MainActivity : FragmentActivity() {
                     Spacer(Modifier.height(24.dp))
                     Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
                         tint=MaterialTheme.colorScheme.primary)
-                    Text("暂无邮件",style=MaterialTheme.typography.titleLarge)
-                    Text("邮件将显示在这里。可刷新或切换邮箱。",
+                    Text(if(snapshot.locked)"邮箱需解锁" else if(nativeApiLoading)
+                        "正在与服务器同步…" else if(!nativeApiActive)
+                        "邮件列表未核验" else "暂无邮件",
+                        style=MaterialTheme.typography.titleLarge)
+                    Text(if(!nativeApiActive)
+                        nativeApiNotice.ifBlank {
+                            "尚未确认服务器邮件列表；离线历史不等于收件箱为空。"
+                        } else "服务器已确认当前账号下该邮箱的邮件列表为空。"+
+                            "管理员邮箱请从独立管理员入口进入。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(onClick={
                         if (nativeDeviceClient.isBound()) refreshNativeApi()
@@ -2850,7 +2879,10 @@ class MainActivity : FragmentActivity() {
         adminSelectedMailbox = mailbox
         adminSelectedMessage = null
         adminSelectedMessageId = null
+        adminSearchQuery=""
         adminMessages = emptyList()
+        adminMessagesLoaded=false
+        adminMessagesError=""
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
@@ -2860,7 +2892,9 @@ class MainActivity : FragmentActivity() {
         else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages"
         adminIo.execute {
             val response = nativeAdminClient.get(path, requestEpoch)
-            val rows = if (response.status == 200) AdminNativeModels.messages(response.value)
+            val usable=response.status==200 &&
+                response.value?.optJSONArray("messages")!=null
+            val rows = if(usable)AdminNativeModels.messages(response.value)
                 else emptyList()
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
@@ -2869,8 +2903,17 @@ class MainActivity : FragmentActivity() {
                     adminAuthenticated = false
                     adminMailboxes = emptyList()
                     adminSelectedMailbox = null
-                } else if (response.status == 200) adminMessages = rows
-                else adminError = "管理员邮件列表读取失败：HTTP ${response.status}"
+                } else if(usable) {
+                    adminMessages=rows
+                    adminMessagesLoaded=true
+                    adminMessagesError=""
+                } else {
+                    adminMessagesLoaded=false
+                    adminMessagesError="原生收件箱未同步成功（HTTP "+response.status+
+                        if(response.status==200)"，服务器响应缺少 messages）。"
+                        else "）。"+
+                        "网站收到邮件不代表此接口已正确返回；请刷新并核对邮箱地址。"
+                }
             }
         }
     }
@@ -4357,11 +4400,31 @@ class MainActivity : FragmentActivity() {
                         label={Text("搜索发件人或主题")},
                         singleLine=true,
                         modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp))
-                    Text("邮件 · ${messages.size}",
-                        modifier=Modifier.padding(horizontal=16.dp,vertical=5.dp),
-                        style=MaterialTheme.typography.labelLarge)
-                    if (messages.isEmpty() && !adminBusy)
-                        Text("暂无可显示邮件。",modifier=Modifier.padding(20.dp))
+                    Row(modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp),
+                        verticalAlignment=Alignment.CenterVertically) {
+                        Text("邮件 · ${messages.size} / ${adminMessages.size}",
+                            modifier=Modifier.weight(1f),
+                            style=MaterialTheme.typography.labelLarge)
+                        TextButton(enabled=!adminBusy,
+                            onClick={openNativeAdminMailbox(selected)}) {
+                            Text("重新同步")
+                        }
+                    }
+                    if(adminMessagesError.isNotBlank())
+                        Text(adminMessagesError,modifier=Modifier.padding(14.dp),
+                            color=MaterialTheme.colorScheme.error,
+                            style=MaterialTheme.typography.bodySmall)
+                    if(messages.isEmpty() && !adminBusy) {
+                        Text(when {
+                            !adminMessagesLoaded -> "邮件列表尚未验证，不能判定为空邮箱。"
+                            adminMessages.isNotEmpty() -> "搜索过滤了当前邮件，请清除搜索词。"
+                            selected.messageCount>0 ->
+                                "服务器邮箱统计为 "+selected.messageCount+
+                                " 封，但本次返回 0 封。可能涉及已过期记录或同步异常，"+
+                                "请核对网站邮箱地址及刷新。"
+                            else -> "服务器确认该邮箱目前没有可显示邮件。"
+                        },modifier=Modifier.padding(20.dp))
+                    }
                     LazyColumn(
                         modifier=Modifier.fillMaxSize(),
                         contentPadding=PaddingValues(horizontal=12.dp,vertical=8.dp),
