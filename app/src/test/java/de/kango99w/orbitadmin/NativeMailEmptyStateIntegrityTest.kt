@@ -11,7 +11,9 @@ class NativeMailEmptyStateIntegrityTest {
 
     @Test fun nativeMailboxReadMustNotPassOffErrorsAsEmpty() {
         assertTrue(src.contains("val messageListVerified=messageResult?.status==200 && messages!=null"))
-        assertTrue(src.contains("nativeApiActive = messageListVerified"))
+        assertTrue(src.contains("nativeApiActive = true"))
+        assertTrue(src.contains("nativeLastSuccessfulSyncMs=if(messageListVerified"))
+        assertTrue(src.contains("nativeReadSupported = messageListVerified && !locked"))
         assertTrue(src.contains("未核实最新邮件"))
         assertTrue(src.contains("响应缺少 messages"))
         assertTrue(src.contains("邮件列表未核验"))
