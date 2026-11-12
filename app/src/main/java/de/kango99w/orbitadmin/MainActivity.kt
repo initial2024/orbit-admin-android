@@ -132,6 +132,9 @@ class MainActivity : FragmentActivity() {
     private val nativeIo = Executors.newSingleThreadExecutor()
     // Mail detail reads must not queue behind mailbox sync, transfers or FCM calls.
     private val nativeReadIo = Executors.newSingleThreadExecutor()
+    // Bounded, per-mailbox in-memory detail reuse; never write plaintext to disk.
+    private val ordinaryDetailCache=LinkedHashMap<String,Pair<Long,NativeMailDetail>>(16,0.75f,true)
+    private fun ordinaryDetailKey(box:String,id:String)=box+":"+id
     private val nativeRequestGeneration = AtomicLong(0)
     private val nativeOfflineCache by lazy { NativeOfflineMailboxCache(applicationContext) }
     private var nativeLastSuccessfulSyncMs = 0L
@@ -180,6 +183,12 @@ class MainActivity : FragmentActivity() {
     private val adminPasswordCredentials by lazy { NativeAdminPasswordCredentials(this) }
     private val adminIo = Executors.newSingleThreadExecutor()
     private val adminReadIo = Executors.newFixedThreadPool(4)
+    private val adminDetailCache=LinkedHashMap<String,Pair<Long,AdminNativeDetail>>(16,0.75f,true)
+    private val adminInboxReadGeneration=AtomicLong(0)
+    private val adminDetailReadGeneration=AtomicLong(0)
+    private var adminInboxLoading by mutableStateOf(false)
+    private fun adminDetailKey(box:AdminNativeMailbox,id:String)=
+        (if(box.privateMailbox)"p:" else "o:")+box.id+":"+id
     private val adminGeneration = AtomicLong(0)
     private var adminBusy by mutableStateOf(false)
     private var adminMessageLoading by mutableStateOf(false)
@@ -1431,6 +1440,12 @@ class MainActivity : FragmentActivity() {
                     }.orEmpty(),
                     NativeMailLinks.read(item.optJSONArray("safe_links"),
                         item.optString("text_body"),item.optString("html_body")))
+                nativeMailDetail?.let { detail ->
+                    ordinaryDetailCache[ordinaryDetailKey(mailbox,id)] =
+                        SystemClock.elapsedRealtime() to detail
+                    if(ordinaryDetailCache.size>12)
+                        ordinaryDetailCache.remove(ordinaryDetailCache.keys.first())
+                }
                 showNativeMail = true
             }
         }
@@ -1830,6 +1845,13 @@ class MainActivity : FragmentActivity() {
         nativeMailDetail = null
         showNativeMail = true
         if (nativeApiActive) {
+            val key=ordinaryDetailKey(nativeInbox!!.currentId,id)
+            val cached=ordinaryDetailCache[key]
+            val age=SystemClock.elapsedRealtime()-(cached?.first?:0L)
+            if(cached!=null && age in 0..120_000L) {
+                nativeMailDetail=cached.second
+                return
+            }
             readMessageViaNativeApi(id)
             return
         }
@@ -2992,22 +3014,29 @@ class MainActivity : FragmentActivity() {
         adminMessagesLoaded=false
         adminMessagesError=if(sameMailbox)
             "正在重新同步；原有列表仅供参考，尚未验证新邮件。" else ""
-        val generation = adminGeneration.incrementAndGet()
+        val generation = adminInboxReadGeneration.incrementAndGet()
+        adminDetailReadGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
-        adminBusy = true
+        adminInboxLoading = true
+        adminMessageLoading=false
         adminError = ""
         val path = if (mailbox.privateMailbox)
             "/api/admin/pieterj-mail/mailboxes/${mailbox.id}/messages"
         else "/api/admin/ordinary-inbox/mailboxes/${mailbox.id}/messages"
-        adminIo.execute {
+        adminReadIo.execute {
             val response = nativeAdminClient.get(path, requestEpoch)
             val usable=response.status==200 &&
                 response.value?.optJSONArray("messages")!=null
             val rows = if(usable)AdminNativeModels.messages(response.value)
                 else emptyList()
             runOnUiThread {
-                if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
-                adminBusy = false
+                if (!unlocked || !adminAuthenticated ||
+                    workspace!=MailWorkspace.ADMIN ||
+                    adminInboxReadGeneration.get()!=generation ||
+                    adminSelectedMailbox?.id!=mailbox.id ||
+                    adminSelectedMailbox?.privateMailbox!=mailbox.privateMailbox)
+                    return@runOnUiThread
+                adminInboxLoading = false
                 if (response.status == 401) {
                     adminAuthenticated = false
                     adminMailboxes = emptyList()
@@ -3033,7 +3062,16 @@ class MainActivity : FragmentActivity() {
         if (!unlocked || !adminAuthenticated ||
             !AdminNativeModels.validId(id) ||
             adminMessages.none { it.id == id }) return
-        val generation = adminGeneration.incrementAndGet()
+        val cacheKey=adminDetailKey(mailbox,id)
+        val cached=adminDetailCache[cacheKey]
+        val age=SystemClock.elapsedRealtime()-(cached?.first?:0L)
+        if(cached!=null && age in 0..120_000L) {
+            adminSelectedMessageId=id
+            adminSelectedMessage=cached.second
+            adminMessageLoading=false
+            return
+        }
+        val generation = adminDetailReadGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminMessageLoading = true
         adminSelectedMessageId = id
@@ -3046,7 +3084,8 @@ class MainActivity : FragmentActivity() {
             val detail = if (response.status == 200)
                 AdminNativeModels.detail(response.value)?.takeIf { it.id == id } else null
             runOnUiThread {
-                if (!unlocked || adminGeneration.get() != generation ||
+                if (!unlocked || !adminAuthenticated ||
+                    adminDetailReadGeneration.get()!=generation ||
                     adminSelectedMessageId != id ||
                     adminSelectedMailbox?.id != mailbox.id ||
                     adminSelectedMailbox?.privateMailbox != mailbox.privateMailbox)
@@ -3058,8 +3097,12 @@ class MainActivity : FragmentActivity() {
                     adminMessages = emptyList()
                     adminSelectedMailbox = null
                     adminSelectedMessageId = null
-                } else if (detail != null) adminSelectedMessage = detail
-                else adminError = "管理员邮件正文读取失败：HTTP ${response.status}"
+                } else if (detail != null) {
+                    adminSelectedMessage = detail
+                    adminDetailCache[cacheKey]=SystemClock.elapsedRealtime() to detail
+                    if(adminDetailCache.size>12)
+                        adminDetailCache.remove(adminDetailCache.keys.first())
+                } else adminError = "管理员邮件正文读取失败：HTTP ${response.status}"
             }
         }
     }
@@ -3484,6 +3527,9 @@ class MainActivity : FragmentActivity() {
         adminSelectedMessageId = null
         adminSelectedMessage = null
         adminMessageLoading = false
+        adminInboxReadGeneration.incrementAndGet()
+        adminDetailReadGeneration.incrementAndGet()
+        adminInboxLoading=false
         adminMessages = emptyList()
         adminError = ""
         // A fresh admin pane must never reuse a step-up secret from another pane.
@@ -5462,6 +5508,12 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        // Plaintext from read messages is never retained after local lock.
+        ordinaryDetailCache.clear()
+        adminDetailCache.clear()
+        adminInboxReadGeneration.incrementAndGet()
+        adminDetailReadGeneration.incrementAndGet()
+        adminInboxLoading=false
         adminRestoreGeneration.incrementAndGet()
         adminRestoreChecking=false
         adminQuickMenuOpen=false
