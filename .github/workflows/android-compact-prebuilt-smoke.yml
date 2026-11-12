@@ -1,0 +1,72 @@
+name: Android compact prebuilt smoke (no Gradle download)
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths: [".github/workflows/android-compact-prebuilt-smoke.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke-android35:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch immutable successful-size-audit compact APK
+        uses: actions/download-artifact@v4
+        with:
+          name: orbit-compact-diagnostic-not-release
+          run-id: 42464089115
+          github-token: ${{ github.token }}
+          path: prebuilt
+      - name: Verify source commit, APK signature and package before starting
+        shell: bash
+        run: |
+          set -euo pipefail
+          export APK="$(find prebuilt -type f -name app-compact.apk -print -quit)"
+          test -n "$APK" && test -s "$APK"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifests=list(Path('prebuilt').rglob('apk-size-audit.json'))
+          assert len(manifests)==1, 'size manifest missing or duplicate'
+          evidence=json.loads(manifests[0].read_text())
+          assert evidence['commit']=='881e2602bf0cdd5ee7b4402fa085d9549733a4d0', 'wrong source commit'
+          apk=list(Path('prebuilt').rglob('app-compact.apk'))
+          assert len(apk)==1
+          assert apk[0].stat().st_size==14_210_870, 'APK changed since sealed size audit'
+          PY
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "versionName='0.9.25-dev'"
+          mkdir -p smoke-evidence
+          sha256sum "$APK" > smoke-evidence/compact.apk.sha256
+          printf 'source=881e2602bf0cdd5ee7b4402fa085d9549733a4d0\nsize_bytes=14210870\n' > smoke-evidence/source.txt
+      - name: Enable emulator KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm || { echo 'Cannot run real Android 35 checks without KVM' >&2; exit 1; }
+          sudo chmod 666 /dev/kvm
+      - name: Android 35 cold/warm startup, smoke, fresh installed storage and PSS
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: bash scripts/ci/smoke-compact-prebuilt.sh
+      - name: Upload smoke results (not a release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-compact-android35-smoke-evidence
+          retention-days: 7
+          if-no-files-found: ignore
+          path: smoke-evidence/

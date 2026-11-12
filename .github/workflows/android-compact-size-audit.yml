@@ -1,0 +1,141 @@
+name: Android compact APK size audit
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - "app/build.gradle.kts"
+      - "app/proguard-rules.pro"
+      - ".github/workflows/android-compact-size-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-compact-size-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+  ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+  ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+  ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
+
+jobs:
+  measure-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          # This long-lived feature branch has independent Android emulator CI.
+          # Save the public Kotlin compiler/dependency cache after a successful
+          # size build so the runtime audit does not repeatedly hit JetBrains 504.
+          cache-read-only: false
+      - name: Require Firebase project for representative compact measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -z "${!key}" ]; then
+              echo "Missing $key: a compact APK without Firebase cannot be compared to the full-feature preview" >&2
+              exit 1
+            fi
+          done
+      - name: Test baseline and optimized variants, build both
+        run: gradle --no-daemon :app:testDebugUnitTest :app:testCompactUnitTest :app:assembleDebug :app:assembleCompact
+      - name: Verify identical package, version and signed artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
+          for variant in debug compact; do
+            apk="app/build/outputs/apk/$variant/app-$variant.apk"
+            test -s "$apk"
+            "$SIGNER" verify "$apk"
+            "$AAPT" dump badging "$apk" | grep -F "package: name='de.kango99w.orbitadmin'"
+            "$AAPT" dump badging "$apk" | grep -F "versionName='$VERSION'"
+          done
+      - name: Measure file sizes and package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from zipfile import ZipFile
+          def contents(path):
+              result = {'DEX':0, 'Native libraries':0, 'Android resources':0,
+                        'Assets':0, 'Other':0}
+              with ZipFile(path) as z:
+                  for info in z.infolist():
+                      name=info.filename
+                      if name.endswith('.dex'): key='DEX'
+                      elif name.startswith('lib/'): key='Native libraries'
+                      elif name.startswith('res/') or name == 'resources.arsc': key='Android resources'
+                      elif name.startswith('assets/'): key='Assets'
+                      else: key='Other'
+                      result[key]+=info.compress_size
+              return result
+          paths={k:Path(f'app/build/outputs/apk/{k}/app-{k}.apk')
+                 for k in ('debug','compact')}
+          sizes={name:path.stat().st_size for name,path in paths.items()}
+          reduction=sizes['debug']-sizes['compact']
+          percent=100*reduction/sizes['debug']
+          payload={
+            'commit':__import__('os').environ.get('GITHUB_SHA'),
+            'bytes':sizes,
+            'compact_saved_bytes':reduction,
+            'compact_saved_pct':round(percent,2),
+            'contents_compressed_bytes':{k:contents(v) for k,v in paths.items()}
+          }
+          Path('apk-size-audit.json').write_text(json.dumps(payload,indent=2)+'\n')
+          lines=['## Orbit Mail package-size audit','',
+                 '| Artifact | Bytes | MB (decimal) |',
+                 '|---|---:|---:|']
+          for name,size in sizes.items():
+              lines.append(f'| {name} | {size:,} | {size/1_000_000:.2f} |')
+          lines.extend(['',f'Compact saving: **{reduction:,} bytes ({percent:.2f}%)**',
+                        '','| Contents | Debug MB | Compact MB |',
+                        '|---|---:|---:|'])
+          breakdown=payload['contents_compressed_bytes']
+          for key in breakdown['debug']:
+              lines.append(f'| {key} | {breakdown["debug"][key]/1_000_000:.2f} | {breakdown["compact"][key]/1_000_000:.2f} |')
+          lines.extend(['','Measured APK bytes only. Installed storage and runtime PSS require emulator or real-device measurement.'])
+          Path(__import__('os').environ['GITHUB_STEP_SUMMARY']).write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          if reduction<=0:
+              raise SystemExit('Compact variant did not reduce the APK size')
+          PY
+      - name: Upload size evidence and experimental compact APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-compact-diagnostic-not-release
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk/compact/app-compact.apk
+            apk-size-audit.json
