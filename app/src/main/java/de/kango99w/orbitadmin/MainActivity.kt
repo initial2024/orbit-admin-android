@@ -181,6 +181,18 @@ class MainActivity : FragmentActivity() {
     // The existing first-party admin session is read by a separate native client.
     private val nativeAdminClient by lazy { NativeAdminClient(applicationContext) }
     private val adminPasswordCredentials by lazy { NativeAdminPasswordCredentials(this) }
+    private val nativeAdminPasskeys by lazy { NativeAdminPasskeyGateway(this) }
+    private var adminPasskeyCapability by mutableStateOf<NativeAdminPasskeyGateway.Capability?>(null)
+    private var adminPasskeyProbeAtMs=0L
+    private var adminPasskeyProbeBusy=false
+    private var adminPasskeyBusy by mutableStateOf(false)
+    private var adminPasskeyNotice by mutableStateOf("")
+    private var adminPasskeySheetAtMs=0L
+    private val adminPasskeyGeneration=AtomicLong(0)
+    private fun hasPasskeySheet():Boolean {
+        val delta=SystemClock.elapsedRealtime()-adminPasskeySheetAtMs
+        return adminPasskeySheetAtMs>0L && delta in 0..90_000L
+    }
     private val adminIo = Executors.newSingleThreadExecutor()
     private val adminReadIo = Executors.newFixedThreadPool(4)
     private val adminDetailCache=LinkedHashMap<String,Pair<Long,AdminNativeDetail>>(16,0.75f,true)
@@ -2769,6 +2781,7 @@ class MainActivity : FragmentActivity() {
     /** Existing admin HttpOnly session, not the ordinary account device grant. */
     private fun refreshNativeAdmin() {
         if (!unlocked || adminBusy || workspace!=MailWorkspace.ADMIN) return
+        probeNativeAdminPasskeys()
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
@@ -2867,6 +2880,101 @@ class MainActivity : FragmentActivity() {
                         adminMessagesError="所选邮箱未在本次服务器核验中返回；请重新同步。"
                     }
                 }
+            }
+        }
+    }
+
+    /** Unknown server or missing domain association = no Passkey button. */
+    private fun probeNativeAdminPasskeys() {
+        if(!unlocked || workspace!=MailWorkspace.ADMIN || adminPasskeyProbeBusy) return
+        val now=SystemClock.elapsedRealtime()
+        if(adminPasskeyProbeAtMs>0L && now-adminPasskeyProbeAtMs in 0..300_000L)
+            return
+        adminPasskeyProbeBusy=true
+        adminPasskeyProbeAtMs=now
+        val token=adminPasskeyGeneration.get()
+        val epoch=nativeAdminClient.requestEpoch()
+        adminReadIo.execute {
+            val response=nativeAdminClient.get("/api/admin/passkeys/capabilities",epoch)
+            val capability=if(response.status==200)
+                NativeAdminPasskeyGateway.Capability.parse(
+                    response.value,BuildConfig.APPLICATION_ID)
+                else null
+            runOnUiThread {
+                adminPasskeyProbeBusy=false
+                if(unlocked && workspace==MailWorkspace.ADMIN &&
+                    adminPasskeyGeneration.get()==token)
+                    adminPasskeyCapability=capability
+            }
+        }
+    }
+
+    /** No private key or raw biometric data enters the APK or its cache.
+     * Registration requires an authenticated admin session; sign-in does not. */
+    private fun beginNativeAdminPasskey(registration:Boolean) {
+        val enabled=if(registration)adminPasskeyCapability?.registration==true
+            else adminPasskeyCapability?.signIn==true
+        if(!enabled || !unlocked || workspace!=MailWorkspace.ADMIN ||
+            adminPasskeyBusy || adminBusy || (registration!=adminAuthenticated))
+            return
+        val generation=adminPasskeyGeneration.incrementAndGet()
+        val epoch=nativeAdminClient.requestEpoch()
+        val prefix=if(registration)"/api/admin/passkeys/registration"
+            else "/api/admin/passkeys/authentication"
+        adminPasskeyBusy=true
+        adminPasskeyNotice=""
+        adminReadIo.execute {
+            val response=nativeAdminClient.post(prefix+"/options",JSONObject(),epoch)
+            val challenge=if(response.status==200)
+                NativeAdminPasskeyGateway.Challenge.parse(response.value)
+                else null
+            runOnUiThread {
+                if(!unlocked || workspace!=MailWorkspace.ADMIN ||
+                    adminPasskeyGeneration.get()!=generation)return@runOnUiThread
+                if(challenge==null) {
+                    adminPasskeyBusy=false
+                    adminPasskeyNotice="通行密钥挑战暂不可用（HTTP "+
+                        response.status+"）；请使用原登录方式。"
+                    return@runOnUiThread
+                }
+                adminPasskeySheetAtMs=SystemClock.elapsedRealtime()
+                val callback:(JSONObject?,String?)->Unit={ credential,error ->
+                    adminPasskeySheetAtMs=0L
+                    if(!unlocked || workspace!=MailWorkspace.ADMIN ||
+                        adminPasskeyGeneration.get()!=generation) {
+                        adminPasskeyBusy=false
+                    } else if(credential==null) {
+                        adminPasskeyBusy=false
+                        adminPasskeyNotice=error ?: "通行密钥未完成。"
+                    } else {
+                        adminReadIo.execute {
+                            val verified=nativeAdminClient.post(
+                                prefix+"/verify",credential,epoch)
+                            runOnUiThread {
+                                if(!unlocked || workspace!=MailWorkspace.ADMIN ||
+                                    adminPasskeyGeneration.get()!=generation)
+                                    return@runOnUiThread
+                                adminPasskeyBusy=false
+                                if(registration) {
+                                    adminPasskeyNotice=if(verified.status==201 &&
+                                        verified.value?.optBoolean("registered")==true)
+                                        "通行密钥已由服务器验证并登记。"
+                                    else "通行密钥未完成服务端登记（HTTP "+
+                                        verified.status+"）。"
+                                } else if(verified.status==200 &&
+                                    verified.value?.optBoolean("authenticated")==true) {
+                                    // Only a fresh /api/admin/status grants dashboard access.
+                                    refreshNativeAdmin()
+                                } else {
+                                    adminPasskeyNotice="服务器未接受通行密钥（HTTP "+
+                                        verified.status+"）；原登录方式仍可使用。"
+                                }
+                            }
+                        }
+                    }
+                }
+                if(registration) nativeAdminPasskeys.register(challenge,callback)
+                else nativeAdminPasskeys.signIn(challenge,callback)
             }
         }
     }
@@ -4165,6 +4273,17 @@ class MainActivity : FragmentActivity() {
                 }
             }
             HorizontalDivider()
+            if(adminPane=="security" && adminPasskeyCapability?.registration==true) {
+                OutlinedButton(enabled=!adminPasskeyBusy&&!adminBusy&&adminAuthenticated,
+                    onClick={beginNativeAdminPasskey(true)},
+                    modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp)) {
+                    Text(if(adminPasskeyBusy)"正在登记通行密钥…" else
+                        "为管理员账号创建通行密钥")
+                }
+                if(adminPasskeyNotice.isNotBlank())
+                    Text(adminPasskeyNotice,modifier=Modifier.padding(14.dp),
+                        style=MaterialTheme.typography.bodySmall)
+            }
             when (adminPane) {
                 "domains" -> AdminDomainManagement(
                     rows=AdminDomainInventoryModels.combine(
@@ -4467,6 +4586,17 @@ class MainActivity : FragmentActivity() {
                             Text("检测当前已登录的管理员会话")
                         }
                     }
+                    if(adminPasskeyCapability?.signIn==true && !adminTotpRequired &&
+                        !adminSessionUnknown)
+                        OutlinedButton(
+                            enabled=!adminPasskeyBusy&&!adminBusy,
+                            onClick={beginNativeAdminPasskey(false)},
+                            modifier=Modifier.fillMaxWidth()) {
+                            Text(if(adminPasskeyBusy)"正在通过系统通行密钥验证…" else
+                                "使用通行密钥免密码登录")
+                        }
+                    if(adminPasskeyNotice.isNotBlank())
+                        Text(adminPasskeyNotice,style=MaterialTheme.typography.bodySmall)
                     if(adminCredentialNotice.isNotBlank())
                         Text(adminCredentialNotice,style=MaterialTheme.typography.bodySmall)
                     Text("管理员邮箱与管理功能在 Android 原生界面执行。" +
@@ -5508,6 +5638,11 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        adminPasskeyGeneration.incrementAndGet()
+        adminPasskeyCapability=null
+        adminPasskeyProbeAtMs=0L
+        adminPasskeyBusy=false
+        adminPasskeySheetAtMs=0L
         // Plaintext from read messages is never retained after local lock.
         ordinaryDetailCache.clear()
         adminDetailCache.clear()
@@ -5981,6 +6116,7 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         if (pickerPending && !pickerReturnAllowed()) lock()
         if(adminSystemCredentialBusy && !hasActiveCredentialSheet()) lock()
+        if(adminPasskeySheetAtMs>0L && !hasPasskeySheet()) lock()
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
@@ -6003,7 +6139,8 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onStop() {
-        if ((pickerPending && pickerReturnAllowed()) || hasActiveCredentialSheet()) {
+        if ((pickerPending && pickerReturnAllowed()) || hasActiveCredentialSheet() ||
+            hasPasskeySheet()) {
             browser?.onPause()
             browser?.pauseTimers()
         } else {
