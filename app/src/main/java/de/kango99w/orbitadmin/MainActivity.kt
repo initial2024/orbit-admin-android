@@ -191,6 +191,7 @@ class MainActivity : FragmentActivity() {
     private var adminRememberSystemPassword by mutableStateOf(false)
     private var adminSystemCredentialBusy by mutableStateOf(false)
     private var adminCredentialNotice by mutableStateOf("")
+    private var adminSessionUnknown by mutableStateOf(false)
     // In memory until the complete server password+2FA exchange succeeds.
     private var adminPasswordSavePending: Pair<String,String>? = null
     private var adminCredentialSheetStartedAtMs = 0L
@@ -2791,6 +2792,14 @@ class MainActivity : FragmentActivity() {
                 if (!unlocked || workspace!=MailWorkspace.ADMIN ||
                     adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
+                if(status.status!=200 || status.value==null) {
+                    adminSessionUnknown=true
+                    adminAuthenticated=false
+                    adminError="管理员会话暂无法核验（HTTP "+status.status+
+                        "），不是密码错误。检查网络后重新验证即可。"
+                    return@runOnUiThread
+                }
+                adminSessionUnknown=false
                 adminAuthenticated = authorized && privateRows?.status != 401 &&
                     ordinaryRows?.status != 401
                 adminUsername = if (adminAuthenticated)
@@ -2894,6 +2903,7 @@ class MainActivity : FragmentActivity() {
             adminError = "管理员用户名需为 3–32 位；密码至少 12 位。"
             return
         }
+        adminPasswordSavePending=if(adminRememberSystemPassword) username to password else null
         val generation = adminGeneration.incrementAndGet()
         val requestEpoch = nativeAdminClient.requestEpoch()
         adminBusy = true
@@ -2910,12 +2920,16 @@ class MainActivity : FragmentActivity() {
                         adminTotpRequired = false
                         adminTotpCode = ""
                         refreshNativeAdmin()
+                        saveVerifiedAdminPasswordToSystem()
                     }
                     result.status == 200 && result.value?.optBoolean("totp_required") == true -> {
                         adminTotpRequired = true
                         adminError = "管理员密码已验证，请输入管理员专用 2FA 动态码。"
                     }
-                    else -> adminError = "管理员登录未通过（HTTP ${result.status}；${result.error ?: "UNKNOWN"}）。"
+                    else -> {
+                        adminPasswordSavePending=null
+                        adminError = "管理员登录未通过（HTTP ${result.status}；${result.error ?: "UNKNOWN"}）。"
+                    }
                 }
             }
         }
@@ -2933,8 +2947,12 @@ class MainActivity : FragmentActivity() {
         adminBusy = true
         adminError = ""
         adminIo.execute {
+            val wantsTrust=adminTrustThisDevice
+            val payload=JSONObject().put("code",code).put("trust_device",wantsTrust)
+            if(wantsTrust)payload.put("device_label","Orbit Mail Android")
+                .put("trust_days",30)
             val result = nativeAdminClient.post("/api/admin/login/totp",
-                JSONObject().put("code", code).put("trust_device", false), requestEpoch)
+                payload, requestEpoch)
             runOnUiThread {
                 if (!unlocked || adminGeneration.get() != generation) return@runOnUiThread
                 adminBusy = false
@@ -2942,11 +2960,18 @@ class MainActivity : FragmentActivity() {
                 if (result.status == 200 &&
                     result.value?.optBoolean("authenticated") == true) {
                     adminTotpRequired = false
+                    if(wantsTrust)adminCredentialNotice=
+                        if(result.value?.optBoolean("trusted_device_created")==true)
+                            "本机可信设备登记成功（最长30天）；当前会话最长7天。"
+                        else "已登录，但服务器未确认可信设备登记；继续使用普通会话。"
                     refreshNativeAdmin()
+                    saveVerifiedAdminPasswordToSystem()
                 } else {
                     adminError = "管理员 2FA 未通过（HTTP ${result.status}；${result.error ?: "UNKNOWN"}）。"
-                    if (result.error == "ADMIN_TOTP_CHALLENGE_EXPIRED")
+                    if (result.error == "ADMIN_TOTP_CHALLENGE_EXPIRED") {
                         adminTotpRequired = false
+                        adminPasswordSavePending=null
+                    }
                 }
             }
         }
@@ -4333,13 +4358,24 @@ class MainActivity : FragmentActivity() {
                         style=MaterialTheme.typography.titleLarge)
                     Text("这里直接请求管理员专用 API，不打开网站。普通账号密码和原生设备授权不能用作管理员登录。",
                         style=MaterialTheme.typography.bodyMedium)
-                    if (adminTotpRequired) {
+                    if(adminSessionUnknown) {
+                        Text("无法确认会话；不会误判为已退出，也不会绕过管理员认证。")
+                        OutlinedButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
+                            Text("重新验证当前会话")
+                        }
+                    } else if (adminTotpRequired) {
                         OutlinedTextField(
                             value=adminTotpCode,
                             onValueChange={adminTotpCode=it.filter(Char::isDigit).take(6)},
                             label={Text("管理员动态验证码")},
                             singleLine=true,modifier=Modifier.fillMaxWidth()
                         )
+                        Row(verticalAlignment=Alignment.CenterVertically) {
+                            Checkbox(checked=adminTrustThisDevice,
+                                onCheckedChange={adminTrustThisDevice=it},enabled=!adminBusy)
+                            Text("信任此私人设备（服务端最长30天）",
+                                style=MaterialTheme.typography.bodySmall)
+                        }
                         Button(
                             enabled=!adminBusy && adminTotpCode.length==6,
                             onClick=::submitAdminNativeTotp,
@@ -4364,17 +4400,31 @@ class MainActivity : FragmentActivity() {
                             visualTransformation=PasswordVisualTransformation(),
                             singleLine=true,modifier=Modifier.fillMaxWidth()
                         )
+                        Row(verticalAlignment=Alignment.CenterVertically) {
+                            Checkbox(checked=adminRememberSystemPassword,
+                                onCheckedChange={adminRememberSystemPassword=it},
+                                enabled=!adminBusy&&!adminSystemCredentialBusy)
+                            Text("成功登录后询问是否保存到 Android 系统密码管理器",
+                                style=MaterialTheme.typography.bodySmall)
+                        }
                         Button(enabled=!adminBusy && adminSignInPassword.isNotBlank(),
                             onClick=::submitAdminNativeLogin,
                             modifier=Modifier.fillMaxWidth()) {
                             Text(if (adminBusy) "正在验证…" else "原生管理员登录")
                         }
+                        OutlinedButton(enabled=!adminBusy&&!adminSystemCredentialBusy,
+                            onClick=::chooseAdminSystemCredential,
+                            modifier=Modifier.fillMaxWidth()) {
+                            Text("使用 Android 系统保存的登录凭据")
+                        }
                         TextButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
                             Text("检测当前已登录的管理员会话")
                         }
                     }
+                    if(adminCredentialNotice.isNotBlank())
+                        Text(adminCredentialNotice,style=MaterialTheme.typography.bodySmall)
                     Text("管理员邮箱与管理功能在 Android 原生界面执行。" +
-                        "登录和 2FA 由独立的管理员 API 验证，绝不改用普通账号设备凭据。",
+                        "系统密码凭据仍由原管理员 API 验证，不等于 Passkey。",
                         style=MaterialTheme.typography.bodySmall)
                 }
                 return@Column
@@ -5460,6 +5510,8 @@ class MainActivity : FragmentActivity() {
         glyphSiteSession = false
         adminBusy = false
         adminAuthenticated = false
+        adminSessionUnknown = false
+        adminPasswordSavePending=null
         adminSignInPassword = ""
         adminRegPassword = ""
         adminRegTotp = ""
@@ -5876,6 +5928,7 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         if (pickerPending && !pickerReturnAllowed()) lock()
+        if(adminSystemCredentialBusy && !hasActiveCredentialSheet()) lock()
         if (unlocked) {
             browser?.resumeTimers()
             browser?.onResume()
@@ -5898,7 +5951,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onStop() {
-        if (pickerPending && pickerReturnAllowed()) {
+        if ((pickerPending && pickerReturnAllowed()) || hasActiveCredentialSheet()) {
             browser?.onPause()
             browser?.pauseTimers()
         } else {
