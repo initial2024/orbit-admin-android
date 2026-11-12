@@ -1,5 +1,6 @@
 package de.kango99w.orbitadmin
 
+import android.content.Context
 import android.os.Looper
 import android.webkit.CookieManager
 import org.json.JSONObject
@@ -18,8 +19,10 @@ import javax.net.ssl.HttpsURLConnection
  * an already-authenticated admin does not need to sign in repeatedly. This is
  * not a claim of independent WebView cookie-store/process isolation.
  */
-class NativeAdminClient {
+class NativeAdminClient(context: Context) {
     private val cookieGate = AdminCookieCommitGate()
+    private val nativeTrust = NativeAdminTrustedCookieStore(context.applicationContext)
+    fun clearNativeTrustedDevice() = nativeTrust.clear()
     fun requestEpoch(): Long = cookieGate.snapshot()
     fun invalidatePendingResponses() = cookieGate.invalidate()
     data class Reply(val status: Int, val value: JSONObject?, val error: String? = null)
@@ -131,7 +134,13 @@ class NativeAdminClient {
         var connection: HttpsURLConnection? = null
         try {
             val address = ORIGIN + path
-            val cookies = adminCookies(CookieManager.getInstance().getCookie(address))
+            val sessionCookies = adminCookies(CookieManager.getInstance().getCookie(address))
+            // Send native Keystore-encrypted trust only to the original password
+            // login endpoint, never to WebView, ordinary accounts, or inbox reads.
+            val nativeTrustCookie = if(method=="POST" && path=="/api/admin/login")
+                nativeTrust.cookieForLogin() else null
+            val cookies = listOfNotNull(sessionCookies.takeIf { it.isNotBlank() },
+                nativeTrustCookie).joinToString("; ")
             connection = URL(address).openConnection() as HttpsURLConnection
             connection.instanceFollowRedirects = false
             connection.useCaches = false
@@ -139,6 +148,9 @@ class NativeAdminClient {
             connection.readTimeout = 10_000
             connection.requestMethod = method
             connection.setRequestProperty("Accept", "application/json")
+            // The Worker binds native trusted-device rotation to the exact UA.
+            connection.setRequestProperty("User-Agent",
+                NativeAdminTrustedCookieStore.NATIVE_USER_AGENT)
             connection.setRequestProperty("Cache-Control", "no-store")
             if (cookies.isNotBlank()) connection.setRequestProperty("Cookie", cookies)
             if (method != "GET") {
@@ -163,6 +175,12 @@ class NativeAdminClient {
                         if (mayPersistCookie(header)) {
                             CookieManager.getInstance().setCookie(address, header)
                             changed = true
+                        } else if ((path=="/api/admin/login" ||
+                                path=="/api/admin/login/totp") &&
+                            header.substringBefore('=').trim() ==
+                                NativeAdminTrustedCookieStore.COOKIE_NAME) {
+                            // Trusted credentials stay encrypted and native-only.
+                            nativeTrust.receiveSetCookie(header)
                         }
                     }
                 }
