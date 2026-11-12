@@ -2802,10 +2802,9 @@ class MainActivity : FragmentActivity() {
             val managedDomainFuture = asyncGet("/api/admin/pieterj-mail/status")
             fun receive(future: CompletableFuture<NativeAdminClient.Reply>?): NativeAdminClient.Reply? =
                 try { future?.get(22, TimeUnit.SECONDS) } catch (_: Exception) { null }
+            // Only mailbox lists are on the first-paint critical path.
             val privateRows = receive(privateFuture)
             val ordinaryRows = receive(ordinaryFuture)
-            val domainRows = receive(tempDomainFuture)
-            val managedRows = receive(managedDomainFuture)
             val privateVerified = authorized && privateRows?.status == 200 &&
                 privateRows.value?.optJSONArray("mailboxes") != null
             val ordinaryVerified = authorized && ordinaryRows?.status == 200 &&
@@ -2819,10 +2818,6 @@ class MainActivity : FragmentActivity() {
                     else emptyList()) +
                 (if(ordinaryVerified) AdminNativeModels.mailboxes(ordinaryRows?.value,false)
                     else emptyList())
-            val privateOptions = if (managedRows?.status == 200)
-                AdminDomainSelection.permanent(managedRows.value) else emptyList()
-            val ordinaryOptions = if (domainRows?.status == 200)
-                AdminDomainSelection.temporary(domainRows.value) else emptyList()
             runOnUiThread {
                 if (!unlocked || workspace!=MailWorkspace.ADMIN ||
                     adminGeneration.get() != generation) return@runOnUiThread
@@ -2843,8 +2838,6 @@ class MainActivity : FragmentActivity() {
                     workspacePrefs.edit().putString("last_workspace","admin").apply()
                 adminMailboxes = mailboxes
                 if(valid)adminLastMailboxSyncMs=SystemClock.elapsedRealtime()
-                adminPrivateDomainOptions = privateOptions
-                adminOrdinaryDomainOptions = ordinaryOptions
                 if (!adminAuthenticated) {
                     adminActivationGeneration.incrementAndGet()
                     adminActivationTarget=null
@@ -2878,6 +2871,27 @@ class MainActivity : FragmentActivity() {
                         adminMessages=emptyList()
                         adminMessagesLoaded=false
                         adminMessagesError="所选邮箱未在本次服务器核验中返回；请重新同步。"
+                    }
+                }
+            }
+            if(authorized) adminReadIo.execute {
+                // Complete optional provider/domain reads after the inbox paints.
+                val domainRows=receive(tempDomainFuture)
+                val managedRows=receive(managedDomainFuture)
+                val privateOptions=if(managedRows?.status==200)
+                    AdminDomainSelection.permanent(managedRows.value)
+                    else emptyList()
+                val ordinaryOptions=if(domainRows?.status==200)
+                    AdminDomainSelection.temporary(domainRows.value)
+                    else emptyList()
+                runOnUiThread {
+                    if(unlocked && adminAuthenticated &&
+                        workspace==MailWorkspace.ADMIN &&
+                        generation==adminGeneration.get()) {
+                        if(managedRows?.status==200)
+                            adminPrivateDomainOptions=privateOptions
+                        if(domainRows?.status==200)
+                            adminOrdinaryDomainOptions=ordinaryOptions
                     }
                 }
             }
