@@ -47,6 +47,7 @@ class NativeAdminClient(context: Context) {
         private val TRUSTED_REVOKE = Regex("^/api/admin/trusted-devices/$UUID/revoke$")
         private val GET_PATHS = setOf(
             "/api/admin/status",
+            "/api/admin/passkeys/capabilities",
             "/api/admin/pieterj-mail/mailboxes",
             "/api/admin/ordinary-inbox/mailboxes",
             "/api/admin/ordinary-inbox/domains",
@@ -61,6 +62,10 @@ class NativeAdminClient(context: Context) {
         )
         private val POST_PATHS = setOf(
             "/api/admin/login", "/api/admin/login/totp", "/api/admin/logout",
+            "/api/admin/passkeys/authentication/options",
+            "/api/admin/passkeys/authentication/verify",
+            "/api/admin/passkeys/registration/options",
+            "/api/admin/passkeys/registration/verify",
             "/api/admin/private-mail-handoff",
             "/api/admin/registration-control",
             "/api/admin/lucky-glyphs/checkin", "/api/admin/lucky-glyphs/draw",
