@@ -22,9 +22,19 @@ import javax.net.ssl.HttpsURLConnection
 class NativeAdminClient(context: Context) {
     private val cookieGate = AdminCookieCommitGate()
     private val nativeTrust = NativeAdminTrustedCookieStore(context.applicationContext)
+    // Android WebView's setCookie is asynchronous. A successful first-party
+    // login needs the newly issued server cookie for the immediately following
+    // /status request, not a possibly stale CookieManager read. This token
+    // lives in memory only, never in preferences/logs, and is invalidated by lock.
+    @Volatile private var pendingNativeSession: String? = null
+    @Volatile private var pendingNativeSessionExpiresAt = 0L
     fun clearNativeTrustedDevice() = nativeTrust.clear()
     fun requestEpoch(): Long = cookieGate.snapshot()
-    fun invalidatePendingResponses() = cookieGate.invalidate()
+    fun invalidatePendingResponses() {
+        cookieGate.invalidate()
+        pendingNativeSession=null
+        pendingNativeSessionExpiresAt=0L
+    }
     data class Reply(val status: Int, val value: JSONObject?, val error: String? = null)
     companion object {
         private const val ORIGIN = "https://inbox.kango99w.de"
@@ -109,6 +119,22 @@ class NativeAdminClient(context: Context) {
                 }
             }.distinctBy { it.substringBefore('=') }.joinToString("; ")
 
+        /** Only a server-issued, strictly scoped admin cookie can be handed
+         * to the next HTTPS request while WebView persistence catches up. */
+        fun immediateAdminSession(header:String): Pair<String,Long>? {
+            if(!mayPersistCookie(header) ||
+                header.substringBefore('=').trim()!="kango_admin_session")
+                return null
+            val token=adminCookies(header)
+            if(!token.startsWith("kango_admin_session="))return null
+            val ages=header.split(';').map { it.trim().lowercase() }
+                .filter { it.startsWith("max-age=") }
+            if(ages.size!=1)return null
+            val seconds=ages[0].substringAfter('=').toLongOrNull() ?: return null
+            if(seconds !in 1..(7L*24L*3600L))return null
+            return token to seconds*1000L
+        }
+
         fun mayPersistCookie(header: String): Boolean {
             val key = header.substringBefore('=').trim()
             val attrs = header.split(';').drop(1).map { it.trim().lowercase() }
@@ -140,11 +166,23 @@ class NativeAdminClient(context: Context) {
         try {
             val address = ORIGIN + path
             val sessionCookies = adminCookies(CookieManager.getInstance().getCookie(address))
+            val liveSession=pendingNativeSession?.takeIf {
+                cookieGate.isCurrent(epoch) &&
+                    pendingNativeSessionExpiresAt > System.currentTimeMillis()
+            }
+            // Prefer the new server-issued token over an old or not-yet-replaced
+            // WebView session. No token is accepted without server verification.
+            val mergedCookies=if(liveSession==null)sessionCookies
+                else (listOf(liveSession) + sessionCookies.split(';')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() &&
+                        !it.startsWith("kango_admin_session=") })
+                    .joinToString("; ")
             // Send native Keystore-encrypted trust only to the original password
             // login endpoint, never to WebView, ordinary accounts, or inbox reads.
             val nativeTrustCookie = if(method=="POST" && path=="/api/admin/login")
                 nativeTrust.cookieForLogin() else null
-            val cookies = listOfNotNull(sessionCookies.takeIf { it.isNotBlank() },
+            val cookies = listOfNotNull(mergedCookies.takeIf { it.isNotBlank() },
                 nativeTrustCookie).joinToString("; ")
             connection = URL(address).openConnection() as HttpsURLConnection
             connection.instanceFollowRedirects = false
@@ -178,6 +216,12 @@ class NativeAdminClient(context: Context) {
                     if (!name.equals("Set-Cookie", ignoreCase = true)) continue
                     for (header in values.orEmpty()) {
                         if (mayPersistCookie(header)) {
+                            val session=immediateAdminSession(header)
+                            if(session!=null) {
+                                pendingNativeSession=session.first
+                                pendingNativeSessionExpiresAt=
+                                    System.currentTimeMillis()+session.second
+                            }
                             CookieManager.getInstance().setCookie(address, header)
                             changed = true
                         } else if ((path=="/api/admin/login" ||
@@ -207,6 +251,12 @@ class NativeAdminClient(context: Context) {
                 }
             }
             val json = JSONObject(output.toString(Charsets.UTF_8.name()))
+            if(path=="/api/admin/logout" && code==200) {
+                cookieGate.commitIfCurrent(epoch) {
+                    pendingNativeSession=null
+                    pendingNativeSessionExpiresAt=0L
+                }
+            }
             return Reply(code, json, json.optString("error").ifBlank { null })
         } catch (_: Exception) {
             return Reply(503, null, "ADMIN_NATIVE_NETWORK_UNAVAILABLE")
