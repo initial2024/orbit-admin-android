@@ -43,11 +43,12 @@ class NativeFeatureCoverageContractTest {
 
     @Test fun fileTabUsesNativePickerAndDoesNotMisrepresentUploadAsComplete() {
         val transfer = source.substringAfter("private fun NativeTransferContent()")
-            .substringBefore("/** Existing admin HttpOnly session")
+            .substringBefore("private fun refreshNativeAdmin()")
         assertTrue(transfer.contains("launchNativeDocumentPicker(false)"))
         assertTrue(source.contains("nativeFilePicker.launch(arrayOf(\"*/*\"))"))
         assertTrue(source.contains("pickerReturnAllowed()"))
         assertTrue(transfer.contains("未上传"))
+        assertFalse(transfer.contains("private fun refreshNativeAdmin()"))
         assertFalse(transfer.contains("navigateTo("))
         assertFalse(transfer.contains("WebView("))
     }

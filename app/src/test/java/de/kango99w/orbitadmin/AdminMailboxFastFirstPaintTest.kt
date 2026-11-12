@@ -13,8 +13,8 @@ class AdminMailboxFastFirstPaintTest {
         val code=src.substringAfter("private fun refreshNativeAdmin()")
             .substringBefore("private fun probeNativeAdminPasskeys()")
         val paint=code.indexOf("adminMailboxes = mailboxes")
-        val deferred=code.indexOf("val domainRows=receive(tempDomainFuture)")
-        assertTrue(paint>0 && deferred>paint)
+        val deferred=code.indexOf("val domainRows=receive(domainFuture)")
+        assertTrue("Mailbox results must paint before optional domains",paint>0 && deferred>paint)
         assertTrue(code.contains("if(authorized) adminReadIo.execute"))
         assertTrue(code.contains("generation==adminGeneration.get()"))
     }

@@ -40,7 +40,7 @@ class AdminWorkspaceRestoreContractTest {
             assertTrue("Missing on workspace exit: "+k,selection.contains(k))
         val refresh=s.substringAfter("private fun refreshNativeAdmin()")
             .substringBefore("private fun openNativeAdminMailbox(")
-        assertTrue(refresh.contains("nativeAdminClient.get(\"/api/admin/status\", requestEpoch)"))
+        assertTrue(refresh.contains("nativeAdminClient.get(\"/api/admin/status\", epoch)"))
         assertTrue(refresh.contains("authorized = status.status == 200"))
         assertTrue(refresh.contains("workspacePrefs.edit().putString(\"last_workspace\",\"admin\")"))
         assertFalse(selection.contains("adminAuthenticated=true"))
