@@ -85,6 +85,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -175,7 +176,8 @@ class MainActivity : FragmentActivity() {
     private var adminQuickMenuOpen by mutableStateOf(false)
     // Administrator authentication never consumes ordinary-account native grants.
     // The existing first-party admin session is read by a separate native client.
-    private val nativeAdminClient by lazy { NativeAdminClient() }
+    private val nativeAdminClient by lazy { NativeAdminClient(applicationContext) }
+    private val adminPasswordCredentials by lazy { NativeAdminPasswordCredentials(this) }
     private val adminIo = Executors.newSingleThreadExecutor()
     private val adminReadIo = Executors.newFixedThreadPool(4)
     private val adminGeneration = AtomicLong(0)
@@ -185,6 +187,18 @@ class MainActivity : FragmentActivity() {
     private var adminUsername by mutableStateOf("")
     private var adminSignInUsername by mutableStateOf("")
     private var adminSignInPassword by mutableStateOf("")
+    private var adminTrustThisDevice by mutableStateOf(false)
+    private var adminRememberSystemPassword by mutableStateOf(false)
+    private var adminSystemCredentialBusy by mutableStateOf(false)
+    private var adminCredentialNotice by mutableStateOf("")
+    // In memory until the complete server password+2FA exchange succeeds.
+    private var adminPasswordSavePending: Pair<String,String>? = null
+    private var adminCredentialSheetStartedAtMs = 0L
+    private fun hasActiveCredentialSheet():Boolean {
+        val age=SystemClock.elapsedRealtime()-adminCredentialSheetStartedAtMs
+        return adminSystemCredentialBusy && adminCredentialSheetStartedAtMs>0L &&
+            age in 0..90_000L
+    }
     private var adminTotpCode by mutableStateOf("")
     private var adminTotpRequired by mutableStateOf(false)
     private var adminError by mutableStateOf("")
@@ -2823,6 +2837,50 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /** Explicit user interaction only. Provider credentials remain in the OS vault. */
+    private fun chooseAdminSystemCredential() {
+        if(!unlocked || workspace!=MailWorkspace.ADMIN || adminBusy ||
+            adminSystemCredentialBusy || adminAuthenticated || adminTotpRequired)return
+        adminSystemCredentialBusy=true
+        adminCredentialNotice=""
+        adminCredentialSheetStartedAtMs=SystemClock.elapsedRealtime()
+        adminPasswordCredentials.choose { username,password,error ->
+            adminSystemCredentialBusy=false
+            adminCredentialSheetStartedAtMs=0L
+            if(!unlocked || workspace!=MailWorkspace.ADMIN || adminAuthenticated)
+                return@choose
+            if(error!=null || username==null || password==null) {
+                adminCredentialNotice=error ?: "系统未提供有效登录凭据。"
+                return@choose
+            }
+            if(!username.matches(Regex("^[A-Za-z0-9_.-]{3,32}$")) ||
+                password.length !in 12..128) {
+                adminCredentialNotice="系统凭据不符合管理员账户格式，请核对保存的账号。"
+                return@choose
+            }
+            adminSignInUsername=username
+            adminSignInPassword=password
+            submitAdminNativeLogin()
+        }
+    }
+
+    private fun saveVerifiedAdminPasswordToSystem() {
+        val pending=adminPasswordSavePending ?: return
+        adminPasswordSavePending=null
+        if(!unlocked || workspace!=MailWorkspace.ADMIN || !adminRememberSystemPassword)
+            return
+        adminSystemCredentialBusy=true
+        adminCredentialSheetStartedAtMs=SystemClock.elapsedRealtime()
+        adminPasswordCredentials.saveAfterVerifiedLogin(pending.first,pending.second) { saved ->
+            adminSystemCredentialBusy=false
+            adminCredentialSheetStartedAtMs=0L
+            if(unlocked && workspace==MailWorkspace.ADMIN)
+                adminCredentialNotice=if(saved)
+                    "管理员密码已由系统凭据提供方保存；下次可选择凭据登录。"
+                else "未保存到系统凭据提供方；可使用原密码登录。"
         }
     }
 
