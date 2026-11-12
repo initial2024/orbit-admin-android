@@ -211,6 +211,7 @@ class MainActivity : FragmentActivity() {
     private var adminSignInPassword by mutableStateOf("")
     private var adminTrustThisDevice by mutableStateOf(false)
     private var adminRememberSystemPassword by mutableStateOf(false)
+    private var adminLoginVerificationPending by mutableStateOf(false)
     private var adminSystemCredentialBusy by mutableStateOf(false)
     private var adminCredentialNotice by mutableStateOf("")
     private var adminSessionUnknown by mutableStateOf(false)
@@ -2797,6 +2798,8 @@ class MainActivity : FragmentActivity() {
                 if (!unlocked || workspace!=MailWorkspace.ADMIN ||
                     adminGeneration.get()!=generation) return@runOnUiThread
                 adminBusy=false
+                val loginWasJustAccepted=adminLoginVerificationPending
+                adminLoginVerificationPending=false
                 adminSessionUnknown=status.status!=200 || status.value==null
                 adminAuthenticated=authorized
                 if (authorized) {
@@ -2820,8 +2823,10 @@ class MainActivity : FragmentActivity() {
                         adminError="当前无法核验管理员会话（HTTP "+status.status+
                             "）。这不是密码错误；请检查网络后重试。"
                     } else if(!adminTotpRequired) {
-                        adminError="服务器确认当前没有有效管理员会话。"+
-                            "如刚刚完成验证，请检查本机 Cookie 保存状态或重新登录。"
+                        adminError=if(loginWasJustAccepted)
+                            "服务器已接受密码/2FA，但新的管理员会话未通过确认。"+
+                            "已停止进入管理界面，请点击重新核验；不要重复提交动态码。"
+                        else "服务器确认当前没有有效管理员会话。请重新登录。"
                     }
                 }
             }
@@ -3009,23 +3014,30 @@ class MainActivity : FragmentActivity() {
         adminSystemCredentialBusy=true
         adminCredentialNotice=""
         adminCredentialSheetStartedAtMs=SystemClock.elapsedRealtime()
-        adminPasswordCredentials.choose { username,password,error ->
+        try {
+            adminPasswordCredentials.choose { username,password,error ->
+                adminSystemCredentialBusy=false
+                adminCredentialSheetStartedAtMs=0L
+                if(!unlocked || workspace!=MailWorkspace.ADMIN || adminAuthenticated)
+                    return@choose
+                if(error!=null || username==null || password==null) {
+                    adminCredentialNotice=error ?: "系统未提供有效登录凭据。"
+                    return@choose
+                }
+                if(!username.matches(Regex("^[A-Za-z0-9_.-]{3,32}$")) ||
+                    password.length !in 12..128) {
+                    adminCredentialNotice="系统凭据不符合管理员账户格式，请核对保存的账号。"
+                    return@choose
+                }
+                adminSignInUsername=username
+                adminSignInPassword=password
+                submitAdminNativeLogin()
+            }
+        } catch (_:Exception) {
             adminSystemCredentialBusy=false
             adminCredentialSheetStartedAtMs=0L
-            if(!unlocked || workspace!=MailWorkspace.ADMIN || adminAuthenticated)
-                return@choose
-            if(error!=null || username==null || password==null) {
-                adminCredentialNotice=error ?: "系统未提供有效登录凭据。"
-                return@choose
-            }
-            if(!username.matches(Regex("^[A-Za-z0-9_.-]{3,32}$")) ||
-                password.length !in 12..128) {
-                adminCredentialNotice="系统凭据不符合管理员账户格式，请核对保存的账号。"
-                return@choose
-            }
-            adminSignInUsername=username
-            adminSignInPassword=password
-            submitAdminNativeLogin()
+            adminCredentialNotice="当前系统无法启动密码凭据选择器。"+
+                "请检查系统默认密码管理器是否启用，或先手动登录并保存密码。"
         }
     }
 
@@ -3036,13 +3048,19 @@ class MainActivity : FragmentActivity() {
             return
         adminSystemCredentialBusy=true
         adminCredentialSheetStartedAtMs=SystemClock.elapsedRealtime()
-        adminPasswordCredentials.saveAfterVerifiedLogin(pending.first,pending.second) { saved ->
+        try {
+            adminPasswordCredentials.saveAfterVerifiedLogin(pending.first,pending.second) { saved,detail ->
+                adminSystemCredentialBusy=false
+                adminCredentialSheetStartedAtMs=0L
+                if(unlocked && workspace==MailWorkspace.ADMIN)
+                    adminCredentialNotice=if(saved)
+                        "管理员密码已由系统凭据提供方保存；下次可选择凭据登录。"
+                    else (detail ?: "未保存到系统凭据提供方；可使用原密码登录。")
+            }
+        } catch (_:Exception) {
             adminSystemCredentialBusy=false
             adminCredentialSheetStartedAtMs=0L
-            if(unlocked && workspace==MailWorkspace.ADMIN)
-                adminCredentialNotice=if(saved)
-                    "管理员密码已由系统凭据提供方保存；下次可选择凭据登录。"
-                else "未保存到系统凭据提供方；可使用原密码登录。"
+            adminCredentialNotice="系统密码管理器暂时无法启动；本机未保存你的密码。"
         }
     }
 
@@ -3072,6 +3090,7 @@ class MainActivity : FragmentActivity() {
                     result.status == 200 && result.value?.optBoolean("authenticated") == true -> {
                         adminTotpRequired = false
                         adminTotpCode = ""
+                        adminLoginVerificationPending=true
                         refreshNativeAdmin()
                         saveVerifiedAdminPasswordToSystem()
                     }
@@ -3117,6 +3136,7 @@ class MainActivity : FragmentActivity() {
                         if(result.value?.optBoolean("trusted_device_created")==true)
                             "本机可信设备登记成功（最长30天）；当前会话最长7天。"
                         else "已登录，但服务器未确认可信设备登记；继续使用普通会话。"
+                    adminLoginVerificationPending=true
                     refreshNativeAdmin()
                     saveVerifiedAdminPasswordToSystem()
                 } else {
@@ -4544,11 +4564,18 @@ class MainActivity : FragmentActivity() {
             if (!adminAuthenticated) {
                 Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (adminTotpRequired) "验证管理员 2FA" else "管理员原生登录",
+                    Text(if(adminLoginVerificationPending) "正在确认管理员会话…"
+                        else if (adminTotpRequired) "验证管理员 2FA"
+                        else "管理员原生登录",
                         style=MaterialTheme.typography.titleLarge)
+                    if(adminLoginVerificationPending)
+                        LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                     Text("这里直接请求管理员专用 API，不打开网站。普通账号密码和原生设备授权不能用作管理员登录。",
                         style=MaterialTheme.typography.bodyMedium)
-                    if(adminSessionUnknown) {
+                    if(adminLoginVerificationPending) {
+                        Text("密码/2FA 已由服务器接受，正在验证会话。"+
+                            "不会在邮件列表加载期间重复要求登录。")
+                    } else if(adminSessionUnknown) {
                         Text("无法确认会话；不会误判为已退出，也不会绕过管理员认证。")
                         OutlinedButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
                             Text("重新验证当前会话")
@@ -5726,6 +5753,7 @@ class MainActivity : FragmentActivity() {
         glyphSiteSession = false
         adminBusy = false
         adminMailboxListLoading=false
+        adminLoginVerificationPending=false
         adminAuthenticated = false
         adminSessionUnknown = false
         adminPasswordSavePending=null
