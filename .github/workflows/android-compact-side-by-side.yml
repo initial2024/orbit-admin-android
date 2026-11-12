@@ -105,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          NAME=Orbit-Mail-v0.9.27-dev.apk
+          NAME=Orbit-Mail-v0.9.28-dev.apk
           cp app/build/outputs/apk/compactPreview/app-compactPreview.apk "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
           cat > INSTALL_NOTES.txt <<'EOF'
@@ -121,20 +121,20 @@ jobs:
           Debug signing is ephemeral; future preview APK may not update this test installation.
           Deleting the test app removes its independent cache, not the existing app's data.
           EOF
-          ZIP=Orbit-Mail-v0.9.27-dev.zip
+          ZIP=Orbit-Mail-v0.9.28-dev.zip
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt compact-preview-evidence/summary.md >/dev/null
           unzip -t "$ZIP" >/dev/null
           cat compact-preview-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload test package, independent of Release API permissions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: orbit-mail-v0.9.27-compact-preview
+          name: orbit-mail-v0.9.28-compact-preview
           retention-days: 14
           if-no-files-found: error
           path: |
-            Orbit-Mail-v0.9.27-dev.apk
-            Orbit-Mail-v0.9.27-dev.apk.sha256
-            Orbit-Mail-v0.9.27-dev.zip
+            Orbit-Mail-v0.9.28-dev.apk
+            Orbit-Mail-v0.9.28-dev.apk.sha256
+            Orbit-Mail-v0.9.28-dev.zip
             INSTALL_NOTES.txt
             compact-preview-evidence/summary.md
       - name: Upload failure traces
