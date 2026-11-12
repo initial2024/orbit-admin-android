@@ -203,6 +203,7 @@ class MainActivity : FragmentActivity() {
         (if(box.privateMailbox)"p:" else "o:")+box.id+":"+id
     private val adminGeneration = AtomicLong(0)
     private var adminBusy by mutableStateOf(false)
+    private var adminMailboxListLoading by mutableStateOf(false)
     private var adminMessageLoading by mutableStateOf(false)
     private var adminAuthenticated by mutableStateOf(false)
     private var adminUsername by mutableStateOf("")
@@ -2778,106 +2779,114 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Existing admin HttpOnly session, not the ordinary account device grant. */
+    /** Status verification must paint the authenticated screen immediately.
+     * Mailbox and provider reads are independent and must not block login. */
     private fun refreshNativeAdmin() {
         if (!unlocked || adminBusy || workspace!=MailWorkspace.ADMIN) return
         probeNativeAdminPasskeys()
         val generation = adminGeneration.incrementAndGet()
-        val requestEpoch = nativeAdminClient.requestEpoch()
+        val epoch = nativeAdminClient.requestEpoch()
         adminBusy = true
+        adminMailboxListLoading = true
         adminError = ""
         adminIo.execute {
-            val status = nativeAdminClient.get("/api/admin/status", requestEpoch)
+            val status = nativeAdminClient.get("/api/admin/status", epoch)
             val authorized = status.status == 200 &&
                 status.value?.optBoolean("authenticated") == true
-            // Verify the administrator once; independent read-only endpoints
-            // can then be fetched in parallel instead of 4 serial round trips.
-            fun asyncGet(path: String): CompletableFuture<NativeAdminClient.Reply>? =
-                if (authorized) CompletableFuture.supplyAsync(
-                    { nativeAdminClient.get(path, requestEpoch) }, adminReadIo
-                ) else null
-            val privateFuture = asyncGet("/api/admin/pieterj-mail/mailboxes")
-            val ordinaryFuture = asyncGet("/api/admin/ordinary-inbox/mailboxes")
-            val tempDomainFuture = asyncGet("/api/admin/ordinary-inbox/domains")
-            val managedDomainFuture = asyncGet("/api/admin/pieterj-mail/status")
-            fun receive(future: CompletableFuture<NativeAdminClient.Reply>?): NativeAdminClient.Reply? =
-                try { future?.get(22, TimeUnit.SECONDS) } catch (_: Exception) { null }
-            // Only mailbox lists are on the first-paint critical path.
-            val privateRows = receive(privateFuture)
-            val ordinaryRows = receive(ordinaryFuture)
+            runOnUiThread {
+                if (!unlocked || workspace!=MailWorkspace.ADMIN ||
+                    adminGeneration.get()!=generation) return@runOnUiThread
+                adminBusy=false
+                adminSessionUnknown=status.status!=200 || status.value==null
+                adminAuthenticated=authorized
+                if (authorized) {
+                    adminTotpRequired=false
+                    adminUsername=status.value?.optString("username")
+                        .orEmpty().take(32)
+                    workspacePrefs.edit().putString("last_workspace","admin").apply()
+                    adminError=""
+                } else {
+                    adminMailboxListLoading=false
+                    adminActivationGeneration.incrementAndGet()
+                    adminActivationTarget=null
+                    adminActivationError=""
+                    adminActivationNotice=""
+                    adminMailboxes=emptyList()
+                    adminSelectedMailbox=null
+                    adminSelectedMessage=null
+                    adminSelectedMessageId=null
+                    adminMessages=emptyList()
+                    if(status.status!=200 || status.value==null) {
+                        adminError="当前无法核验管理员会话（HTTP "+status.status+
+                            "）。这不是密码错误；请检查网络后重试。"
+                    } else if(!adminTotpRequired) {
+                        adminError="服务器确认当前没有有效管理员会话。"+
+                            "如刚刚完成验证，请检查本机 Cookie 保存状态或重新登录。"
+                    }
+                }
+            }
+            if(!authorized)return@execute
+            // Independent mailboxes. Account verification is not blocked by
+            // either list, even when mail service returns 503 / timeout.
+            fun asyncGet(path:String)=CompletableFuture.supplyAsync(
+                {nativeAdminClient.get(path,epoch)},adminReadIo)
+            val privateFuture=asyncGet("/api/admin/pieterj-mail/mailboxes")
+            val ordinaryFuture=asyncGet("/api/admin/ordinary-inbox/mailboxes")
+            val domainFuture=asyncGet("/api/admin/ordinary-inbox/domains")
+            val managedFuture=asyncGet("/api/admin/pieterj-mail/status")
+            fun receive(future:CompletableFuture<NativeAdminClient.Reply>):NativeAdminClient.Reply? =
+                try { future.get(22,TimeUnit.SECONDS) } catch (_:Exception) {null}
+            val privateRows=receive(privateFuture)
+            val ordinaryRows=receive(ordinaryFuture)
             val privateVerified = authorized && privateRows?.status == 200 &&
                 privateRows.value?.optJSONArray("mailboxes") != null
             val ordinaryVerified = authorized && ordinaryRows?.status == 200 &&
                 ordinaryRows.value?.optJSONArray("mailboxes") != null
-            val valid = privateVerified && ordinaryVerified
-            // The mail backends have independent schemas and failure modes.
-            // Preserve the verified scope rather than treating one failure as
-            // proof that *both* sources contain no messages.
+            val valid=privateVerified && ordinaryVerified
             val mailboxes =
                 (if(privateVerified) AdminNativeModels.mailboxes(privateRows?.value,true)
                     else emptyList()) +
                 (if(ordinaryVerified) AdminNativeModels.mailboxes(ordinaryRows?.value,false)
                     else emptyList())
             runOnUiThread {
-                if (!unlocked || workspace!=MailWorkspace.ADMIN ||
-                    adminGeneration.get() != generation) return@runOnUiThread
-                adminBusy = false
-                if(status.status!=200 || status.value==null) {
-                    adminSessionUnknown=true
+                if(!unlocked || workspace!=MailWorkspace.ADMIN ||
+                    adminGeneration.get()!=generation || !adminAuthenticated)
+                    return@runOnUiThread
+                adminMailboxListLoading=false
+                if(privateRows?.status==401 || ordinaryRows?.status==401) {
+                    // A later 401 is a server rejection, not a slow-source warning.
                     adminAuthenticated=false
-                    adminError="管理员会话暂无法核验（HTTP "+status.status+
-                        "），不是密码错误。检查网络后重新验证即可。"
+                    adminMailboxes=emptyList()
+                    adminMessages=emptyList()
+                    adminSelectedMailbox=null
+                    adminError="邮箱接口拒绝管理员会话（HTTP 401）；请重新核验。"
                     return@runOnUiThread
                 }
-                adminSessionUnknown=false
-                adminAuthenticated = authorized && privateRows?.status != 401 &&
-                    ordinaryRows?.status != 401
-                adminUsername = if (adminAuthenticated)
-                    status.value?.optString("username").orEmpty().take(32) else ""
-                if(adminAuthenticated)
-                    workspacePrefs.edit().putString("last_workspace","admin").apply()
                 adminMailboxes = mailboxes
                 if(valid)adminLastMailboxSyncMs=SystemClock.elapsedRealtime()
-                if (!adminAuthenticated) {
-                    adminActivationGeneration.incrementAndGet()
-                    adminActivationTarget=null
-                    adminActivationError=""
-                    adminActivationNotice=""
-                    adminSelectedMailbox = null
-                    adminSelectedMessage = null
-                    adminSelectedMessageId = null
-                    adminMessages = emptyList()
-                    // /status returns unauthenticated while a password-verified
-                    // admin 2FA challenge is pending. Do not silently reset the
-                    // challenge whenever the user reopens the native admin tab.
-                    if (status.status != 200) adminTotpRequired = false
-                    adminError = if (status.status == 200) ""
-                        else "管理员状态校验失败：HTTP ${status.status}；不会调用普通账号接口。"
-                } else {
-                    if(!valid) adminError =
-                        "部分邮箱来源读取失败：固定邮箱 HTTP "+
-                        (privateRows?.status ?: 0)+"，临时邮箱 HTTP "+
-                        (ordinaryRows?.status ?: 0)+
-                        "。只显示本次已核验的邮箱；其他来源未核验不代表空邮箱。"
-                    val selected=adminSelectedMailbox
-                    val selectedScopeVerified=if(selected?.privateMailbox==true)
-                        privateVerified else ordinaryVerified
-                    if(selected!=null && (!selectedScopeVerified ||
-                        mailboxes.none { it.id==selected.id &&
-                            it.privateMailbox==selected.privateMailbox })) {
-                        adminSelectedMailbox=null
-                        adminSelectedMessage=null
-                        adminSelectedMessageId=null
-                        adminMessages=emptyList()
-                        adminMessagesLoaded=false
-                        adminMessagesError="所选邮箱未在本次服务器核验中返回；请重新同步。"
-                    }
+                if(!valid)adminError=
+                    "部分邮箱来源读取失败：固定邮箱 HTTP "+
+                    (privateRows?.status ?: 0)+"，临时邮箱 HTTP "+
+                    (ordinaryRows?.status ?: 0)+
+                    "。只显示本次已核验的邮箱；其他来源未核验不代表空邮箱。"
+                val selected=adminSelectedMailbox
+                val selectedScopeVerified=if(selected?.privateMailbox==true)
+                    privateVerified else ordinaryVerified
+                if(selected!=null && (!selectedScopeVerified ||
+                    mailboxes.none { it.id==selected.id &&
+                        it.privateMailbox==selected.privateMailbox })) {
+                    adminSelectedMailbox=null
+                    adminSelectedMessage=null
+                    adminSelectedMessageId=null
+                    adminMessages=emptyList()
+                    adminMessagesLoaded=false
+                    adminMessagesError="所选邮箱未在本次服务器核验中返回；请重新同步。"
                 }
             }
             if(authorized) adminReadIo.execute {
-                // Complete optional provider/domain reads after the inbox paints.
-                val domainRows=receive(tempDomainFuture)
-                val managedRows=receive(managedDomainFuture)
+                // Show verified mailbox list before optional domains.
+                val domainRows=receive(domainFuture)
+                val managedRows=receive(managedFuture)
                 val privateOptions=if(managedRows?.status==200)
                     AdminDomainSelection.permanent(managedRows.value)
                     else emptyList()
@@ -4524,6 +4533,8 @@ class MainActivity : FragmentActivity() {
                 }
             }
             HorizontalDivider()
+            if(adminAuthenticated && adminMailboxListLoading)
+                LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
             if (adminError.isNotBlank()) {
                 Text(adminError.take(240),
                     modifier=Modifier.fillMaxWidth().padding(14.dp),
@@ -4542,6 +4553,10 @@ class MainActivity : FragmentActivity() {
                         OutlinedButton(enabled=!adminBusy,onClick=::refreshNativeAdmin) {
                             Text("重新验证当前会话")
                         }
+                        TextButton(enabled=!adminBusy,onClick={
+                            adminSessionUnknown=false
+                            adminError=""
+                        }) { Text("使用账号密码重新登录") }
                     } else if (adminTotpRequired) {
                         OutlinedTextField(
                             value=adminTotpCode,
@@ -5710,6 +5725,7 @@ class MainActivity : FragmentActivity() {
         glyphBusy = false
         glyphSiteSession = false
         adminBusy = false
+        adminMailboxListLoading=false
         adminAuthenticated = false
         adminSessionUnknown = false
         adminPasswordSavePending=null
