@@ -3,6 +3,7 @@ package de.kango99w.orbitadmin
 import androidx.core.content.ContextCompat
 import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CreatePublicKeyCredentialResponse
+import androidx.credentials.CreateCredentialResponse
 import androidx.credentials.CredentialManager
 import androidx.credentials.CredentialManagerCallback
 import androidx.credentials.GetCredentialRequest
@@ -48,6 +49,10 @@ class NativeAdminPasskeyGateway(private val activity: FragmentActivity) {
                 val id=reply.optString("request_id")
                 val publicKey=reply.optJSONObject("public_key") ?: return null
                 val challenge=publicKey.optString("challenge")
+                val rpId=publicKey.optString("rpId").ifBlank {
+                    publicKey.optJSONObject("rp")?.optString("id").orEmpty()
+                }
+                if(rpId!="inbox.kango99w.de")return null
                 if(!IDENTIFIER.matches(id) || challenge.length !in 22..2048 ||
                     !challenge.matches(Regex("^[A-Za-z0-9_-]+$")))
                     return null

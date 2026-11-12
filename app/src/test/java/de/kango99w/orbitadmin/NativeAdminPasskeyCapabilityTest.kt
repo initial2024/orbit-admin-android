@@ -32,6 +32,9 @@ class NativeAdminPasskeyCapabilityTest {
         assertNull(NativeAdminPasskeyGateway.Challenge.parse(
             JSONObject(good.toString()).put("request_id","short")))
         assertNull(NativeAdminPasskeyGateway.Challenge.parse(
+            JSONObject(good.toString()).put("public_key",JSONObject()
+                .put("challenge","b".repeat(32)).put("rpId","another.example"))))
+        assertNull(NativeAdminPasskeyGateway.Challenge.parse(
             JSONObject(good.toString()).put("public_key",JSONObject())))
     }
 }
