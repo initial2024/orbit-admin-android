@@ -53,6 +53,8 @@ class AvenqirActivity : FragmentActivity() {
     private lateinit var unlockPrompt: BiometricPrompt
     private var backgroundLocked = false
     private var promptActive = false
+    private var lastSafePageUrl = AvenqirUrlPolicy.HOME
+    private var restoredPageUrl: String? = null
     private var pendingUpload: ValueCallback<Array<Uri>>? = null
     private var pendingExport: String? = null
     private var navigatingToExternal = false
@@ -83,6 +85,9 @@ class AvenqirActivity : FragmentActivity() {
         // Activity recreation after process death requires reauthentication.
         // The first launch is initiated only by the freshly unlocked MainActivity.
         backgroundLocked = savedInstanceState != null
+        restoredPageUrl = savedInstanceState?.getString("avenqir_public_page")
+            ?.let(AvenqirResumeRoutePolicy::publicPageWithoutState)
+            ?: if (savedInstanceState != null) AvenqirUrlPolicy.HOME else null
         unlockPrompt = BiometricPrompt(
             this, ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
@@ -90,7 +95,10 @@ class AvenqirActivity : FragmentActivity() {
                     promptActive = false
                     backgroundLocked = false
                     lockCurtain?.visibility = View.GONE
-                    webView?.onResume()
+                    val safeRestore = restoredPageUrl
+                    restoredPageUrl = null
+                    if (safeRestore != null) webView?.loadUrl(safeRestore)
+                    else webView?.onResume()
                 }
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     promptActive = false
@@ -230,6 +238,13 @@ class AvenqirActivity : FragmentActivity() {
                         .show()
                 }
                 return true
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                AvenqirResumeRoutePolicy.publicPageWithoutState(url)?.let {
+                    lastSafePageUrl = it
+                }
             }
 
             override fun onReceivedSslError(
@@ -380,7 +395,14 @@ class AvenqirActivity : FragmentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         lockCurtain = curtain
         setContentView(root)
-        page.loadUrl(AvenqirUrlPolicy.HOME)
+        if (savedInstanceState == null) {
+            page.loadUrl(AvenqirUrlPolicy.HOME)
+        } // On process recreation, reload only the safe page AFTER biometric.
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("avenqir_public_page", lastSafePageUrl)
+        super.onSaveInstanceState(outState)
     }
 
     /**
