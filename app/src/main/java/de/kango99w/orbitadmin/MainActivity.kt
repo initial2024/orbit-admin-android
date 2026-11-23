@@ -5116,6 +5116,14 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            // Optional public tool. Starts only after a tap, in a separate
+            // process and WebView profile without mail/admin account cookies.
+            OutlinedButton(
+                onClick = { startActivity(Intent(this@MainActivity, AtlasActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🌐 AVENQIR 网址与工具 · 应用内打开")
+            }
             if(workspace==MailWorkspace.ORDINARY)
                 OutlinedButton(onClick=::openAccountOverview,
                     modifier=Modifier.fillMaxWidth()) {
