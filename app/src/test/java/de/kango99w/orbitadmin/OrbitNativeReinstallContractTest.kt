@@ -15,11 +15,23 @@ class OrbitNativeReinstallContractTest {
     @Test fun debugPackageIsTheOriginalOrbitMailIdentifier() {
         val gradle = content("app/build.gradle.kts", "build.gradle.kts")
         assertTrue(gradle.contains("applicationId = \"de.kango99w.orbitadmin\""))
-        assertTrue(
-            "Debug release must use a semantic prerelease version",
-            Regex("""versionName\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+-dev"(?=\s|$)""")
-                .containsMatchIn(gradle)
-        )
+        val version = Regex("""versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-dev)?)"(?=\s|$)""")
+            .find(gradle)?.groupValues?.get(1)
+        assertTrue("App version must be stable-semver or explicitly -dev", version != null)
+        if (version != null && !version.endsWith("-dev")) {
+            val stable = content(
+                ".github/workflows/android-stable-release.yml",
+                "../.github/workflows/android-stable-release.yml"
+            )
+            assertTrue("Stable releases require pinned Production certificate",
+                stable.contains("ORBIT_RELEASE_CERT_SHA256"))
+            assertTrue("Stable release must be restricted to main",
+                stable.contains("github.ref == 'refs/heads/main'"))
+            assertTrue("Stable release requires manual publish acknowledgement",
+                stable.contains("PUBLISH_SIGNED_STABLE"))
+            assertTrue("Stable release must retain R8 signed APK packaging",
+                stable.contains("zip -9"))
+        }
         assertTrue("Only one deliberate preview suffix may exist",
             gradle.lines().count { it.trimStart().startsWith("applicationIdSuffix = ") } == 1)
         assertTrue(gradle.contains("create(\"compactPreview\")"))
