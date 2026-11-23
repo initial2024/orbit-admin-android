@@ -18,10 +18,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_APP_ID }}
-      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_API_KEY }}
-      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_SENDER_ID }}
-      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PROJECT_ID }}
+      # Never bundle optional FCM into an app while its server sender has
+      # not passed independent acceptance. Missing/false = all IDs blank.
+      ORBIT_ENABLE_PRODUCTION_PUSH: ${{ vars.ORBIT_ENABLE_PRODUCTION_PUSH }}
+      ORBIT_PUSH_BACKEND_APPROVED: ${{ vars.ORBIT_PUSH_BACKEND_APPROVED }}
+      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_ENABLE_PRODUCTION_PUSH == 'true' && vars.ORBIT_FIREBASE_APP_ID || '' }}
+      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_ENABLE_PRODUCTION_PUSH == 'true' && vars.ORBIT_FIREBASE_API_KEY || '' }}
+      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_ENABLE_PRODUCTION_PUSH == 'true' && vars.ORBIT_FIREBASE_SENDER_ID || '' }}
+      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_ENABLE_PRODUCTION_PUSH == 'true' && vars.ORBIT_FIREBASE_PROJECT_ID || '' }}
     permissions:
       contents: write
     steps:
@@ -52,16 +56,30 @@ jobs:
           printf '%s' "$RELEASE_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/orbit-release.jks"
           test -s "$RUNNER_TEMP/orbit-release.jks"
           echo "ORBIT_RELEASE_KEYSTORE_FILE=$RUNNER_TEMP/orbit-release.jks" >> "$GITHUB_ENV"
-      - name: Require complete Production Firebase Android identifiers
+      - name: Gate optional Production Firebase by reviewed backend
         shell: bash
         run: |
           set -euo pipefail
-          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
-            if [ -z "${!key}" ]; then
-              echo "Production Firebase Android identifier missing: $key" >&2
+          if [ "${ORBIT_ENABLE_PRODUCTION_PUSH:-}" != "true" ]; then
+            # Explicitly disable FCM in the binary when the backend is not
+            # production-approved. Password / 2FA / email remain unaffected.
+            for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+              test -z "${!key}" || { echo "FCM expected disabled, but $key was set" >&2; exit 1; }
+            done
+            echo "FCM_CLIENT_DISABLED: backend rollout is independently gated"
+          else
+            test "${ORBIT_PUSH_BACKEND_APPROVED:-}" = "true" || {
+              echo "Production push backend approval missing; refuse to bundle FCM" >&2
               exit 1
-            fi
-          done
+            }
+            for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+              test -n "${!key}" || {
+                echo "Production Firebase Android identifier missing: $key" >&2
+                exit 1
+              }
+            done
+            echo "FCM_CLIENT_ENABLED_WITH_BACKEND_APPROVAL"
+          fi
       - name: Build and test signed release
         shell: bash
         env:
