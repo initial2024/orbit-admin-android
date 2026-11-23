@@ -340,6 +340,10 @@ class MainActivity : FragmentActivity() {
     private val workspacePrefs by lazy { getSharedPreferences("orbit_workspace_v1",MODE_PRIVATE) }
     private val adminRestoreGeneration=AtomicLong(0)
     private var adminRestoreChecking by mutableStateOf(false)
+    // These timestamps only live in this Activity's RAM. Never persist them as
+    // proof of admin login. They merely allow a brief biometric-only return.
+    private var adminLastServerVerifiedAtMs = 0L
+    private var adminFastResumeBackgroundAtMs = 0L
     // Presentation-only; does not affect ordinary/admin authentication or browser sessions.
     private var workspaceSwitcherExpanded by mutableStateOf(false)
     private val glyphClient by lazy { NativeGlyphClient() }
@@ -589,8 +593,30 @@ class MainActivity : FragmentActivity() {
                     // Returning from Android's file picker must complete the
                     // interrupted upload, not strand its callback behind a menu.
                     val resumingPicker = deferredFileUris != null && pendingFileCallback != null
-                    showProductChooser = !resumingPicker
-                    if (resumingPicker) {
+                    val now = SystemClock.elapsedRealtime()
+                    val deviceLocked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
+                    val fastAdminReturn = !resumingPicker &&
+                        AdminFastResumePolicy.allowed(adminLastServerVerifiedAtMs,
+                            adminFastResumeBackgroundAtMs, now, deviceLocked)
+                    // A ticket is single-use and never survives the next unlock.
+                    adminFastResumeBackgroundAtMs = 0L
+                    showProductChooser = !resumingPicker && !fastAdminReturn
+                    if (fastAdminReturn) {
+                        // No persisted role or password is trusted. This same
+                        // process had server-confirmed admin rights before lock.
+                        // The lock already cleared sensitive rows and details.
+                        workspace = MailWorkspace.ADMIN
+                        activeSection = MailSection.ADMIN
+                        showNativeToolsPanel = true
+                        adminAuthenticated = true
+                        adminSessionUnknown = false
+                        browser?.resumeTimers()
+                        browser?.onResume()
+                        // Background validation cannot block the unlocked UI.
+                        // A server 401/expiry immediately removes admin access.
+                        refreshNativeAdmin()
+                        tryRegisterPush()
+                    } else if (resumingPicker) {
                         browser?.resumeTimers()
                         browser?.onResume()
                         restoreWorkspaceAfterUnlock()
@@ -2929,6 +2955,9 @@ class MainActivity : FragmentActivity() {
                 adminLoginVerificationPending=false
                 adminSessionUnknown=status.status!=200 || status.value==null
                 adminAuthenticated=authorized
+                adminLastServerVerifiedAtMs = if (authorized)
+                    SystemClock.elapsedRealtime() else 0L
+                if (!authorized) adminFastResumeBackgroundAtMs = 0L
                 if (authorized) {
                     adminTotpRequired=false
                     adminUsername=status.value?.optString("username")
@@ -2988,6 +3017,8 @@ class MainActivity : FragmentActivity() {
                 if(privateRows?.status==401 || ordinaryRows?.status==401) {
                     // A later 401 is a server rejection, not a slow-source warning.
                     adminAuthenticated=false
+                    adminLastServerVerifiedAtMs = 0L
+                    adminFastResumeBackgroundAtMs = 0L
                     adminMailboxes=emptyList()
                     adminMessages=emptyList()
                     adminSelectedMailbox=null
@@ -5833,6 +5864,9 @@ class MainActivity : FragmentActivity() {
         adminPasskeyProbeAtMs=0L
         adminPasskeyBusy=false
         adminPasskeySheetAtMs=0L
+        // An explicit lock, logout or failure must never preserve fast return.
+        // onStop() may install a new short-lived ticket AFTER scrubbing state.
+        adminFastResumeBackgroundAtMs = 0L
         // Plaintext from read messages is never retained after local lock.
         ordinaryDetailCache.clear()
         adminDetailCache.clear()
@@ -6336,7 +6370,18 @@ class MainActivity : FragmentActivity() {
             browser?.onPause()
             browser?.pauseTimers()
         } else {
+            val now = SystemClock.elapsedRealtime()
+            val deviceLocked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
+            val canOfferFastAdminReturn = unlocked && !showProductChooser &&
+                workspace == MailWorkspace.ADMIN && adminAuthenticated &&
+                AdminFastResumePolicy.allowed(
+                    adminLastServerVerifiedAtMs, now, now, deviceLocked)
             lock()
+            if (canOfferFastAdminReturn) {
+                // Revalidate only after the next successful biometric unlock.
+                // No admin data or login secret survives local lock.
+                adminFastResumeBackgroundAtMs = now
+            }
         }
         // Persist the website's first-party HttpOnly session cookies even if
         // Android later kills the process. This does not share cookies with
@@ -6430,6 +6475,8 @@ class MainActivity : FragmentActivity() {
         pickerLaunchedAtMs = 0
         // onDestroy is final disposal; it must not touch account authorization.
         disposeRetainedBrowsers(sectionBrowsers.keys.toSet())
+        adminFastResumeBackgroundAtMs = 0L
+        adminLastServerVerifiedAtMs = 0L
         super.onDestroy()
     }
 }
