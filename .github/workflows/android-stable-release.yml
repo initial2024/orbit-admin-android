@@ -68,7 +68,7 @@ jobs:
           ORBIT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEYSTORE_PASSWORD }}
           ORBIT_RELEASE_KEY_ALIAS: ${{ secrets.ORBIT_RELEASE_KEY_ALIAS }}
           ORBIT_RELEASE_KEY_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEY_PASSWORD }}
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleRelease
+        run: gradle --no-daemon :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
       - name: Verify stable version, signature and SHA-256
         id: seal
         shell: bash
@@ -88,7 +88,20 @@ jobs:
           test -n "$ORBIT_EXPECTED_CERT_SHA256" || { echo 'Missing pinned Production certificate'; exit 1; }
           case "$ORBIT_EXPECTED_CERT_SHA256" in *[!0-9a-fA-F]* ) echo 'Invalid certificate hex'; exit 1;; esac
           test "${#ORBIT_EXPECTED_CERT_SHA256}" -eq 64 || { echo 'Certificate pin must be 64 hex characters'; exit 1; }
+          # Reject a mismatched package or version even if someone only changed
+          # the archive name / Gradle version string without updating manifest.
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -1)"
+          test -n "$VERSION_CODE" || { echo 'Missing Android versionCode'; exit 1; }
+          BADGING="$("$AAPT" dump badging "$SRC")"
+          printf '%s\n' "$BADGING" | grep -F "package: name='de.kango99w.orbitadmin'"
+          printf '%s\n' "$BADGING" | grep -F "versionCode='$VERSION_CODE' versionName='$VERSION'"
           CERT_REPORT="$("$APK_SIGNER" verify --verbose --print-certs "$SRC")"
+          if printf '%s\n' "$CERT_REPORT" | grep -q '^Signer #2 certificate'; then
+            echo 'Unexpected additional signer; stable release denied' >&2
+            exit 1
+          fi
           ACTUAL_CERT="$(printf '%s\n' "$CERT_REPORT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
           EXPECTED_CERT="$(printf '%s' "$ORBIT_EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
           test "${#ACTUAL_CERT}" -eq 64 || { echo 'APK certificate digest missing'; exit 1; }
