@@ -3,6 +3,11 @@ package de.kango99w.orbitadmin
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
+import android.view.Gravity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -19,7 +24,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -71,24 +75,57 @@ class AvenqirActivity : ComponentActivity() {
         // OrbitApplication.setDataDirectorySuffix("avenqir") has already run
         // before CookieManager or WebView initialization in this process.
         CookieManager.getInstance().setAcceptCookie(true)
+        val darkMode = resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        val headerBackground = if (darkMode) Color.rgb(26, 30, 40)
+            else Color.rgb(247, 249, 252)
+        val foreground = if (darkMode) Color.rgb(242, 245, 250)
+            else Color.rgb(27, 42, 64)
+        val actionBackground = if (darkMode) Color.rgb(48, 55, 68)
+            else Color.rgb(232, 237, 244)
+        fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val toolbar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val title = TextView(this).apply {
-            text = "AVENQIR"
-            textSize = 17f
-            setPadding(12, 0, 5, 0)
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(headerBackground)
+            setPadding(dp(12), dp(5), dp(8), dp(5))
         }
-        val navigation = Button(this).apply { text = "导航" }
-        val back = Button(this).apply { text = "返回" }
-        val reload = Button(this).apply { text = "刷新" }
-        val close = Button(this).apply { text = "关闭" }
-
+        val title = TextView(this).apply {
+            text = "⬡ AVENQIR"
+            textSize = 17f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(foreground)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        fun toolbarAction(glyph: String, description: String): TextView =
+            TextView(this).apply {
+                text = glyph
+                textSize = 23f
+                contentDescription = description
+                gravity = Gravity.CENTER
+                setTextColor(foreground)
+                isClickable = true
+                isFocusable = true
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(actionBackground)
+                }
+            }
+        // Four 44dp controls rather than four full-width text buttons.
+        // Remains on one row at 320dp, with no horizontal scrolling.
+        val navigation = toolbarAction("☰", "打开导航菜单")
+        val back = toolbarAction("‹", "返回上一页")
+        val reload = toolbarAction("⟳", "刷新当前页面")
+        val close = toolbarAction("×", "关闭工具中心")
         toolbar.addView(title, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        toolbar.addView(navigation)
-        toolbar.addView(back)
-        toolbar.addView(reload)
-        toolbar.addView(close)
+            0, dp(48), 1f))
+        listOf(navigation, back, reload, close).forEach { action ->
+            val layoutParams = LinearLayout.LayoutParams(dp(44), dp(48))
+            layoutParams.marginStart = dp(3)
+            toolbar.addView(action, layoutParams)
+        }
         layout.addView(toolbar)
 
         val progress = ProgressBar(
