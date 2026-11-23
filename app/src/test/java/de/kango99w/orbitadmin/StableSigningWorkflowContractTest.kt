@@ -18,6 +18,16 @@ class StableSigningWorkflowContractTest {
         assertTrue(workflow.contains("EXPECTED_CERT"))
         assertTrue(workflow.contains("test \"\$ACTUAL_CERT\" = \"\$EXPECTED_CERT\""))
         assertTrue(workflow.contains("apksigner") || workflow.contains("APK_SIGNER"))
+        assertTrue("Stable build must test its own minified Release variant",
+            workflow.contains(":app:testReleaseUnitTest"))
+        assertTrue("APK package must match the original installation ID",
+            workflow.contains("package: name='de.kango99w.orbitadmin'"))
+        assertTrue("APK manifest version must match the source version",
+            workflow.contains("versionCode='\$VERSION_CODE' versionName='\$VERSION'"))
+        assertTrue("Unexpected additional APK signers must fail closed",
+            workflow.contains("Unexpected additional signer; stable release denied"))
+        assertTrue("Protected release must verify all APK signatures",
+            workflow.contains("verify --verbose --print-certs"))
         assertTrue(workflow.contains("Refuse unsigned/unreviewed -dev version"))
         assertTrue(workflow.contains("refusing overwrite"))
         assertFalse(workflow.contains("--insecure"))
