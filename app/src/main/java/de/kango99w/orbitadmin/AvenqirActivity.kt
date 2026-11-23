@@ -38,7 +38,10 @@ class AvenqirActivity : Activity() {
 
         // This activity is manifested in :avenqir. OrbitApplication assigns
         // a distinct WebView profile *before* this Activity is instantiated.
-        CookieManager.getInstance().setAcceptCookie(false)
+        // First-party cookies are allowed only in this separate :avenqir profile
+        // so optional site challenges/session controls work. Third-party cookies
+        // remain blocked and Orbit mail/admin cookies remain inaccessible.
+        CookieManager.getInstance().setAcceptCookie(true)
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
