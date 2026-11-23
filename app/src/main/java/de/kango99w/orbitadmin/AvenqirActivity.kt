@@ -91,11 +91,19 @@ class AvenqirActivity : Activity() {
                 if (!request.isForMainFrame) return false
                 val url = request.url.toString()
                 if (AvenqirUrlPolicy.isFirstParty(url)) return false
-                // Do not silently open third-party sites. AVENQIR's own leave
-                // page must first handle its confirmation and safety policy.
-                if (request.hasGesture() && AvenqirUrlPolicy.isExternalHttps(url) &&
-                    view?.url?.startsWith("https://avenqir.bg5.net/leave.html") == true) {
-                    openExternal(url)
+                // AVENQIR's own link gate is responsible for remembered/approved
+                // URLs. A direct user gesture preserves that existing decision;
+                // JS-initiated redirects without a gesture require native approval.
+                // External pages always leave this isolated WebView.
+                if (AvenqirUrlPolicy.isExternalHttps(url)) {
+                    if (request.hasGesture()) openExternal(url)
+                    else android.app.AlertDialog.Builder(this@AvenqirActivity)
+                        .setTitle("打开第三方网站？")
+                        .setMessage("即将离开 AVENQIR，前往：\n" + request.url.host +
+                            "\n不能保证目标网站的安全。")
+                        .setNegativeButton("取消", null)
+                        .setPositiveButton("继续") { _, _ -> openExternal(url) }
+                        .show()
                 }
                 return true
             }
