@@ -2384,6 +2384,13 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Public tools intentionally never join ordinary/admin session scopes. */
+    private fun openAvenqirTools() {
+        if (!unlocked) return
+        showTools = false
+        startActivity(Intent(this, AvenqirActivity::class.java))
+    }
+
     @Composable
     private fun MailToolsDialog() {
         AlertDialog(
@@ -2395,6 +2402,10 @@ class MainActivity : FragmentActivity() {
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text("普通页面优先使用 Android 原生界面；只有未接通原生接口的功能才需手动打开网站授权。", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = ::openAvenqirTools,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("AVENQIR 网址与工具中心 · 应用内")
+                    }
                     AdminDestination.entries.forEach { entry ->
                         val nativeSection = when (entry) {
                             AdminDestination.PUBLIC_MAIL -> MailSection.INBOX
@@ -5116,6 +5127,12 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            OutlinedButton(
+                onClick = ::openAvenqirTools,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("打开 AVENQIR 工具中心 · 不离开 Orbit Mail") }
+            Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
+                style=MaterialTheme.typography.bodySmall)
             if(workspace==MailWorkspace.ORDINARY)
                 OutlinedButton(onClick=::openAccountOverview,
                     modifier=Modifier.fillMaxWidth()) {
