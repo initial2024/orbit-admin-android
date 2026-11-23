@@ -118,6 +118,9 @@ class MainActivity : FragmentActivity() {
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
     private var unlocked by mutableStateOf(false)
+    // Post-biometric app destination picker. This is presentation state only,
+    // never a mail/admin authorization grant.
+    private var showProductChooser by mutableStateOf(true)
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
@@ -337,6 +340,10 @@ class MainActivity : FragmentActivity() {
     private val workspacePrefs by lazy { getSharedPreferences("orbit_workspace_v1",MODE_PRIVATE) }
     private val adminRestoreGeneration=AtomicLong(0)
     private var adminRestoreChecking by mutableStateOf(false)
+    // These timestamps only live in this Activity's RAM. Never persist them as
+    // proof of admin login. They merely allow a brief biometric-only return.
+    private var adminLastServerVerifiedAtMs = 0L
+    private var adminFastResumeBackgroundAtMs = 0L
     // Presentation-only; does not affect ordinary/admin authentication or browser sessions.
     private var workspaceSwitcherExpanded by mutableStateOf(false)
     private val glyphClient by lazy { NativeGlyphClient() }
@@ -583,10 +590,38 @@ class MainActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     unlocked = true
                     message = ""
-                    browser?.resumeTimers()
-                    browser?.onResume()
-                    restoreWorkspaceAfterUnlock()
-                    tryRegisterPush()
+                    // Returning from Android's file picker must complete the
+                    // interrupted upload, not strand its callback behind a menu.
+                    val resumingPicker = deferredFileUris != null && pendingFileCallback != null
+                    val now = SystemClock.elapsedRealtime()
+                    val deviceLocked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
+                    val fastAdminReturn = !resumingPicker &&
+                        AdminFastResumePolicy.allowed(adminLastServerVerifiedAtMs,
+                            adminFastResumeBackgroundAtMs, now, deviceLocked)
+                    // A ticket is single-use and never survives the next unlock.
+                    adminFastResumeBackgroundAtMs = 0L
+                    showProductChooser = !resumingPicker && !fastAdminReturn
+                    if (fastAdminReturn) {
+                        // No persisted role or password is trusted. This same
+                        // process had server-confirmed admin rights before lock.
+                        // The lock already cleared sensitive rows and details.
+                        workspace = MailWorkspace.ADMIN
+                        activeSection = MailSection.ADMIN
+                        showNativeToolsPanel = true
+                        adminAuthenticated = true
+                        adminSessionUnknown = false
+                        browser?.resumeTimers()
+                        browser?.onResume()
+                        // Background validation cannot block the unlocked UI.
+                        // A server 401/expiry immediately removes admin access.
+                        refreshNativeAdmin()
+                        tryRegisterPush()
+                    } else if (resumingPicker) {
+                        browser?.resumeTimers()
+                        browser?.onResume()
+                        restoreWorkspaceAfterUnlock()
+                        tryRegisterPush()
+                    }
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
                         deferredFileUris = null
@@ -610,10 +645,117 @@ class MainActivity : FragmentActivity() {
             OrbitMailTheme(appearanceMode) {
                 Surface(modifier = Modifier.fillMaxSize(),
                     color=MaterialTheme.colorScheme.background) {
-                    if (unlocked && adminRestoreChecking) AdminRestoreScreen()
+                    if (unlocked && showProductChooser) DestinationChooser()
+                    else if (unlocked && adminRestoreChecking) AdminRestoreScreen()
                     else if (unlocked) AdminScreen() else LockScreen()
                 }
             }
+        }
+    }
+
+    /** Selecting a destination is not an authentication shortcut. */
+    private fun selectOrbitMail() {
+        if (!unlocked) return
+        showProductChooser = false
+        browser?.resumeTimers()
+        browser?.onResume()
+        restoreWorkspaceAfterUnlock() // Retains server admin/session verification.
+        tryRegisterPush()
+    }
+
+    private fun selectAvenqir() {
+        if (!unlocked) return
+        // AVENQIR never triggers ordinary/admin account restoration.
+        showProductChooser = true
+        openAvenqirTools()
+    }
+
+    @Composable
+    private fun DestinationChooser() {
+        // Two actions, one screen. No scrolling, social feed, or eager mail restore.
+        BackHandler { lock() }
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("⬡", style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
+            Text("选择工作区", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(4.dp))
+            Text("已通过设备验证 · 请选择要使用的功能",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(24.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { selectOrbitMail() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        Modifier.size(46.dp).background(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            CircleShape
+                        ), contentAlignment = Alignment.Center
+                    ) {
+                        Text("✉", style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Orbit Mail", style = MaterialTheme.typography.titleLarge)
+                        Text("邮箱 · 收件 · 管理",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { selectAvenqir() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        Modifier.size(46.dp).background(
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
+                            CircleShape
+                        ), contentAlignment = Alignment.Center
+                    ) {
+                        Text("⌘", style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.secondary)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
+                        Text("网站 · 工具 · 独立后台",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Text("两项服务独立登录，互不共享账号数据",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = ::lock) { Text("立即锁定") }
         }
     }
 
@@ -624,7 +766,7 @@ class MainActivity : FragmentActivity() {
             return
         }
         val prompt = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("解锁 Orbit Admin")
+            .setTitle("解锁 Orbit Mail / AVENQIR")
             .setSubtitle("指纹、其他强生物识别或设备锁屏凭据")
             .setAllowedAuthenticators(authenticators)
             .build()
@@ -2384,6 +2526,13 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Public tools intentionally never join ordinary/admin session scopes. */
+    private fun openAvenqirTools() {
+        if (!unlocked) return
+        showTools = false
+        startActivity(Intent(this, AvenqirActivity::class.java))
+    }
+
     @Composable
     private fun MailToolsDialog() {
         AlertDialog(
@@ -2395,6 +2544,10 @@ class MainActivity : FragmentActivity() {
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text("普通页面优先使用 Android 原生界面；只有未接通原生接口的功能才需手动打开网站授权。", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = ::openAvenqirTools,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("AVENQIR 网址与工具中心 · 应用内")
+                    }
                     AdminDestination.entries.forEach { entry ->
                         val nativeSection = when (entry) {
                             AdminDestination.PUBLIC_MAIL -> MailSection.INBOX
@@ -2802,6 +2955,9 @@ class MainActivity : FragmentActivity() {
                 adminLoginVerificationPending=false
                 adminSessionUnknown=status.status!=200 || status.value==null
                 adminAuthenticated=authorized
+                adminLastServerVerifiedAtMs = if (authorized)
+                    SystemClock.elapsedRealtime() else 0L
+                if (!authorized) adminFastResumeBackgroundAtMs = 0L
                 if (authorized) {
                     adminTotpRequired=false
                     adminUsername=status.value?.optString("username")
@@ -2861,6 +3017,8 @@ class MainActivity : FragmentActivity() {
                 if(privateRows?.status==401 || ordinaryRows?.status==401) {
                     // A later 401 is a server rejection, not a slow-source warning.
                     adminAuthenticated=false
+                    adminLastServerVerifiedAtMs = 0L
+                    adminFastResumeBackgroundAtMs = 0L
                     adminMailboxes=emptyList()
                     adminMessages=emptyList()
                     adminSelectedMailbox=null
@@ -5116,6 +5274,12 @@ class MainActivity : FragmentActivity() {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text("应用设置", style = MaterialTheme.typography.headlineSmall)
+            OutlinedButton(
+                onClick = ::openAvenqirTools,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("打开 AVENQIR 工具中心 · 不离开 Orbit Mail") }
+            Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
+                style=MaterialTheme.typography.bodySmall)
             if(workspace==MailWorkspace.ORDINARY)
                 OutlinedButton(onClick=::openAccountOverview,
                     modifier=Modifier.fillMaxWidth()) {
@@ -5694,11 +5858,15 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        showProductChooser = true
         adminPasskeyGeneration.incrementAndGet()
         adminPasskeyCapability=null
         adminPasskeyProbeAtMs=0L
         adminPasskeyBusy=false
         adminPasskeySheetAtMs=0L
+        // An explicit lock, logout or failure must never preserve fast return.
+        // onStop() may install a new short-lived ticket AFTER scrubbing state.
+        adminFastResumeBackgroundAtMs = 0L
         // Plaintext from read messages is never retained after local lock.
         ordinaryDetailCache.clear()
         adminDetailCache.clear()
@@ -6175,7 +6343,7 @@ class MainActivity : FragmentActivity() {
         if (pickerPending && !pickerReturnAllowed()) lock()
         if(adminSystemCredentialBusy && !hasActiveCredentialSheet()) lock()
         if(adminPasskeySheetAtMs>0L && !hasPasskeySheet()) lock()
-        if (unlocked) {
+        if (unlocked && !showProductChooser) {
             browser?.resumeTimers()
             browser?.onResume()
             if(workspace==MailWorkspace.ORDINARY && !adminRestoreChecking) {
@@ -6202,7 +6370,18 @@ class MainActivity : FragmentActivity() {
             browser?.onPause()
             browser?.pauseTimers()
         } else {
+            val now = SystemClock.elapsedRealtime()
+            val deviceLocked = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceLocked
+            val canOfferFastAdminReturn = unlocked && !showProductChooser &&
+                workspace == MailWorkspace.ADMIN && adminAuthenticated &&
+                AdminFastResumePolicy.allowed(
+                    adminLastServerVerifiedAtMs, now, now, deviceLocked)
             lock()
+            if (canOfferFastAdminReturn) {
+                // Revalidate only after the next successful biometric unlock.
+                // No admin data or login secret survives local lock.
+                adminFastResumeBackgroundAtMs = now
+            }
         }
         // Persist the website's first-party HttpOnly session cookies even if
         // Android later kills the process. This does not share cookies with
@@ -6296,6 +6475,8 @@ class MainActivity : FragmentActivity() {
         pickerLaunchedAtMs = 0
         // onDestroy is final disposal; it must not touch account authorization.
         disposeRetainedBrowsers(sectionBrowsers.keys.toSet())
+        adminFastResumeBackgroundAtMs = 0L
+        adminLastServerVerifiedAtMs = 0L
         super.onDestroy()
     }
 }

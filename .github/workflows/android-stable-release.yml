@@ -96,15 +96,39 @@ jobs:
           NAME="Orbit-Mail-v${VERSION}.apk"
           cp "$SRC" "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
+          # Preserve the original R8/resource-minified APK byte-for-byte.
+          # ZIP -9 is an optional delivery wrapper, never APK recompression or
+          # a change to the protected signing certificate.
+          cat > INSTALL_NOTES.txt <<EOF
+          Orbit Mail + AVENQIR stable signed Android APK.
+          Package: de.kango99w.orbitadmin
+          Version: $VERSION
+          Source commit: $GITHUB_SHA
+          Build: release R8 minification and resource shrink.
+          Cert SHA-256 (pinned Production): $ACTUAL_CERT
+          APK remains signed as built; ZIP -9 contains the exact same APK.
+          If this first Production certificate differs from an installed debug
+          APK's certificate, direct upgrade is impossible. Back up device data
+          before any intentional uninstall and new sign-in.
+          AVENQIR has its own login sessions and isolated WebView profile.
+          EOF
+          ZIP="Orbit-Mail-v${VERSION}-R8.zip"
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null
+          unzip -t "$ZIP" >/dev/null
+          sha256sum "$ZIP" > "$ZIP.sha256"
           echo "tag=orbit-mail-v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "apk=$NAME" >> "$GITHUB_OUTPUT"
           echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "zip_sha=$ZIP.sha256" >> "$GITHUB_OUTPUT"
       - name: Publish immutable signed APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.seal.outputs.tag }}
           APK: ${{ steps.seal.outputs.apk }}
           CHECKSUM: ${{ steps.seal.outputs.sha }}
+          ZIP: ${{ steps.seal.outputs.zip }}
+          ZIP_CHECKSUM: ${{ steps.seal.outputs.zip_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -112,9 +136,12 @@ jobs:
             echo 'Release already exists; refusing overwrite' >&2
             exit 1
           fi
-          gh release create "$TAG" "$APK" "$CHECKSUM" --target "$GITHUB_SHA" \
+          gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" "$ZIP_CHECKSUM" INSTALL_NOTES.txt \
+            --target "$GITHUB_SHA" \
             --title "Orbit Mail $TAG" \
-            --notes "Stable user APK. Produced only after protected signing and manual release approval."
+            --notes-file INSTALL_NOTES.txt
+          echo "APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK"
+          echo "ZIP: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ZIP"
       - name: Remove local keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/orbit-release.jks"
