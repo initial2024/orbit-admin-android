@@ -235,21 +235,22 @@ class AvenqirActivity : ComponentActivity() {
             var connection: HttpsURLConnection? = null
             try {
                 if (!AvenqirUrlPolicy.isFirstParty(url)) error("Unexpected export host")
-                connection = URL(url).openConnection() as HttpsURLConnection
-                connection.instanceFollowRedirects = false
-                connection.connectTimeout = 10_000
-                connection.readTimeout = 20_000
-                connection.setRequestProperty("Accept", "application/json")
+                val conn = URL(url).openConnection() as HttpsURLConnection
+                connection = conn
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 20_000
+                conn.setRequestProperty("Accept", "application/json")
                 CookieManager.getInstance().getCookie(url)?.let {
-                    connection.setRequestProperty("Cookie", it)
+                    conn.setRequestProperty("Cookie", it)
                 }
-                if (connection.responseCode != HttpURLConnection.HTTP_OK ||
-                    !connection.contentType.orEmpty().contains("application/json", true))
+                if (conn.responseCode != HttpURLConnection.HTTP_OK ||
+                    !conn.contentType.orEmpty().contains("application/json", true))
                     error("Not an authenticated JSON export")
-                if (connection.contentLengthLong > 20L * 1024 * 1024)
+                if (conn.contentLengthLong > 20L * 1024 * 1024)
                     error("Backup exceeds permitted size")
                 contentResolver.openOutputStream(destination, "w")?.use { output ->
-                    connection.inputStream.use { input ->
+                    conn.inputStream.use { input ->
                         val buffer = ByteArray(16 * 1024)
                         var transferred = 0L
                         while (true) {
