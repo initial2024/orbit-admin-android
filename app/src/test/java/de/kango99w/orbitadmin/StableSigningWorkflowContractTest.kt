@@ -18,6 +18,12 @@ class StableSigningWorkflowContractTest {
         assertTrue(workflow.contains("EXPECTED_CERT"))
         assertTrue(workflow.contains("test \"\$ACTUAL_CERT\" = \"\$EXPECTED_CERT\""))
         assertTrue(workflow.contains("apksigner") || workflow.contains("APK_SIGNER"))
+        assertTrue("Unreleased FCM must be disabled unless explicitly approved",
+            workflow.contains("vars.ORBIT_ENABLE_PRODUCTION_PUSH == 'true'"))
+        assertTrue("Push requires a separate backend approval gate",
+            workflow.contains("ORBIT_PUSH_BACKEND_APPROVED"))
+        assertTrue("Push must be absent when not approved",
+            workflow.contains("FCM_CLIENT_DISABLED"))
         assertTrue("Stable build must test its own minified Release variant",
             workflow.contains(":app:testReleaseUnitTest"))
         assertTrue("APK package must match the original installation ID",
