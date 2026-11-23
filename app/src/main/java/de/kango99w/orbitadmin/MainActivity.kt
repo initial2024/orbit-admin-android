@@ -1345,6 +1345,42 @@ class MainActivity : FragmentActivity() {
             val selected = rows.firstOrNull { it.id == prefs.getString("selected_mailbox_id", "") }
                 ?: rows.firstOrNull()
             val locked = selected?.isProtected == true
+            // First paint only server-verified mailbox metadata. Do not present the
+            // message list as verified or allow body reads before the second request.
+            // Keep previously displayed *metadata* for the same unprotected mailbox
+            // while its messages are refreshed, never across a mailbox switch.
+            val earlySnapshot = NativeInboxSnapshot(
+                currentId = selected?.id.orEmpty(),
+                currentAddress = selected?.address.orEmpty(),
+                locked = locked,
+                selectedDomain = "",
+                availableDomains = emptyList(),
+                canCreate = false,
+                nativeReadSupported = false,
+                busy = true,
+                statusText = "邮箱列表已更新，正在同步邮件…",
+                mailboxes = rows,
+                messages = emptyList(),
+            )
+            runOnUiThread {
+                if (!unlocked || nativeRequestGeneration.get() != generation ||
+                    nativeDeviceClient.currentId() != deviceId) return@runOnUiThread
+                val previous = nativeInbox
+                val retained = if (!locked && previous?.currentId == selected?.id)
+                    previous.messages else emptyList()
+                nativeInbox = earlySnapshot.copy(
+                    mailboxes = NativeIncrementalMerge.mailboxes(
+                        previous?.mailboxes.orEmpty(), rows),
+                    messages = retained,
+                )
+                nativeApiActive = false
+                nativeApiNotice = "正在同步邮件列表；尚未核验最新邮件。"
+                if (previous?.currentId != selected?.id) {
+                    pendingNativeMessageId = null
+                    nativeMailDetail = null
+                }
+                showNativeMail = true
+            }
             val messageResult = if (selected != null && !locked)
                 nativeDeviceClient.fetch("/api/account/native-device/mailboxes/${selected.id}/messages")
                 else null
@@ -2107,12 +2143,12 @@ class MainActivity : FragmentActivity() {
                         style=MaterialTheme.typography.labelSmall,
                         color=MaterialTheme.colorScheme.primary)
                 }
-                TextButton(onClick={
+                TextButton(enabled = !nativeApiLoading, onClick={
                     if (nativeDeviceClient.isBound()) refreshNativeApi()
                     else sendNativeMailboxCommand("refresh")
                 }) {
                     Icon(painterResource(R.drawable.ic_refresh),contentDescription="刷新")
-                    Text("刷新")
+                    Text(if (nativeApiLoading) "同步中…" else "刷新")
                 }
                 if (showMailboxes) TextButton(onClick={
                     requestMailboxCreation(snapshot)
@@ -2200,7 +2236,7 @@ class MainActivity : FragmentActivity() {
                     Icon(painterResource(R.drawable.ic_mail),contentDescription=null,
                         tint=MaterialTheme.colorScheme.primary)
                     Text(if(snapshot.locked)"邮箱需解锁" else if(nativeApiLoading)
-                        "正在与服务器同步…" else if(!snapshot.nativeReadSupported)
+                        "正在同步邮件列表…" else if(!snapshot.nativeReadSupported)
                         "邮件列表未核验" else "暂无邮件",
                         style=MaterialTheme.typography.titleLarge)
                     Text(if(!snapshot.nativeReadSupported)
@@ -2209,11 +2245,11 @@ class MainActivity : FragmentActivity() {
                         } else "服务器已确认当前账号下该邮箱的邮件列表为空。"+
                             "管理员邮箱请从独立管理员入口进入。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick={
+                    OutlinedButton(enabled = !nativeApiLoading, onClick={
                         if (nativeDeviceClient.isBound()) refreshNativeApi()
                         else sendNativeMailboxCommand("refresh")
                     }) {
-                        Text("检查新邮件")
+                        Text(if (nativeApiLoading) "正在同步…" else "检查新邮件")
                     }
                 }
             } else {
