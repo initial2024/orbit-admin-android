@@ -113,7 +113,7 @@ class AvenqirActivity : ComponentActivity() {
                     setColor(actionBackground)
                 }
             }
-        // Four 44dp controls rather than four full-width text buttons.
+        // Four accessible 48dp controls rather than full-width text buttons.
         // Remains on one row at 320dp, with no horizontal scrolling.
         val navigation = toolbarAction("☰", "打开导航菜单")
         val back = toolbarAction("‹", "返回上一页")
@@ -122,7 +122,7 @@ class AvenqirActivity : ComponentActivity() {
         toolbar.addView(title, LinearLayout.LayoutParams(
             0, dp(48), 1f))
         listOf(navigation, back, reload, close).forEach { action ->
-            val layoutParams = LinearLayout.LayoutParams(dp(44), dp(48))
+            val layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             layoutParams.marginStart = dp(3)
             toolbar.addView(action, layoutParams)
         }
