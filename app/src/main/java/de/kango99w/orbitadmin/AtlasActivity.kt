@@ -86,9 +86,10 @@ class AtlasActivity : Activity() {
             setGeolocationEnabled(false)
             mediaPlaybackRequiresUserGesture = true
         }
-        // The atlas process has an independent WebView data directory; disable
-        // cookies entirely because this is a public, non-authenticated tool.
-        CookieManager.getInstance().setAcceptCookie(false)
+        // This separate process has its own WebView data directory. First-party
+        // cookies may be needed by the shared host's HTTPS anti-bot challenge,
+        // but no Orbit mail/admin cookies or credentials can be read here.
+        CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(page, false)
 
         page.webChromeClient = object : WebChromeClient() {
