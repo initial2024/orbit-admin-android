@@ -646,32 +646,90 @@ class MainActivity : FragmentActivity() {
 
     @Composable
     private fun DestinationChooser() {
+        // Two actions, one screen. No scrolling, social feed, or eager mail restore.
         BackHandler { lock() }
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            Text("⬡", style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
             Text("选择工作区", style = MaterialTheme.typography.headlineMedium)
-            Spacer(Modifier.height(18.dp))
-            Text("设备身份已验证。两项功能不会共享邮箱账号或管理员凭据。",
-                style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(18.dp))
-            Card(modifier = Modifier.fillMaxWidth().clickable { selectOrbitMail() }) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Orbit Mail", style = MaterialTheme.typography.titleLarge)
-                    Text("原生收件、创建邮箱与管理员功能。原有账号授权继续由服务器验证。")
+            Spacer(Modifier.height(4.dp))
+            Text("已通过设备验证 · 请选择要使用的功能",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(24.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { selectOrbitMail() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        Modifier.size(46.dp).background(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            CircleShape
+                        ), contentAlignment = Alignment.Center
+                    ) {
+                        Text("✉", style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Orbit Mail", style = MaterialTheme.typography.titleLarge)
+                        Text("邮箱 · 收件 · 管理",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Card(modifier = Modifier.fillMaxWidth().clickable { selectAvenqir() }) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
-                    Text("网址、检索与实用工具。在独立网页进程中使用。")
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { selectAvenqir() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        Modifier.size(46.dp).background(
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
+                            CircleShape
+                        ), contentAlignment = Alignment.Center
+                    ) {
+                        Text("⌘", style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.secondary)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
+                        Text("网站 · 工具 · 独立后台",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = ::lock) { Text("锁定") }
+            Spacer(Modifier.height(20.dp))
+            Text("两项服务独立登录，互不共享账号数据",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = ::lock) { Text("立即锁定") }
         }
     }
 
@@ -682,7 +740,7 @@ class MainActivity : FragmentActivity() {
             return
         }
         val prompt = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("解锁 Orbit Admin")
+            .setTitle("解锁 Orbit Mail / AVENQIR")
             .setSubtitle("指纹、其他强生物识别或设备锁屏凭据")
             .setAllowedAuthenticators(authenticators)
             .build()
