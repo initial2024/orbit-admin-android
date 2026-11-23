@@ -1,8 +1,9 @@
 package de.kango99w.orbitadmin
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.AlertDialog
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -24,12 +25,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -42,8 +47,13 @@ import javax.net.ssl.HttpsURLConnection
  * PHP upload and export use the Android document picker. External websites
  * remain in the user's system browser, not in the trusted AVENQIR WebView.
  */
-class AvenqirActivity : ComponentActivity() {
+class AvenqirActivity : FragmentActivity() {
     private var webView: WebView? = null
+    private var lockCurtain: LinearLayout? = null
+    private lateinit var unlockPrompt: BiometricPrompt
+    private var backgroundLocked = false
+    private var promptActive = false
+    private var firstResume = true
     private var pendingUpload: ValueCallback<Array<Uri>>? = null
     private var pendingExport: String? = null
     private var navigatingToExternal = false
@@ -71,6 +81,27 @@ class AvenqirActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         WebView.setWebContentsDebuggingEnabled(false)
+        // Activity recreation after process death requires reauthentication.
+        // The first launch is initiated only by the freshly unlocked MainActivity.
+        backgroundLocked = savedInstanceState != null
+        unlockPrompt = BiometricPrompt(
+            this, ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    promptActive = false
+                    backgroundLocked = false
+                    lockCurtain?.visibility = View.GONE
+                    webView?.onResume()
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    promptActive = false
+                    // Keep the underlying page obscured after cancellation.
+                }
+                override fun onAuthenticationFailed() {
+                    // Android may retry while the biometric prompt remains open.
+                }
+            }
+        )
 
         // OrbitApplication.setDataDirectorySuffix("avenqir") has already run
         // before CookieManager or WebView initialization in this process.
@@ -259,7 +290,49 @@ class AvenqirActivity : ComponentActivity() {
 
         layout.addView(page, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(layout)
+        val root = FrameLayout(this)
+        root.addView(layout, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val curtain = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(if (darkMode) Color.rgb(16, 21, 30) else Color.rgb(246, 248, 252))
+            isClickable = true
+            isFocusable = true
+        }
+        curtain.addView(TextView(this).apply {
+            text = "AVENQIR 已锁定"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(foreground)
+        })
+        curtain.addView(TextView(this).apply {
+            text = "解锁后继续刚才的网页，不会重新加载"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(8), dp(12), dp(20))
+            setTextColor(foreground)
+        })
+        val unlockButton = TextView(this).apply {
+            text = "使用指纹或锁屏凭据解锁"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(foreground)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(actionBackground)
+            }
+            isClickable = true
+            isFocusable = true
+        }
+        unlockButton.setOnClickListener { requestPageUnlock() }
+        curtain.addView(unlockButton)
+        curtain.visibility = if (backgroundLocked) View.VISIBLE else View.GONE
+        root.addView(curtain, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        lockCurtain = curtain
+        setContentView(root)
         page.loadUrl(AvenqirUrlPolicy.HOME)
     }
 
@@ -327,8 +400,30 @@ class AvenqirActivity : ComponentActivity() {
         }
     }
 
+    private fun requestPageUnlock() {
+        if (!backgroundLocked || promptActive || isFinishing) return
+        promptActive = true
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("解锁 AVENQIR")
+            .setSubtitle("验证后继续刚才的页面")
+            .setAllowedAuthenticators(authenticators)
+            .build()
+        try {
+            unlockPrompt.authenticate(info)
+        } catch (_: Exception) {
+            promptActive = false
+            Toast.makeText(this, "无法启动设备验证", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     @Deprecated("Use WebView navigation rather than closing the tools page")
     override fun onBackPressed() {
+        if (backgroundLocked) {
+            requestPageUnlock()
+            return
+        }
         val view = webView
         if (view != null && view.canGoBack()) view.goBack()
         else super.onBackPressed()
@@ -341,17 +436,28 @@ class AvenqirActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        webView?.onResume()
         navigatingToExternal = false
+        if (backgroundLocked) {
+            // Keep the previous WebView, page scroll, forms, navigation and
+            // separate AVENQIR admin cookies. Never restore by reloading URL.
+            lockCurtain?.visibility = View.VISIBLE
+            webView?.onPause()
+            lockCurtain?.post { requestPageUnlock() }
+        } else {
+            webView?.onResume()
+        }
+        firstResume = false
     }
 
     override fun onStop() {
-        // Never leave a privileged AVENQIR admin page visible on recents.
-        // Document pickers are transient system flows; other departures require
-        // fresh Orbit device unlock to enter the tools again.
+        // Backgrounding is NOT closing: preserve the same WebView instance.
+        // Cover sensitive admin content before recent-apps/task snapshots and
+        // require biometric/device credential before revealing it on return.
+        backgroundLocked = true
+        promptActive = false
+        lockCurtain?.visibility = View.VISIBLE
         webView?.onPause()
         CookieManager.getInstance().flush()
-        if (pendingUpload == null && pendingExport == null) finish()
         super.onStop()
     }
 
