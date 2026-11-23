@@ -46,6 +46,13 @@ object OrbitPushConfig {
 class OrbitApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // AVENQIR is a separate Android process and WebView data directory.
+        // Set the suffix BEFORE anything in this process initializes WebView.
+        // Do not initialize optional push or any account-related SDK here.
+        if (Application.getProcessName() == BuildConfig.APPLICATION_ID + ":atlas") {
+            android.webkit.WebView.setDataDirectorySuffix("atlas")
+            return
+        }
         // Preserve delivery after process death only for explicit consent.
         // Disabled/pending-revoke users do not pay Firebase startup overhead.
         val prefs = getSharedPreferences("orbit_push", Context.MODE_PRIVATE)
