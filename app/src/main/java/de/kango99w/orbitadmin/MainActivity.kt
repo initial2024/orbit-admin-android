@@ -118,6 +118,9 @@ class MainActivity : FragmentActivity() {
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
     private var unlocked by mutableStateOf(false)
+    // Post-biometric app destination picker. This is presentation state only,
+    // never a mail/admin authorization grant.
+    private var showProductChooser by mutableStateOf(true)
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
@@ -583,10 +586,16 @@ class MainActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     unlocked = true
                     message = ""
-                    browser?.resumeTimers()
-                    browser?.onResume()
-                    restoreWorkspaceAfterUnlock()
-                    tryRegisterPush()
+                    // Returning from Android's file picker must complete the
+                    // interrupted upload, not strand its callback behind a menu.
+                    val resumingPicker = deferredFileUris != null && pendingFileCallback != null
+                    showProductChooser = !resumingPicker
+                    if (resumingPicker) {
+                        browser?.resumeTimers()
+                        browser?.onResume()
+                        restoreWorkspaceAfterUnlock()
+                        tryRegisterPush()
+                    }
                     deferredFileUris?.let { selection ->
                         val callback = pendingFileCallback
                         deferredFileUris = null
@@ -610,10 +619,59 @@ class MainActivity : FragmentActivity() {
             OrbitMailTheme(appearanceMode) {
                 Surface(modifier = Modifier.fillMaxSize(),
                     color=MaterialTheme.colorScheme.background) {
-                    if (unlocked && adminRestoreChecking) AdminRestoreScreen()
+                    if (unlocked && showProductChooser) DestinationChooser()
+                    else if (unlocked && adminRestoreChecking) AdminRestoreScreen()
                     else if (unlocked) AdminScreen() else LockScreen()
                 }
             }
+        }
+    }
+
+    /** Selecting a destination is not an authentication shortcut. */
+    private fun selectOrbitMail() {
+        if (!unlocked) return
+        showProductChooser = false
+        browser?.resumeTimers()
+        browser?.onResume()
+        restoreWorkspaceAfterUnlock() // Retains server admin/session verification.
+        tryRegisterPush()
+    }
+
+    private fun selectAvenqir() {
+        if (!unlocked) return
+        // AVENQIR never triggers ordinary/admin account restoration.
+        showProductChooser = true
+        openAvenqirTools()
+    }
+
+    @Composable
+    private fun DestinationChooser() {
+        BackHandler { lock() }
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("选择工作区", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(18.dp))
+            Text("设备身份已验证。两项功能不会共享邮箱账号或管理员凭据。",
+                style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(18.dp))
+            Card(modifier = Modifier.fillMaxWidth().clickable { selectOrbitMail() }) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Orbit Mail", style = MaterialTheme.typography.titleLarge)
+                    Text("原生收件、创建邮箱与管理员功能。原有账号授权继续由服务器验证。")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth().clickable { selectAvenqir() }) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
+                    Text("网址、检索与实用工具。在独立网页进程中使用。")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = ::lock) { Text("锁定") }
         }
     }
 
@@ -5711,6 +5769,7 @@ class MainActivity : FragmentActivity() {
 
     private fun lock() {
         unlocked = false
+        showProductChooser = true
         adminPasskeyGeneration.incrementAndGet()
         adminPasskeyCapability=null
         adminPasskeyProbeAtMs=0L
@@ -6192,7 +6251,7 @@ class MainActivity : FragmentActivity() {
         if (pickerPending && !pickerReturnAllowed()) lock()
         if(adminSystemCredentialBusy && !hasActiveCredentialSheet()) lock()
         if(adminPasskeySheetAtMs>0L && !hasPasskeySheet()) lock()
-        if (unlocked) {
+        if (unlocked && !showProductChooser) {
             browser?.resumeTimers()
             browser?.onResume()
             if(workspace==MailWorkspace.ORDINARY && !adminRestoreChecking) {
