@@ -2,6 +2,7 @@ package de.kango99w.orbitadmin
 
 import android.app.Application
 import android.content.Context
+import android.webkit.WebView
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 
@@ -46,6 +47,13 @@ object OrbitPushConfig {
 class OrbitApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        if (Application.getProcessName().endsWith(":avenqir")) {
+            // Android WebView data stores are otherwise shared among the app's
+            // WebViews. Set the suffix BEFORE any WebView or CookieManager access.
+            // The public tools process can never read the mail/admin profile.
+            WebView.setDataDirectorySuffix("avenqir")
+            return  // No mail push or authentication initialization here.
+        }
         // Preserve delivery after process death only for explicit consent.
         // Disabled/pending-revoke users do not pay Firebase startup overhead.
         val prefs = getSharedPreferences("orbit_push", Context.MODE_PRIVATE)
