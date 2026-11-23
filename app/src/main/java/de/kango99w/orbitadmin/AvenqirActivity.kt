@@ -53,7 +53,6 @@ class AvenqirActivity : FragmentActivity() {
     private lateinit var unlockPrompt: BiometricPrompt
     private var backgroundLocked = false
     private var promptActive = false
-    private var firstResume = true
     private var pendingUpload: ValueCallback<Array<Uri>>? = null
     private var pendingExport: String? = null
     private var navigatingToExternal = false
@@ -267,20 +266,68 @@ class AvenqirActivity : FragmentActivity() {
             }
         }
         navigation.setOnClickListener {
-            val destinations = arrayOf(
-                "网站首页", "网址目录", "实用工具",
-                "网址管理后台", "留言管理后台"
-            )
-            val paths = arrayOf(
-                "", "directory.html", "tools.html", "admin.php", "feedback-admin.php"
-            )
-            AlertDialog.Builder(this)
-                .setTitle("AVENQIR · 导航")
-                .setItems(destinations) { _, which ->
-                    page.loadUrl(AvenqirUrlPolicy.HOME + paths[which])
+            // Some OEMs make the stock AlertDialog background black without
+            // switching its text to white. Explicit foreground and background
+            // colors are necessary for a readable menu in either appearance.
+            val menuBackground = if (darkMode) Color.rgb(26, 31, 43)
+                else Color.rgb(251, 252, 254)
+            val menuForeground = if (darkMode) Color.rgb(244, 247, 252)
+                else Color.rgb(27, 38, 57)
+            val menuMuted = if (darkMode) Color.rgb(186, 198, 216)
+                else Color.rgb(85, 100, 120)
+            val panel = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(18), dp(12), dp(18), dp(12))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(20).toFloat()
+                    setColor(menuBackground)
                 }
-                .setNegativeButton("取消", null)
-                .show()
+            }
+            panel.addView(TextView(this).apply {
+                text = "AVENQIR · 导航"
+                textSize = 19f
+                setTextColor(menuForeground)
+                setPadding(dp(8), dp(4), dp(8), dp(10))
+            })
+            val dialog = AlertDialog.Builder(this).setView(panel).create()
+            val destinations = listOf(
+                "⌂  网站首页" to "",
+                "▦  网址目录" to "directory.html",
+                "⚙  实用工具" to "tools.html",
+                "▣  网址管理后台" to "admin.php",
+                "✉  留言管理后台" to "feedback-admin.php"
+            )
+            destinations.forEach { (label, route) ->
+                panel.addView(TextView(this).apply {
+                    text = label
+                    textSize = 16f
+                    setTextColor(menuForeground)
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    minHeight = dp(48)
+                    gravity = Gravity.CENTER_VERTICAL
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        dialog.dismiss()
+                        page.loadUrl(AvenqirUrlPolicy.HOME + route)
+                    }
+                })
+            }
+            panel.addView(TextView(this).apply {
+                text = "网站管理后台使用独立的 AVENQIR 登录会话"
+                textSize = 12f
+                setTextColor(menuMuted)
+                setPadding(dp(8), dp(12), dp(8), dp(2))
+            })
+            dialog.setOnShowListener {
+                dialog.window?.setBackgroundDrawable(
+                    android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            }
+            dialog.show()
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            dialog.window?.setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         back.setOnClickListener {
             if (page.canGoBack()) page.goBack() else finish()
@@ -446,7 +493,6 @@ class AvenqirActivity : FragmentActivity() {
         } else {
             webView?.onResume()
         }
-        firstResume = false
     }
 
     override fun onStop() {
