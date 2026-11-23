@@ -1,0 +1,75 @@
+name: Orbit signing key readiness (no APK published)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production-key:
+    if: github.ref == 'refs/heads/main'
+    environment: Production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify existing protected signing key without building or publishing
+        shell: bash
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.ORBIT_RELEASE_KEYSTORE_BASE64 }}
+          ORBIT_STORE_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEYSTORE_PASSWORD }}
+          ORBIT_KEY_ALIAS: ${{ secrets.ORBIT_RELEASE_KEY_ALIAS }}
+          ORBIT_KEY_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEY_PASSWORD }}
+          ORBIT_CERT_PIN: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          set +x
+          # Checks must never create a new key or write the existing key to Git.
+          for name in SIGNING_KEYSTORE_B64 ORBIT_STORE_PASSWORD ORBIT_KEY_ALIAS ORBIT_KEY_PASSWORD ORBIT_CERT_PIN; do
+            if test -z "${!name}"; then
+              echo "SIGNING_KEY_READINESS=DENY"
+              echo "Missing protected Production setting: $name"
+              exit 1
+            fi
+          done
+          if ! [[ "$ORBIT_CERT_PIN" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "SIGNING_KEY_READINESS=DENY"
+            echo "Production certificate pin has wrong format"
+            exit 1
+          fi
+          umask 077
+          KEYSTORE="$RUNNER_TEMP/private-orbit-readiness.p12"
+          WORKDIR="$RUNNER_TEMP/private-orbit-readiness"
+          mkdir -p "$WORKDIR"
+          trap 'rm -f "$KEYSTORE"; rm -rf "$WORKDIR"' EXIT
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          CERT_REPORT="$(keytool -list -v -keystore "$KEYSTORE" \
+            -alias "$ORBIT_KEY_ALIAS" -storepass:env ORBIT_STORE_PASSWORD)"
+          printf '%s\n' "$CERT_REPORT" | grep -Fq 'PrivateKeyEntry' || {
+            echo "SIGNING_KEY_READINESS=DENY"
+            echo "Configured alias does not reference a signing private key"
+            exit 1
+          }
+          ACTUAL="$(printf '%s\n' "$CERT_REPORT" |
+            sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' |
+            tr -d ':' | tr '[:upper:]' '[:lower:]' | head -n 1)"
+          EXPECTED="$(printf '%s' "$ORBIT_CERT_PIN" | tr '[:upper:]' '[:lower:]')"
+          if test -z "$ACTUAL" || test "$ACTUAL" != "$EXPECTED"; then
+            echo "SIGNING_KEY_READINESS=DENY"
+            echo "Signing certificate fingerprint differs from Production pin"
+            exit 1
+          fi
+          printf 'reusable signing key check\n' > "$WORKDIR/probe.txt"
+          (cd "$WORKDIR" && jar cf probe.jar probe.txt)
+          jarsigner -keystore "$KEYSTORE" -storepass:env ORBIT_STORE_PASSWORD \
+            -keypass:env ORBIT_KEY_PASSWORD -signedjar "$WORKDIR/signed.jar" \
+            "$WORKDIR/probe.jar" "$ORBIT_KEY_ALIAS" >/dev/null
+          jarsigner -verify "$WORKDIR/signed.jar" > "$WORKDIR/verify.txt"
+          grep -Fq 'jar verified.' "$WORKDIR/verify.txt"
+          echo "SIGNING_KEY_READINESS=PASS"
+          echo "The existing protected keystore, alias, passwords, certificate pin and private-key signing operation were validated."
+          echo "No Android APK was built or published. Stable release still requires reviewed main branch and real-device acceptance."
