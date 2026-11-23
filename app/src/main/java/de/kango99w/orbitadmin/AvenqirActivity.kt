@@ -75,8 +75,8 @@ class AvenqirActivity : ComponentActivity() {
         // OrbitApplication.setDataDirectorySuffix("avenqir") has already run
         // before CookieManager or WebView initialization in this process.
         CookieManager.getInstance().setAcceptCookie(true)
-        val darkMode = resources.configuration.uiMode and
-            Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        val darkMode = (resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val headerBackground = if (darkMode) Color.rgb(26, 30, 40)
             else Color.rgb(247, 249, 252)
         val foreground = if (darkMode) Color.rgb(242, 245, 250)
