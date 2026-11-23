@@ -113,15 +113,23 @@ private signing key to repository Contents, Releases, or PR attachments.
 
 ## 3. Stable release requirements
 
-The existing `.github/workflows/android-stable-release.yml` on `main`
-refuses release when the key entries, pinned fingerprint, Firebase production
-identifiers, or stable `versionName` are missing.
+The protected `.github/workflows/android-stable-release.yml` becomes available
+only after the reviewed Android app source is merged into `main`. It refuses
+release if the signing key entries, pinned fingerprint or stable `versionName`
+are missing. **FCM is optional and disabled by default** until separately
+approved backend and push identifiers are configured.
 
 The first release from the new stable signing key requires:
+
+**First-install update:** the owner reported no Orbit Mail APK installed on
+this Vivo phone. Comparing against a non-existent installed certificate is
+not required. The keystore created or reused here must be kept stable for
+every **future** update.
 1. Review / merge application features and tests to protected `main`,
    without merging competing implementations twice.
-2. Verify all production `ORBIT_FIREBASE_*` identifiers are present as
-   environment variables, or separately review the release gate.
+2. Leave `ORBIT_ENABLE_PRODUCTION_PUSH` unset/false until its backend is
+   separately approved. When explicitly enabling it, set
+   `ORBIT_PUSH_BACKEND_APPROVED=true` and all four Firebase identifiers.
 3. Use a higher `versionCode` and a stable `versionName` without `-dev`.
 4. Complete real-device login, admin session, mailbox, AVENQIR admin, backup,
    link confirmation, and screen-lock checks.
@@ -130,6 +138,10 @@ The first release from the new stable signing key requires:
 6. Compare `apksigner verify --print-certs` certificate fingerprint
    against the pinned `ORBIT_RELEASE_CERT_SHA256` before installing.
    Record APK SHA-256 and preserve the immutable GitHub Release.
+
+Before attempting a signed APK release, first use the already merged
+[Production key readiness manual workflow](https://github.com/initial2024/orbit-admin-android/actions/workflows/orbit-signing-key-readiness.yml) to verify the existing key, alias,
+passwords and independently pinned certificate without publishing any APK.
 
 For every following version, reuse the same Production keystore.
 A changed signing fingerprint is a **release-blocking failure**, never
