@@ -72,6 +72,16 @@ jobs:
           echo "SOURCE_SHA=$GITHUB_SHA"
           echo "PREVIEW_BYTES=$PREVIEW_BYTES"
           echo "BASE_BYTES=$BASE_BYTES"
+      - name: Enable Linux KVM for actual Android 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Without /dev/kvm Android Emulator refuses TCG fallback.
+          # Do not report emulator smoke success without hardware acceleration.
+          test -e /dev/kvm || { echo 'ANDROID_EMULATOR_KVM=DENY'; exit 1; }
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          echo "ANDROID_EMULATOR_KVM=PASS"
       - name: Run real Android 35 emulator side-by-side launch checks
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
