@@ -22,6 +22,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Public AVENQIR preview cannot access the ordinary/admin WebView
+             profile; it is not exported and has no deep-link intent filter. -->
+        <activity
+            android:name=".AtlasActivity"
+            android:exported="false"
+            android:process=":atlas" />
         <service
             android:name=".OrbitFcmService"
             android:exported="false">
