@@ -125,20 +125,21 @@ class AvenqirNativePasskeyBridge(
     private fun invokeSystem(operation: String, options: String, reply: JavaScriptReplyProxy, id: String) {
         job = activity.lifecycleScope.launch {
             try {
-                val response = withTimeout(100000L) {
-                    // onDismiss happens before the window focus transition.
-                    // Wait only while the approved page is still authorized.
-                    val deadline = android.os.SystemClock.elapsedRealtime() + 8000L
-                    while (!foreground() && allowed() && !closed &&
-                        page.url == AvenqirNativePasskeyPolicy.PAGE &&
-                        android.os.SystemClock.elapsedRealtime() < deadline) delay(100)
-                    if (!AvenqirNativePasskeyPolicy.canLaunchProvider(
-                            true, foreground(), allowed() && !closed, page.url)) {
-                        complete(reply, id, "INVALID")
-                        return@launch
-                    }
-                    status("正在打开 Android 系统凭证，请选择通行密钥")
-                    Log.i("OrbitPasskey", "PROVIDER_LAUNCH operation=$operation")
+                // Wait for consent dialog dismissal before starting the timed
+                // provider operation. An early return belongs to this launch,
+                // not to the non-inline withTimeout coroutine.
+                val deadline = android.os.SystemClock.elapsedRealtime() + 8000L
+                while (!foreground() && allowed() && !closed &&
+                    page.url == AvenqirNativePasskeyPolicy.PAGE &&
+                    android.os.SystemClock.elapsedRealtime() < deadline) delay(100)
+                if (!AvenqirNativePasskeyPolicy.canLaunchProvider(
+                        true, foreground(), allowed() && !closed, page.url)) {
+                    complete(reply, id, "INVALID")
+                    return@launch
+                }
+                status("正在打开 Android 系统凭证，请选择通行密钥")
+                Log.i("OrbitPasskey", "PROVIDER_LAUNCH operation=$operation")
+                val response = withTimeout(85000L) {
                     val context = MutableContextWrapper(activity)
                     val manager = CredentialManager.create(activity)
                     if (operation == "create") {
