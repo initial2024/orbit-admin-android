@@ -453,6 +453,7 @@ class AvenqirActivity : FragmentActivity() {
                 "▦  网址目录" to "directory.html",
                 "⚙  实用工具" to "tools.html",
                 "▣  网址管理后台" to "admin.php",
+                "🛡  私人站点与软件验证" to "owner-sites.php",
                 "✉  留言管理后台" to "feedback-admin.php",
                 "🔑  通行密钥登录 / 管理" to "passkey.php"
             )
