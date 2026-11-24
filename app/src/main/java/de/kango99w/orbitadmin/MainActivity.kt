@@ -121,6 +121,44 @@ class MainActivity : FragmentActivity() {
     // Post-biometric app destination picker. This is presentation state only,
     // never a mail/admin authorization grant.
     private var showProductChooser by mutableStateOf(true)
+    // Public directory metadata only; independent of mail and owner sessions.
+    private val avenqirStatusIo = Executors.newSingleThreadExecutor()
+    private val avenqirStatusPrefs by lazy {
+        getSharedPreferences("avenqir_public_status_v1", MODE_PRIVATE)
+    }
+    private var avenqirAutoCheck by mutableStateOf(true)
+    private var avenqirStatusBusy by mutableStateOf(false)
+    private var avenqirPublicStatus by mutableStateOf<AvenqirPublicStatus?>(null)
+    private var avenqirStatusFailed by mutableStateOf(false)
+    private val avenqirStatusGate = AvenqirStatusGate()
+    private fun refreshAvenqirPublicStatus() {
+        if (!unlocked || !avenqirAutoCheck || avenqirStatusBusy ||
+            !avenqirStatusGate.tryStart(SystemClock.elapsedRealtime())) return
+        avenqirStatusBusy = true
+        avenqirStatusFailed = false
+        avenqirStatusIo.execute {
+            val result = AvenqirPublicStatusClient.fetch()
+            runOnUiThread {
+                if (!isDestroyed && !isFinishing) {
+                    avenqirStatusBusy = false
+                    avenqirPublicStatus = result
+                    avenqirStatusFailed = result == null
+                }
+            }
+        }
+    }
+    private fun setAvenqirAutoCheck(enabled: Boolean) {
+        avenqirAutoCheck = enabled
+        avenqirStatusPrefs.edit().putBoolean("enabled", enabled).apply()
+        if (enabled) refreshAvenqirPublicStatus()
+    }
+    private fun avenqirStatusLabel(): String = when {
+        !avenqirAutoCheck -> "启动时目录检查已关闭"
+        avenqirStatusBusy -> "正在检查公开目录…"
+        avenqirStatusFailed -> "最近一次目录检查失败 · 不影响邮件"
+        avenqirPublicStatus != null -> "最近检查：可访问 · 公开网址 ${avenqirPublicStatus!!.count} 条"
+        else -> "公开目录尚未检查"
+    }
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
     private var showClearConfirm by mutableStateOf(false)
     private var showTools by mutableStateOf(false)
@@ -568,6 +606,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
+        avenqirAutoCheck = avenqirStatusPrefs.getBoolean("enabled", true)
         appearanceMode=OrbitAppearanceMode.parse(
             getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
                 .getString("mode",OrbitAppearanceMode.SYSTEM.name))
@@ -590,6 +629,7 @@ class MainActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     unlocked = true
                     message = ""
+                    refreshAvenqirPublicStatus()
                     // Returning from Android's file picker must complete the
                     // interrupted upload, not strand its callback behind a menu.
                     val resumingPicker = deferredFileUris != null && pendingFileCallback != null
@@ -745,6 +785,9 @@ class MainActivity : FragmentActivity() {
                         Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
                         Text("网站 · 工具 · 独立后台",
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(avenqirStatusLabel(),
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text("›", style = MaterialTheme.typography.headlineMedium,
@@ -5280,6 +5323,14 @@ class MainActivity : FragmentActivity() {
             ) { Text("打开 AVENQIR 工具中心 · 不离开 Orbit Mail") }
             Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
                 style=MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::setAvenqirAutoCheck)
+                Column(Modifier.weight(1f)) {
+                    Text("启动时检查 AVENQIR 公开目录")
+                    Text("解锁后按需检查，五分钟内不重复；不后台轮询。", style=MaterialTheme.typography.bodySmall)
+                    Text(avenqirStatusLabel(), style=MaterialTheme.typography.labelSmall)
+                }
+            }
             if(workspace==MailWorkspace.ORDINARY)
                 OutlinedButton(onClick=::openAccountOverview,
                     modifier=Modifier.fillMaxWidth()) {
@@ -6343,6 +6394,7 @@ class MainActivity : FragmentActivity() {
         if (pickerPending && !pickerReturnAllowed()) lock()
         if(adminSystemCredentialBusy && !hasActiveCredentialSheet()) lock()
         if(adminPasskeySheetAtMs>0L && !hasPasskeySheet()) lock()
+        refreshAvenqirPublicStatus()
         if (unlocked && !showProductChooser) {
             browser?.resumeTimers()
             browser?.onResume()
@@ -6456,6 +6508,7 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         adminGeneration.incrementAndGet()
         nativeAdminClient.invalidatePendingResponses()
+        avenqirStatusIo.shutdownNow()
         adminIo.shutdownNow()
         adminReadIo.shutdownNow()
         nativeReadIo.shutdownNow()
