@@ -7,6 +7,8 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
 data class AvenqirPublicStatus(val count: Int)
+enum class AvenqirCheckIssue { LOCAL_POLICY, BROWSER_REQUIRED, HTTP, NETWORK, INVALID_DATA }
+data class AvenqirCheckResult(val status: AvenqirPublicStatus? = null, val issue: AvenqirCheckIssue? = null)
 
 /** One bounded, user-visible refresh per five minutes per activity.
  * Never periodically schedule or perform traffic while the app is locked.
@@ -31,38 +33,47 @@ object AvenqirPublicStatusClient {
         else AvenqirPublicStatus(items.length())
     } catch (_: Exception) { null }
 
-    fun fetch(): AvenqirPublicStatus? {
+    fun classifyResponse(code: Int, contentType: String?): AvenqirCheckIssue? = when {
+        code in 300..399 || code == 403 || code == 429 ||
+            contentType.orEmpty().startsWith("text/html", ignoreCase = true) -> AvenqirCheckIssue.BROWSER_REQUIRED
+        code != 200 -> AvenqirCheckIssue.HTTP
+        !contentType.orEmpty().startsWith("application/json", ignoreCase = true) -> AvenqirCheckIssue.INVALID_DATA
+        else -> null
+    }
+    fun fetch(): AvenqirCheckResult {
         // Refuse to use a process-global Java cookie handler, if installed.
         // Never access WebView CookieManager, admin grants or mail credentials.
-        if (CookieHandler.getDefault() != null) return null
+        if (CookieHandler.getDefault() != null) return AvenqirCheckResult(issue = AvenqirCheckIssue.LOCAL_POLICY)
         val c = try { URL(ENDPOINT).openConnection() as HttpsURLConnection }
-            catch (_: Exception) { return null }
+            catch (_: Exception) { return AvenqirCheckResult(issue = AvenqirCheckIssue.NETWORK) }
         return try {
             c.instanceFollowRedirects = false
             c.requestMethod = "GET"
-            c.connectTimeout = 4000
-            c.readTimeout = 4000
+            c.connectTimeout = 6000
+            c.readTimeout = 6000
             c.useCaches = false
             c.setRequestProperty("Accept", "application/json")
-            if (c.responseCode != 200 ||
-                !c.contentType.orEmpty().startsWith("application/json", ignoreCase = true) ||
-                c.contentLengthLong > MAX_BYTES) return null
+            val issue = classifyResponse(c.responseCode, c.contentType)
+            if (issue != null) return AvenqirCheckResult(issue = issue)
+            if (c.contentLengthLong > MAX_BYTES) return AvenqirCheckResult(issue = AvenqirCheckIssue.INVALID_DATA)
             val raw = c.inputStream.use { input ->
                 val out = ByteArrayOutputStream()
                 val buf = ByteArray(8192)
-                val deadline = System.nanoTime() + 6_000_000_000L
+                val deadline = System.nanoTime() + 8_000_000_000L
                 while (true) {
-                    if (Thread.currentThread().isInterrupted || System.nanoTime() > deadline) return null
+                    if (Thread.currentThread().isInterrupted || System.nanoTime() > deadline) return AvenqirCheckResult(issue = AvenqirCheckIssue.NETWORK)
                     val n = input.read(buf)
                     if (n < 0) break
-                    if (out.size() + n > MAX_BYTES) return null
+                    if (out.size() + n > MAX_BYTES) return AvenqirCheckResult(issue = AvenqirCheckIssue.INVALID_DATA)
                     out.write(buf, 0, n)
                 }
                 out.toString(Charsets.UTF_8.name())
             }
-            parse(raw)
+            val status = parse(raw)
+            if (status == null) AvenqirCheckResult(issue = AvenqirCheckIssue.INVALID_DATA)
+            else AvenqirCheckResult(status = status)
         } catch (_: Exception) {
-            null
+            AvenqirCheckResult(issue = AvenqirCheckIssue.NETWORK)
         } finally { c.disconnect() }
     }
 }

@@ -129,20 +129,20 @@ class MainActivity : FragmentActivity() {
     private var avenqirAutoCheck by mutableStateOf(true)
     private var avenqirStatusBusy by mutableStateOf(false)
     private var avenqirPublicStatus by mutableStateOf<AvenqirPublicStatus?>(null)
-    private var avenqirStatusFailed by mutableStateOf(false)
+    private var avenqirStatusIssue by mutableStateOf<AvenqirCheckIssue?>(null)
     private val avenqirStatusGate = AvenqirStatusGate()
     private fun refreshAvenqirPublicStatus() {
         if (!unlocked || !avenqirAutoCheck || avenqirStatusBusy ||
             !avenqirStatusGate.tryStart(SystemClock.elapsedRealtime())) return
         avenqirStatusBusy = true
-        avenqirStatusFailed = false
+        avenqirStatusIssue = null
         avenqirStatusIo.execute {
             val result = AvenqirPublicStatusClient.fetch()
             runOnUiThread {
                 if (!isDestroyed && !isFinishing) {
                     avenqirStatusBusy = false
-                    avenqirPublicStatus = result
-                    avenqirStatusFailed = result == null
+                    if (result.status != null) avenqirPublicStatus = result.status
+                    avenqirStatusIssue = result.issue
                 }
             }
         }
@@ -155,7 +155,13 @@ class MainActivity : FragmentActivity() {
     private fun avenqirStatusLabel(): String = when {
         !avenqirAutoCheck -> "启动时目录检查已关闭"
         avenqirStatusBusy -> "正在检查公开目录…"
-        avenqirStatusFailed -> "最近一次目录检查失败 · 不影响邮件"
+        avenqirStatusIssue != null -> when (avenqirStatusIssue) {
+            AvenqirCheckIssue.BROWSER_REQUIRED -> "自动检查未确认 · 请打开 AVENQIR 进行正常网页访问"
+            AvenqirCheckIssue.LOCAL_POLICY -> "自动检查因本地会话隔离跳过 · 可正常手动打开"
+            AvenqirCheckIssue.NETWORK -> "自动检查网络未确认 · 可手动打开"
+            AvenqirCheckIssue.HTTP -> "公开接口响应异常 · 可手动打开网页"
+            else -> "公开目录数据未确认 · 可手动打开"
+        }
         avenqirPublicStatus != null -> "最近检查：可访问 · 公开网址 ${avenqirPublicStatus!!.count} 条"
         else -> "公开目录尚未检查"
     }

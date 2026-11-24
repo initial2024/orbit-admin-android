@@ -1,0 +1,64 @@
+name: Orbit v0.9.32 unsigned personal release artifact
+on:
+  push:
+    branches: [fix/avenqir-status-v0932-20261124]
+    paths: [.github/workflows/android-status-v0932-unsigned.yml, app/**]
+permissions:
+  contents: read
+jobs:
+  build-unsigned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Test, shrink and assemble UNSIGNED release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${ORBIT_RELEASE_KEYSTORE_FILE:-}"
+          gradle --no-daemon --no-configuration-cache \
+            :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
+      - name: Verify package, version, WebKit and no production secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          SRC="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name 'app-release*.apk' | head -n 1)"
+          test -s "$SRC"
+          "$AAPT" dump badging "$SRC" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$AAPT" dump badging "$SRC" | grep -F "versionCode='49' versionName='0.9.32'"
+          grep -Fq 'WEB_AUTHENTICATION_SUPPORT_FOR_APP' app/src/main/java/de/kango99w/orbitadmin/AvenqirActivity.kt
+          grep -Fq 'https://avenqir.bg5.net/.well-known/assetlinks.json' app/src/main/res/values/strings.xml
+          mv "$SRC" Orbit-v0.9.32-unsigned-R8.apk
+          sha256sum Orbit-v0.9.32-unsigned-R8.apk > Orbit-v0.9.32-unsigned-R8.apk.sha256
+          printf 'Built from SHA: %s\nNot signed. Never install this artifact.\n' "$GITHUB_SHA" > UNSIGNED-NOTICE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-v0932-unsigned-for-private-signing
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            Orbit-v0.9.32-unsigned-R8.apk
+            Orbit-v0.9.32-unsigned-R8.apk.sha256
+            UNSIGNED-NOTICE.txt

@@ -15,6 +15,14 @@ class AvenqirPublicStatusTest {
         assertNull(AvenqirPublicStatusClient.parse("""{"ok":true,"items":[""" +
             List(301) { "{}" }.joinToString(",") + "]}"))
     }
+    @Test fun distinguishBrowserResponseFromNetworkFailure() {
+        assertNull(AvenqirPublicStatusClient.classifyResponse(200,"application/json; charset=utf-8"))
+        assertEquals(AvenqirCheckIssue.BROWSER_REQUIRED,AvenqirPublicStatusClient.classifyResponse(200,"text/html"))
+        assertEquals(AvenqirCheckIssue.BROWSER_REQUIRED,AvenqirPublicStatusClient.classifyResponse(403,"text/plain"))
+        assertEquals(AvenqirCheckIssue.BROWSER_REQUIRED,AvenqirPublicStatusClient.classifyResponse(302,null))
+        assertEquals(AvenqirCheckIssue.HTTP,AvenqirPublicStatusClient.classifyResponse(503,"application/json"))
+        assertEquals(AvenqirCheckIssue.INVALID_DATA,AvenqirPublicStatusClient.classifyResponse(200,"text/plain"))
+    }
     @Test fun boundedForegroundRefreshDoesNotRepeatOnResume() {
         val gate=AvenqirStatusGate()
         assertTrue(gate.tryStart(0))
