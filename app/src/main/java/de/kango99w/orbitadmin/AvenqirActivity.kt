@@ -64,6 +64,8 @@ class AvenqirActivity : FragmentActivity() {
     private var navigatingToExternal = false
     private var lastFailedMainFrameUrl: String? = null
     private var initialHomeRetryUsed = false
+    private var publicDirectoryObserved = false
+    private var navigationSerial = 0L
     private var passkeyBridge: AvenqirNativePasskeyBridge? = null
 
     private val uploadPicker = registerForActivityResult(
@@ -380,6 +382,7 @@ class AvenqirActivity : FragmentActivity() {
                 view: WebView?, url: String?, favicon: android.graphics.Bitmap?
             ) {
                 super.onPageStarted(view, url, favicon)
+                navigationSerial++
                 if (url != null && AvenqirUrlPolicy.isFirstParty(url)) {
                     lastFailedMainFrameUrl = null
                     failureBar.visibility = View.GONE
@@ -388,6 +391,7 @@ class AvenqirActivity : FragmentActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (view != null && url != null && lastFailedMainFrameUrl == null) observeVisibleDirectory(view, url, navigationSerial, 0)
                 // A WebView error page may also trigger onPageFinished.
                 // Never save a failed navigation as a successful resume page.
                 if (lastFailedMainFrameUrl == null) {
@@ -727,6 +731,28 @@ class AvenqirActivity : FragmentActivity() {
         val view = webView
         if (view != null && view.canGoBack()) view.goBack()
         else super.onBackPressed()
+    }
+
+    private fun observeVisibleDirectory(view: WebView, url: String, serial: Long, attempt: Int) {
+        // Check only the public directory after a normal visible user visit.
+        // No challenge interaction, hidden navigation, API call or cookie export.
+        if (publicDirectoryObserved || backgroundLocked || isFinishing || isDestroyed ||
+            webView !== view || serial != navigationSerial || view.url != url ||
+            !AvenqirUrlPolicy.isFirstParty(url) || Uri.parse(url).path != "/directory.html" ||
+            lastFailedMainFrameUrl != null ||
+            !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+        val script = "(function(){var n=document.getElementById('atlasStartupNotice');var r=document.getElementById('atlasResults');return !!(n&&n.hidden&&r&&window.AVENQIR_ATLAS_CATALOG);})()"
+        view.evaluateJavascript(script) { answer ->
+            if (serial != navigationSerial || webView !== view || view.url != url ||
+                backgroundLocked || isDestroyed || isFinishing ||
+                !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@evaluateJavascript
+            if (answer == "true") {
+                publicDirectoryObserved = true
+                setResult(android.app.Activity.RESULT_OK, Intent().putExtra("avenqir_directory_rendered", true))
+            } else if (attempt < 3) {
+                view.postDelayed({ observeVisibleDirectory(view, url, serial, attempt + 1) }, 500L)
+            }
+        }
     }
 
     override fun onPause() {

@@ -40,6 +40,18 @@ class AvenqirPublicStatusTest {
         assertTrue(gate.tryStart(300000))
         assertFalse(gate.tryStart(300001))
     }
+    @Test fun normalBrowserVisitReportsOnlyPublicReadiness() {
+        val path="src/main/java/de/kango99w/orbitadmin/"
+        fun source(name:String)=listOf(File(path+name),File("app/"+path+name)).first(File::isFile).readText()
+        val main=source("MainActivity.kt")
+        val page=source("AvenqirActivity.kt")
+        assertTrue(main.contains("avenqir_directory_rendered"))
+        assertTrue(main.contains("本次已确认目录页面可用"))
+        assertTrue(page.contains("Uri.parse(url).path != \"/directory.html\""))
+        assertTrue(page.contains("n&&n.hidden&&r&&window.AVENQIR_ATLAS_CATALOG"))
+        assertTrue(page.contains("serial != navigationSerial"))
+        assertTrue(page.contains("attempt < 3"))
+    }
     @Test fun noHiddenWebviewOrMailCredentialBridge() {
         val path="src/main/java/de/kango99w/orbitadmin/"
         fun source(name:String)=listOf(File(path+name),File("app/"+path+name)).first(File::isFile).readText()

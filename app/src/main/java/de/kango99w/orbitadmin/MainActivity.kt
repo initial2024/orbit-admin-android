@@ -131,6 +131,15 @@ class MainActivity : FragmentActivity() {
     private var avenqirPublicStatus by mutableStateOf<AvenqirPublicStatus?>(null)
     private var avenqirStatusIssue by mutableStateOf<AvenqirCheckIssue?>(null)
     private val avenqirStatusGate = AvenqirStatusGate()
+    private var avenqirDirectorySeen by mutableStateOf(false)
+    // Explicit activity result from the isolated, visible first-party browser.
+    // No cookies, account data, query text or private page contents cross processes.
+    private val avenqirVisit = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK &&
+            result.data?.getBooleanExtra("avenqir_directory_rendered", false) == true) {
+            avenqirDirectorySeen = true
+        }
+    }
     private fun refreshAvenqirPublicStatus() {
         if (!unlocked || !avenqirAutoCheck || avenqirStatusBusy ||
             !avenqirStatusGate.tryStart(SystemClock.elapsedRealtime())) return
@@ -156,7 +165,7 @@ class MainActivity : FragmentActivity() {
         !avenqirAutoCheck -> "可直接打开目录 · 自动状态检查未开启"
         avenqirStatusBusy -> "正在检查公开目录…"
         avenqirStatusIssue != null -> when (avenqirStatusIssue) {
-            AvenqirCheckIssue.BROWSER_REQUIRED -> "自动检查未确认 · 请打开 AVENQIR 进行正常网页访问"
+            AvenqirCheckIssue.BROWSER_REQUIRED -> if (avenqirDirectorySeen) "本次已确认目录页面可用 · 自动接口仍需浏览器验证" else "自动接口需浏览器验证 · 点击正常打开目录"
             AvenqirCheckIssue.LOCAL_POLICY -> "自动检查因本地会话隔离跳过 · 可正常手动打开"
             AvenqirCheckIssue.NETWORK -> "自动检查网络未确认 · 可手动打开"
             AvenqirCheckIssue.HTTP -> "公开接口响应异常 · 可手动打开网页"
@@ -2589,7 +2598,7 @@ class MainActivity : FragmentActivity() {
     private fun openAvenqirTools() {
         if (!unlocked) return
         showTools = false
-        startActivity(Intent(this, AvenqirActivity::class.java))
+        avenqirVisit.launch(Intent(this, AvenqirActivity::class.java))
     }
 
     @Composable
