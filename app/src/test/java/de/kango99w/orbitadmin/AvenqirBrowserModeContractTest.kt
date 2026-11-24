@@ -41,4 +41,20 @@ class AvenqirBrowserModeContractTest {
         for (forbidden in listOf("CookieManager", "setCookie(", "addJavascriptInterface", "EXTRA_HEADERS"))
             assertFalse(tab.contains(forbidden))
     }
+
+    @Test fun savedPreferenceCanBeOverriddenWithoutWritingItAndOemBrowsersAreConstrained() {
+        val tab = source("src/main/java/de/kango99w/orbitadmin/AvenqirPasskeyBrowserTab.kt")
+        assertTrue(tab.contains("forceChooser = true"))
+        assertTrue(tab.contains("if (!forceChooser && preferred != null)"))
+        val once = tab.substringAfter("setNegativeButton(\"仅本次\")").substringBefore("setPositiveButton")
+        assertTrue(once.contains("launch(chosen.pkg, destination)"))
+        assertFalse(once.contains("prefs.edit()"))
+        val remember = tab.substringAfter("setPositiveButton(\"设为默认并打开\")").substringBefore(".show()")
+        assertTrue(remember.contains("if (launch(chosen.pkg, destination))"))
+        assertTrue(remember.contains("putString(\"browser\", chosen.pkg)"))
+        assertTrue(tab.contains("PackageManager.GET_RESOLVED_FILTER"))
+        assertTrue(tab.contains("filter.countDataAuthorities() == 0 && filter.countDataPaths() == 0"))
+        assertTrue(tab.contains("it.activityInfo.packageName in handlers"))
+        assertFalse(tab.contains("launchUrl(activity, Uri.parse(\"https://example.invalid/\"))"))
+    }
 }
