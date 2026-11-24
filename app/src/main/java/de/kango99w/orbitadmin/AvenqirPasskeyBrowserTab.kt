@@ -37,7 +37,20 @@ internal class AvenqirPasskeyBrowserTab(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER), 0)
         val handlers = pm.queryIntentActivities(view(AvenqirBrowserDestination.HOME), PackageManager.MATCH_DEFAULT_ONLY)
             .map { it.activityInfo.packageName }.toSet()
-        return declared.asSequence()
+        // OEM browsers may handle arbitrary HTTPS without CATEGORY_APP_BROWSER.
+        // Resolve a reserved probe URI locally; never open it or send a request.
+        // Require an unrestricted HTTPS filter rather than a site-specific deep link.
+        val generic = pm.queryIntentActivities(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://example.invalid/"))
+                .addCategory(Intent.CATEGORY_BROWSABLE),
+            PackageManager.MATCH_DEFAULT_ONLY or PackageManager.GET_RESOLVED_FILTER
+        ).filter { candidate ->
+            candidate.filter?.let { filter ->
+                filter.hasDataScheme("https") &&
+                    filter.countDataAuthorities() == 0 && filter.countDataPaths() == 0
+            } == true
+        }
+        return (declared + generic).asSequence()
             .filter { it.activityInfo.packageName != activity.packageName && it.activityInfo.packageName in handlers }
             .distinctBy { it.activityInfo.packageName }
             .map { Browser(it.activityInfo.packageName, it.loadLabel(pm).toString().take(80),
@@ -58,10 +71,12 @@ internal class AvenqirPasskeyBrowserTab(
                     else prefs.edit().putString("browser", browsers[index-1].pkg).apply()
                 }
                 dialog.dismiss()
+            }.setNeutralButton("仅本次选择并打开") { _, _ ->
+                chooseAndOpen(AvenqirBrowserDestination.HOME, forceChooser = true)
             }.setNegativeButton("取消", null).show()
     }
 
-    fun chooseAndOpen(destination: AvenqirBrowserDestination = AvenqirBrowserDestination.PASSKEY) {
+    fun chooseAndOpen(destination: AvenqirBrowserDestination = AvenqirBrowserDestination.PASSKEY, forceChooser: Boolean = false) {
         if (!allowed()) return
         val browsers = installedBrowsers()
         if (browsers.isEmpty()) {
@@ -69,15 +84,17 @@ internal class AvenqirPasskeyBrowserTab(
             return
         }
         val preferred = browsers.firstOrNull { it.pkg == prefs.getString("browser", null) }
-        if (preferred != null && launch(preferred.pkg, destination)) return
-        if (preferred != null) prefs.edit().remove("browser").apply()
+        if (!forceChooser && preferred != null) {
+            if (launch(preferred.pkg, destination)) return
+            prefs.edit().remove("browser").apply()
+        }
         AlertDialog.Builder(activity)
             .setTitle("选择 AVENQIR 浏览器")
             .setItems(browsers.map { "${it.display()} (${it.pkg})" }.toTypedArray()) { _, index ->
                 if (!allowed()) return@setItems
                 val chosen = browsers[index]
                 AlertDialog.Builder(activity).setTitle("使用 ${chosen.label}")
-                    .setMessage((if (chosen.supportsTab) "优先在 Orbit 上方打开浏览器安全标签页，关闭即可返回。" else "此浏览器未声明安全标签页服务，将在完整浏览器界面打开。") + "\n浏览器负责通行密钥及会话；不会将网页登录状态传给 Orbit Mail。")
+                    .setMessage((if (chosen.supportsTab) "优先在 Orbit 上方打开浏览器安全标签页，关闭即可返回。" else "此浏览器未声明安全标签页服务，将在完整浏览器界面打开。") + "\n浏览器负责通行密钥及会话；支持标签页不代表支持通行密钥。如认证失败，可改选兼容浏览器。不会将网页登录状态传给 Orbit Mail。")
                     .setNeutralButton("取消", null)
                     .setNegativeButton("仅本次") { _, _ -> launch(chosen.pkg, destination) }
                     .setPositiveButton("设为默认并打开") { _, _ ->
