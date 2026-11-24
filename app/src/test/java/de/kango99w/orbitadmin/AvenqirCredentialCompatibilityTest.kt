@@ -19,5 +19,11 @@ class AvenqirCredentialCompatibilityTest {
         assertFalse(file.contains("ignoreSslErrors"))
         assertFalse(file.contains("addJavascriptInterface("))
         assertTrue(file.contains("WEB_AUTHENTICATION"))
+        val metadata = sequenceOf(
+            File("src/main/res/values/strings.xml"),
+            File("app/src/main/res/values/strings.xml")
+        ).first(File::isFile).readText()
+        assertTrue(metadata.contains("https://inbox.kango99w.de/.well-known/assetlinks.json"))
+        assertTrue(metadata.contains("https://avenqir.bg5.net/.well-known/assetlinks.json"))
     }
 }
