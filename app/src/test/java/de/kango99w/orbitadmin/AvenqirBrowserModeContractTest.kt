@@ -23,9 +23,18 @@ class AvenqirBrowserModeContractTest {
 
     @Test fun browserEntryUsesFixedHttpsDestinationWithoutSharingSessions() {
         val tab = source("src/main/java/de/kango99w/orbitadmin/AvenqirPasskeyBrowserTab.kt")
-        assertTrue(tab.contains("Uri.parse(AvenqirNativePasskeyPolicy.PAGE)"))
+        assertTrue(tab.contains("HOME(AvenqirUrlPolicy.HOME)"))
+        assertTrue(tab.contains("PASSKEY(AvenqirNativePasskeyPolicy.PAGE)"))
         assertTrue(tab.contains("CustomTabsIntent.Builder()"))
-        assertTrue(tab.contains("view().setPackage(pkg)"))
+        assertTrue(tab.contains("view(destination).setPackage(pkg)"))
+        assertTrue(tab.contains("canOpen()"))
+        assertTrue(tab.contains("avenqir_first_party_browser_v1"))
+        val main = source("src/main/java/de/kango99w/orbitadmin/MainActivity.kt")
+        val entry = main.substringAfter("private fun openAvenqirTools()").substringBefore("private fun openAvenqirCompatibility()")
+        assertTrue(entry.contains("chooseAndOpen(AvenqirBrowserDestination.HOME)"))
+        assertFalse(entry.contains("AvenqirActivity::class.java"))
+        val compatibility = main.substringAfter("private fun openAvenqirCompatibility()").substringBefore("private fun selectAvenqirBrowser()")
+        assertTrue(compatibility.contains("AvenqirActivity::class.java"))
         for (forbidden in listOf("CookieManager", "setCookie(", "addJavascriptInterface", "EXTRA_HEADERS"))
             assertFalse(tab.contains(forbidden))
     }

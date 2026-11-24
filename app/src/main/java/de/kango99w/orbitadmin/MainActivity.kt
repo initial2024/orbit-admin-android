@@ -798,7 +798,7 @@ class MainActivity : FragmentActivity() {
                     }
                     Column(Modifier.weight(1f)) {
                         Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
-                        Text("网站 · 工具 · 独立后台",
+                        Text("网站 · 浏览器安全标签页 · 后台",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(avenqirStatusLabel(),
@@ -808,6 +808,10 @@ class MainActivity : FragmentActivity() {
                     Text("›", style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                TextButton(onClick = ::selectAvenqirBrowser) { Text("选择浏览器") }
+                TextButton(onClick = ::openAvenqirCompatibility) { Text("兼容模式") }
             }
             Row(
                 Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -2598,7 +2602,18 @@ class MainActivity : FragmentActivity() {
     private fun openAvenqirTools() {
         if (!unlocked) return
         showTools = false
+        AvenqirPasskeyBrowserTab(this, canOpen = { unlocked }).chooseAndOpen(AvenqirBrowserDestination.HOME)
+    }
+
+    private fun openAvenqirCompatibility() {
+        if (!unlocked || isFinishing || isDestroyed) return
+        showTools = false
         avenqirVisit.launch(Intent(this, AvenqirActivity::class.java))
+    }
+
+    private fun selectAvenqirBrowser() {
+        if (!unlocked || isFinishing || isDestroyed) return
+        AvenqirPasskeyBrowserTab(this, canOpen = { unlocked }).settings()
     }
 
     @Composable
@@ -2614,7 +2629,7 @@ class MainActivity : FragmentActivity() {
                     Text("普通页面优先使用 Android 原生界面；只有未接通原生接口的功能才需手动打开网站授权。", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = ::openAvenqirTools,
                         modifier = Modifier.fillMaxWidth()) {
-                        Text("AVENQIR 网址与工具中心 · 应用内")
+                        Text("AVENQIR 网址与工具中心 · 浏览器标签页")
                     }
                     AdminDestination.entries.forEach { entry ->
                         val nativeSection = when (entry) {
@@ -5345,8 +5360,12 @@ class MainActivity : FragmentActivity() {
             OutlinedButton(
                 onClick = ::openAvenqirTools,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("打开 AVENQIR 工具中心 · 不离开 Orbit Mail") }
-            Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
+            ) { Text("打开 AVENQIR · 浏览器标签页") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = ::selectAvenqirBrowser, modifier = Modifier.weight(1f)) { Text("选择浏览器") }
+                OutlinedButton(onClick = ::openAvenqirCompatibility, modifier = Modifier.weight(1f)) { Text("兼容模式") }
+            }
+            Text("标签页由所选浏览器管理，使用该浏览器的登录状态及安全设置，不共享 Orbit 邮箱账号或设备授权。关闭标签页后再次打开从首页开始；后台请按需在网站退出登录。",
                 style=MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::updateAvenqirAutoCheck)

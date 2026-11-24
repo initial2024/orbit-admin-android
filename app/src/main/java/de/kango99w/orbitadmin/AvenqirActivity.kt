@@ -124,7 +124,7 @@ class AvenqirActivity : FragmentActivity() {
             .setNegativeButton("取消", null)
             .setPositiveButton("选择浏览器并登录") { _, _ ->
                 if (!backgroundLocked && !isFinishing && !isDestroyed) {
-                    AvenqirPasskeyBrowserTab(this).chooseAndOpen()
+                    AvenqirPasskeyBrowserTab(this, canOpen = { !backgroundLocked }).chooseAndOpen()
                 }
             }.show()
     }

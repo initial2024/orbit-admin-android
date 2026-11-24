@@ -136,7 +136,7 @@ class AvenqirNativePasskeyBridge(
             if (closed || busy || view !== page || !AvenqirNativePasskeyPolicy.allowsBrowserOpen(
                     origin.toString(), mainFrame, page.url, message.data, foreground(), allowed()))
                 return@addWebMessageListener
-            AvenqirPasskeyBrowserTab(activity).chooseAndOpen()
+            AvenqirPasskeyBrowserTab(activity, canOpen = { !closed && !busy && allowed() }).chooseAndOpen()
         }
         if (!BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED) {
             note("AVENQIR_BROWSER_ONLY")
