@@ -49,6 +49,10 @@ object AvenqirNativePasskeyPolicy {
         type.contains("CANCEL", ignoreCase = true) ||
             type.contains("NotAllowedError", ignoreCase = true)
 
+    fun providerSecurityRejected(type: String): Boolean =
+        type == "SECURITY" || type.endsWith("/androidx.credentials.TYPE_SECURITY_ERROR") ||
+            type.endsWith("/TYPE_SECURITY_ERROR") || type.endsWith("/SecurityError")
+
     // Compatibility profile for native creation, not an authentication bypass.
     // Keep the original RP, challenge, user, excluded IDs, resident-key and UV
     // requirements. Reorder only algorithms actually offered by the server.
@@ -246,6 +250,7 @@ class AvenqirNativePasskeyBridge(
                 }
                 note("PROVIDER_ERROR_TYPE_" + safeType)
                 val code = when {
+                    AvenqirNativePasskeyPolicy.providerSecurityRejected(safeType) -> "SECURITY"
                     AvenqirNativePasskeyPolicy.providerCancelled(safeType) -> "CANCELLED"
                     safeType.contains("NO_CREDENTIAL", ignoreCase = true) ||
                         safeType.contains("NO_CREATE_OPTION", ignoreCase = true) -> "NO_CREDENTIAL"
@@ -278,6 +283,7 @@ class AvenqirNativePasskeyBridge(
                 "INVALID" -> "凭证窗口未能启动或页面状态已变更，请返回后重新执行第一步。"
                 "TIMEOUT" -> "系统凭证服务超时，请检查手机默认密码管理器。"
                 "UNAVAILABLE" -> "手机的系统凭证服务不可用，请检查默认密码管理器。"
+                "SECURITY" -> "系统拒绝网站与应用的安全关联，请用系统浏览器或等待网站关联修复。"
                 "NO_CREDENTIAL" -> "没有找到可用通行密钥，请确认之前登记的密码管理器。"
                 else -> "系统凭证操作未完成，请检查网站关联及密码管理器。"
             })
