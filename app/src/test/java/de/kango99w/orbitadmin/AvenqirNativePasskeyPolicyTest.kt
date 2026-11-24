@@ -1,0 +1,30 @@
+package de.kango99w.orbitadmin
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+class AvenqirNativePasskeyPolicyTest {
+    @Test fun onlyExactMainFramePasskeyPage() {
+        val p=AvenqirNativePasskeyPolicy
+        assertTrue(p.allows(p.ORIGIN,true,p.PAGE))
+        assertFalse(p.allows(p.ORIGIN,false,p.PAGE))
+        assertFalse(p.allows("https://evil.example",true,p.PAGE))
+        assertFalse(p.allows(p.ORIGIN,true,p.ORIGIN+"/admin.php"))
+        assertFalse(p.allows(p.ORIGIN,true,p.PAGE+"?other=1"))
+    }
+    @Test fun onlyPinnedRelyingPartyAndRequiredVerification() {
+        val p=AvenqirNativePasskeyPolicy
+        val challenge="A".repeat(43)
+        val get=JSONObject().put("challenge",challenge).put("rpId",p.RP)
+            .put("userVerification","required").put("allowCredentials",org.json.JSONArray().put(JSONObject().put("id","abc")))
+        assertTrue(p.validOptions("get",get))
+        assertFalse(p.validOptions("get",JSONObject(get.toString()).put("rpId","evil.example")))
+        assertFalse(p.validOptions("get",JSONObject(get.toString()).put("origin","https://evil.example")))
+        assertFalse(p.validOptions("get",JSONObject(get.toString()).put("userVerification","discouraged")))
+        val create=JSONObject().put("challenge",challenge).put("rp",JSONObject().put("id",p.RP))
+            .put("user",JSONObject().put("name","adm"))
+            .put("authenticatorSelection",JSONObject().put("userVerification","required")).put("attestation","none")
+        assertTrue(p.validOptions("create",create))
+        assertFalse(p.validOptions("create",JSONObject(create.toString()).put("user",JSONObject().put("name","other"))))
+        assertFalse(p.validOptions("password",create))
+    }
+}

@@ -64,6 +64,7 @@ class AvenqirActivity : FragmentActivity() {
     private var navigatingToExternal = false
     private var lastFailedMainFrameUrl: String? = null
     private var initialHomeRetryUsed = false
+    private var passkeyBridge: AvenqirNativePasskeyBridge? = null
 
     private val uploadPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -267,6 +268,13 @@ class AvenqirActivity : FragmentActivity() {
                 android.util.Log.i("OrbitAvenqir", "System WebAuthn unavailable; password login retained")
             }
         }
+        passkeyBridge = AvenqirNativePasskeyBridge(this, page,
+            allowed = { !backgroundLocked && !isFinishing && !isDestroyed },
+            finished = {
+                if (backgroundLocked && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                    requestPageUnlock()
+                }
+            }).also { it.install() }
         page.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progress.progress = newProgress
@@ -445,7 +453,8 @@ class AvenqirActivity : FragmentActivity() {
                 "▦  网址目录" to "directory.html",
                 "⚙  实用工具" to "tools.html",
                 "▣  网址管理后台" to "admin.php",
-                "✉  留言管理后台" to "feedback-admin.php"
+                "✉  留言管理后台" to "feedback-admin.php",
+                "🔑  通行密钥登录 / 管理" to "passkey.php"
             )
             destinations.forEach { (label, route) ->
                 panel.addView(TextView(this).apply {
@@ -654,7 +663,7 @@ class AvenqirActivity : FragmentActivity() {
             // separate AVENQIR admin cookies. Never restore by reloading URL.
             lockCurtain?.visibility = View.VISIBLE
             webView?.onPause()
-            lockCurtain?.post { requestPageUnlock() }
+            if (passkeyBridge?.busy != true) lockCurtain?.post { requestPageUnlock() }
         } else {
             webView?.onResume()
         }
@@ -673,6 +682,8 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        passkeyBridge?.close()
+        passkeyBridge = null
         pendingUpload?.onReceiveValue(null)
         pendingUpload = null
         pendingExport = null
