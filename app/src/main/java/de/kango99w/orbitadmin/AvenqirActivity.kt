@@ -447,6 +447,20 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
+                text = "🌐  第三方网址默认打开方式"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    AvenqirBrowserLauncher(this@AvenqirActivity).settings()
+                }
+            })
+            panel.addView(TextView(this).apply {
                 text = "↗  第三方网址打开方式"
                 textSize = 16f
                 setTextColor(menuForeground)
