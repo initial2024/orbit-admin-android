@@ -11,6 +11,18 @@ class AvenqirNativePasskeyPolicyTest {
         assertFalse(p.allows(p.ORIGIN,true,p.ORIGIN+"/admin.php"))
         assertFalse(p.allows(p.ORIGIN,true,p.PAGE+"?other=1"))
     }
+    @Test fun browserEntryAllowsOnlyLiteralCommandFromUnlockedForegroundFirstPartyPage() {
+        val p=AvenqirNativePasskeyPolicy
+        val cmd="OPEN_PASSKEY_PAGE"
+        assertTrue(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE,cmd,true,true))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,false,p.PAGE,cmd,true,true))
+        assertFalse(p.allowsBrowserOpen("https://example.org",true,p.PAGE,cmd,true,true))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE+"?next=1",cmd,true,true))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE,"https://example.org",true,true))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE,cmd,false,true))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE,cmd,true,false))
+        assertFalse(p.allowsBrowserOpen(p.ORIGIN,true,p.PAGE,null,true,true))
+    }
     @Test fun consentCannotBypassForegroundOrOrigin() {
         val p=AvenqirNativePasskeyPolicy
         assertTrue(p.canLaunchProvider(true,true,true,p.PAGE))
