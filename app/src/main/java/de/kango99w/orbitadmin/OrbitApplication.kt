@@ -47,6 +47,10 @@ object OrbitPushConfig {
 class OrbitApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        if (Application.getProcessName().endsWith(":publicbrowser")) {
+            WebView.setDataDirectorySuffix("avenqir_public_browser")
+            return // Separate WebView profile; no Orbit or AVENQIR auth initialization.
+        }
         if (Application.getProcessName().endsWith(":avenqir")) {
             // Android WebView data stores are otherwise shared among the app's
             // WebViews. Set the suffix BEFORE any WebView or CookieManager access.
