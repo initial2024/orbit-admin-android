@@ -22,6 +22,8 @@ import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -58,6 +60,8 @@ class AvenqirActivity : FragmentActivity() {
     private var pendingUpload: ValueCallback<Array<Uri>>? = null
     private var pendingExport: String? = null
     private var navigatingToExternal = false
+    private var lastFailedMainFrameUrl: String? = null
+    private var initialHomeRetryUsed = false
 
     private val uploadPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -174,6 +178,62 @@ class AvenqirActivity : FragmentActivity() {
 
         val page = WebView(this)
         webView = page
+
+        // Only the main-frame error is surfaced. No hidden subresource errors,
+        // no cookies/query strings in diagnostics, and no SSL bypass.
+        val failureBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setBackgroundColor(if (darkMode) Color.rgb(59, 43, 42)
+                else Color.rgb(255, 244, 226))
+            visibility = View.GONE
+        }
+        val failureLabel = TextView(this).apply {
+            setTextColor(foreground)
+            textSize = 14f
+            maxLines = 5
+        }
+        failureBar.addView(failureLabel)
+        val failureActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, dp(9), 0, 0)
+        }
+        val retryFailure = toolbarAction("⟳", "重试 AVENQIR 网页")
+        val openInBrowser = toolbarAction("↗", "在系统浏览器打开 AVENQIR")
+        failureActions.addView(retryFailure,
+            LinearLayout.LayoutParams(dp(48), dp(48)))
+        val browserLayout = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+            marginStart = dp(8)
+        }
+        failureActions.addView(openInBrowser, browserLayout)
+        failureBar.addView(failureActions)
+        layout.addView(failureBar)
+        fun reportMainFrameFailure(url: String, description: String) {
+            val safeUrl = AvenqirLoadFailurePolicy.safeRetryUrl(url) ?: return
+            lastFailedMainFrameUrl = safeUrl
+            failureLabel.text = "AVENQIR 页面加载失败：$description。请检查网络、DNS 或 VPN 分应用设置；" +
+                "可点 ⟳ 重试，或点 ↗ 使用系统浏览器确认网站是否可访问。"
+            failureBar.visibility = View.VISIBLE
+            // Only a static classification is logged, never URL query, cookies or forms.
+            android.util.Log.w("OrbitAvenqir", "first-party main-frame load failure: $description")
+        }
+        retryFailure.setOnClickListener {
+            val retryTarget = lastFailedMainFrameUrl ?: AvenqirUrlPolicy.HOME
+            failureBar.visibility = View.GONE
+            page.loadUrl(retryTarget)
+        }
+        openInBrowser.setOnClickListener {
+            val publicTarget = lastFailedMainFrameUrl ?: AvenqirUrlPolicy.HOME
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(publicTarget))
+                    .addCategory(Intent.CATEGORY_BROWSABLE))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this, "无法找到可用的系统浏览器",
+                    Toast.LENGTH_SHORT).show()
+            }
+        }
+
         CookieManager.getInstance().setAcceptThirdPartyCookies(page, false)
         page.settings.apply {
             javaScriptEnabled = true
@@ -240,10 +300,65 @@ class AvenqirActivity : FragmentActivity() {
                 return true
             }
 
+            override fun onPageStarted(
+                view: WebView?, url: String?, favicon: android.graphics.Bitmap?
+            ) {
+                super.onPageStarted(view, url, favicon)
+                if (url != null && AvenqirUrlPolicy.isFirstParty(url)) {
+                    lastFailedMainFrameUrl = null
+                    failureBar.visibility = View.GONE
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                AvenqirResumeRoutePolicy.publicPageWithoutState(url)?.let {
-                    lastSafePageUrl = it
+                // A WebView error page may also trigger onPageFinished.
+                // Never save a failed navigation as a successful resume page.
+                if (lastFailedMainFrameUrl == null) {
+                    AvenqirResumeRoutePolicy.publicPageWithoutState(url)?.let {
+                        lastSafePageUrl = it
+                    }
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?, request: WebResourceRequest?, error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request == null ||
+                    !AvenqirLoadFailurePolicy.shouldHandle(
+                        request.isForMainFrame, request.url.toString())) return
+                val failedUrl = request.url.toString()
+                val errorCode = error?.errorCode ?: -1
+                reportMainFrameFailure(
+                    failedUrl, AvenqirLoadFailurePolicy.networkFailureText(errorCode))
+                // Exactly one bounded startup retry, restricted to the public GET homepage.
+                // Never retry authenticated POST/admin operations automatically.
+                if (AvenqirLoadFailurePolicy.shouldAutoRetryHome(
+                        failedUrl, request.method, errorCode, initialHomeRetryUsed)) {
+                    initialHomeRetryUsed = true
+                    view?.postDelayed({
+                        if (!isFinishing && !isDestroyed && !backgroundLocked &&
+                            webView === view &&
+                            lastFailedMainFrameUrl == AvenqirUrlPolicy.HOME) {
+                            failureBar.visibility = View.GONE
+                            view.loadUrl(AvenqirUrlPolicy.HOME)
+                        }
+                    }, 1400L)
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?, request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request == null || errorResponse == null ||
+                    !AvenqirLoadFailurePolicy.shouldHandle(
+                        request.isForMainFrame, request.url.toString())) return
+                if (AvenqirLoadFailurePolicy.isServerError(errorResponse.statusCode)) {
+                    reportMainFrameFailure(request.url.toString(),
+                        "服务器 HTTP ${errorResponse.statusCode}")
                 }
             }
 
@@ -251,6 +366,9 @@ class AvenqirActivity : FragmentActivity() {
                 view: WebView?, handler: SslErrorHandler, error: SslError?
             ) {
                 handler.cancel()
+                if (error != null && AvenqirUrlPolicy.isFirstParty(error.url)) {
+                    reportMainFrameFailure(error.url, "HTTPS 证书验证失败（不会绕过证书检查）")
+                }
                 Toast.makeText(this@AvenqirActivity,
                     "HTTPS 证书验证失败", Toast.LENGTH_SHORT).show()
             }
