@@ -2,6 +2,12 @@ name: Orbit Mail stable signed APK (protected manual)
 on:
   workflow_dispatch:
     inputs:
+      avenqir_passkey_mode:
+        description: "Browser mode disables AVENQIR native credentials; native mode requires live DAL."
+        required: true
+        type: choice
+        options: [browser, native]
+        default: browser
       acknowledgement:
         description: "Type PUBLISH_SIGNED_STABLE only after real-device and server gates pass"
         required: true
@@ -53,6 +59,55 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
           set -o pipefail
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - name: Require original signing pin and selected AVENQIR credential mode
+        env:
+          ORBIT_EXPECTED_CERT_SHA256: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
+          AVENQIR_MODE: ${{ inputs.avenqir_passkey_mode }}
+        run: |
+          set -euo pipefail
+          test "${ORBIT_EXPECTED_CERT_SHA256^^}" = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
+          case "$AVENQIR_MODE" in
+            browser) echo 'AVENQIR_BROWSER_ONLY: native WebView and Credential Manager entry disabled; no session transfer' ;;
+            native) echo 'AVENQIR_NATIVE: live DAL is mandatory' ;;
+            *) exit 1 ;;
+          esac
+      - name: Require live AVENQIR association before loading signing keys
+        if: inputs.avenqir_passkey_mode == 'native'
+        env:
+          ORBIT_EXPECTED_CERT_SHA256: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys, urllib.request
+          pin=os.environ.get('ORBIT_EXPECTED_CERT_SHA256','').upper()
+          fixed='6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491'
+          if not re.fullmatch(r'[0-9A-F]{64}',pin) or pin!=fixed:
+              print('DAL_RELEASE_GATE=DENY_ORIGINAL_SIGNER_PIN')
+              sys.exit(1)
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args,**kwargs): return None
+          relation=['delegate_permission/common.get_login_creds']
+          fingerprint=':'.join(pin[i:i+2] for i in range(0,64,2))
+          expected=[
+              {'relation':relation,'target':{'namespace':'android_app','package_name':'de.kango99w.orbitadmin','sha256_cert_fingerprints':[fingerprint]}},
+              {'relation':relation,'target':{'namespace':'web','site':'https://avenqir.bg5.net'}}]
+          try:
+              req=urllib.request.Request('https://avenqir.bg5.net/.well-known/assetlinks.json',headers={'Accept':'application/json','User-Agent':'Orbit release DAL audit'})
+              with urllib.request.build_opener(NoRedirect).open(req,timeout=25) as response:
+                  if response.status!=200 or response.headers.get_content_type()!='application/json':
+                      raise ValueError('public association response')
+                  raw=response.read(65537)
+                  if len(raw)>65536: raise ValueError('size')
+                  rows=json.loads(raw)
+                  if not isinstance(rows,list) or len(rows)!=2:
+                      raise ValueError('association structure')
+                  canonical=lambda x: sorted(json.dumps(y,sort_keys=True) for y in x)
+                  if canonical(rows)!=canonical(expected):
+                      raise ValueError('association targets')
+              print('DAL_RELEASE_GATE=PASS')
+          except Exception as exc:
+              print('DAL_RELEASE_GATE=DENY_'+type(exc).__name__)
+              sys.exit(1)
+          PY
       - name: Guard production keystore secrets
         shell: bash
         env:
@@ -100,7 +155,7 @@ jobs:
           ORBIT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEYSTORE_PASSWORD }}
           ORBIT_RELEASE_KEY_ALIAS: ${{ secrets.ORBIT_RELEASE_KEY_ALIAS }}
           ORBIT_RELEASE_KEY_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEY_PASSWORD }}
-        run: gradle --no-daemon :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
+        run: gradle --no-daemon -Porbit.avenqirNativePasskey=${{ inputs.avenqir_passkey_mode == 'native' }} :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
       - name: Verify stable version, signature and SHA-256
         id: seal
         shell: bash
@@ -156,6 +211,8 @@ jobs:
           APK's certificate, direct upgrade is impossible. Back up device data
           before any intentional uninstall and new sign-in.
           AVENQIR has its own login sessions and isolated WebView profile.
+          AVENQIR Passkey mode: ${{ inputs.avenqir_passkey_mode }}.
+          Browser mode authenticates in the browser-owned tab; it does not authenticate the isolated WebView.
           EOF
           ZIP="Orbit-Mail-v${VERSION}-R8.zip"
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null

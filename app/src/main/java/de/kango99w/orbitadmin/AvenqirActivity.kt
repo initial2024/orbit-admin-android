@@ -64,6 +64,9 @@ class AvenqirActivity : FragmentActivity() {
     private var navigatingToExternal = false
     private var lastFailedMainFrameUrl: String? = null
     private var initialHomeRetryUsed = false
+    private var publicDirectoryObserved = false
+    private var navigationSerial = 0L
+    private var passkeyBridge: AvenqirNativePasskeyBridge? = null
 
     private val uploadPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -81,6 +84,73 @@ class AvenqirActivity : FragmentActivity() {
         val url = pendingExport
         pendingExport = null
         if (destination != null && url != null) saveAuthenticatedJson(url, destination)
+    }
+
+    // This is a local identity diagnostic, NOT proof to a remote server.
+    // The expected certificate is the one published in AVENQIR assetlinks.json.
+    private fun showPasskeyDiagnostics() {
+        if (backgroundLocked || isFinishing) return
+        val report = "Orbit " + BuildConfig.VERSION_NAME + "\nAndroid API " +
+            android.os.Build.VERSION.SDK_INT + "\nWebView WebAuthn: " +
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION) +
+            "\nAVENQIR 凭证模式: " + (if (BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED) "原生 + 浏览器" else "浏览器专用") +
+            "\n\n" + (passkeyBridge?.diagnosticsText() ?: "原生桥未安装") +
+            "\n标准 WebAuthn 路径请查看网页上的 SYSTEM_* 错误代码。" +
+            "\n\n仅包含操作阶段，不包含密码、验证码、账号、凭证或挑战。"
+        AlertDialog.Builder(this).setTitle("通行密钥诊断")
+            .setMessage(report)
+            .setPositiveButton("复制诊断") { _, _ ->
+                val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Orbit Passkey diagnostics", report))
+            }
+            .setNeutralButton("打开系统密码设置") { _, _ ->
+                try {
+                    startActivity(Intent("android.settings.CREDENTIAL_PROVIDER"))
+                } catch (_: Exception) {
+                    try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+                    catch (_: Exception) { Toast.makeText(this, "请手动打开系统设置 → 密码、通行密钥与自动填充", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .setNegativeButton("关闭", null).show()
+    }
+
+    /** User-initiated, browser-owned first-party passkey page. No cookie,
+     * code, challenge, or session transfer into the isolated app WebView. */
+    private fun openPasskeyInSystemBrowser() {
+        if (backgroundLocked || isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("浏览器通行密钥登录")
+            .setMessage("通过系统浏览器的独立安全标签页打开 AVENQIR 正式登录入口，可使用浏览器已有的通行密钥。登录成功后可直接在该标签页使用网站管理功能。关闭标签页后，Orbit 内置页面的会话仍独立，不会自动变成已登录。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("选择浏览器并登录") { _, _ ->
+                if (!backgroundLocked && !isFinishing && !isDestroyed) {
+                    AvenqirPasskeyBrowserTab(this, canOpen = { !backgroundLocked }).chooseAndOpen()
+                }
+            }.show()
+    }
+
+    private fun showInstalledSignatureCheck() {
+        val expected = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
+        val fingerprints = try {
+            @Suppress("DEPRECATION")
+            val info = packageManager.getPackageInfo(packageName,
+                android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+            val current = info.signingInfo?.apkContentsSigners ?: emptyArray()
+            current.map { signature ->
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(signature.toByteArray()).joinToString("") { "%02X".format(it.toInt() and 255) }
+            }
+        } catch (_: Exception) { emptyList() }
+        val result = when {
+            fingerprints.isEmpty() -> "未能读取签名，验证结果未知。"
+            packageName == "de.kango99w.orbitadmin" && fingerprints.size == 1 &&
+                fingerprints.single() == expected -> "当前安装包签名与 AVENQIR 公布的应用关联证书一致。"
+            else -> "当前签名与已公布的关联证书不一致；测试版也可能出现此结果。"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Orbit 本机签名检查")
+            .setMessage(result + "\n\n此检查仅在原生应用内提供。普通网页、第三方内置浏览器无法完成应用身份检查。它不是服务端认证、远程设备证明或安全认证。")
+            .setPositiveButton("关闭", null).show()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -257,7 +327,8 @@ class AvenqirActivity : FragmentActivity() {
         // supports it. WebAuthn still requires FIRST-PARTY HTTPS server-side
         // challenge/signature verification and assetlinks.json for the *actual*
         // APK signing certificate. No password/2FA bypass is implemented here.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+        if (BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
             try {
                 WebSettingsCompat.setWebAuthenticationSupport(
                     page.settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
@@ -267,6 +338,13 @@ class AvenqirActivity : FragmentActivity() {
                 android.util.Log.i("OrbitAvenqir", "System WebAuthn unavailable; password login retained")
             }
         }
+        passkeyBridge = AvenqirNativePasskeyBridge(this, page,
+            allowed = { !backgroundLocked && !isFinishing && !isDestroyed },
+            finished = {
+                if (backgroundLocked && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                    requestPageUnlock()
+                }
+            }).also { it.install() }
         page.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progress.progress = newProgress
@@ -321,6 +399,7 @@ class AvenqirActivity : FragmentActivity() {
                 view: WebView?, url: String?, favicon: android.graphics.Bitmap?
             ) {
                 super.onPageStarted(view, url, favicon)
+                navigationSerial++
                 if (url != null && AvenqirUrlPolicy.isFirstParty(url)) {
                     lastFailedMainFrameUrl = null
                     failureBar.visibility = View.GONE
@@ -329,6 +408,7 @@ class AvenqirActivity : FragmentActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (view != null && url != null && lastFailedMainFrameUrl == null) observeVisibleDirectory(view, url, navigationSerial, 0)
                 // A WebView error page may also trigger onPageFinished.
                 // Never save a failed navigation as a successful resume page.
                 if (lastFailedMainFrameUrl == null) {
@@ -439,13 +519,18 @@ class AvenqirActivity : FragmentActivity() {
                 setTextColor(menuForeground)
                 setPadding(dp(8), dp(4), dp(8), dp(10))
             })
-            val dialog = AlertDialog.Builder(this).setView(panel).create()
+            val scroll = android.widget.ScrollView(this).apply { addView(panel); isFillViewport = false }
+            val dialog = AlertDialog.Builder(this).setView(scroll).create()
             val destinations = listOf(
                 "⌂  网站首页" to "",
                 "▦  网址目录" to "directory.html",
                 "⚙  实用工具" to "tools.html",
                 "▣  网址管理后台" to "admin.php",
-                "✉  留言管理后台" to "feedback-admin.php"
+                "🛡  私人站点与软件验证" to "owner-sites.php",
+                "🔒  私人 GitHub 项目" to "owner-projects.php",
+                "✉  留言管理后台" to "feedback-admin.php",
+                "🛡  防滥用测试中心" to "admin.php?view=feedback-security",
+                "🔑  通行密钥说明与管理页面" to "passkey.php"
             )
             destinations.forEach { (label, route) ->
                 panel.addView(TextView(this).apply {
@@ -464,6 +549,40 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
+                text = "🔑  浏览器通行密钥登录（推荐）"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { dialog.dismiss(); openPasskeyInSystemBrowser() }
+            })
+            panel.addView(TextView(this).apply {
+                text = "🔧  通行密钥诊断 / 复制报告"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { dialog.dismiss(); showPasskeyDiagnostics() }
+            })
+            panel.addView(TextView(this).apply {
+                text = "✓  本机应用签名检查"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    if (!backgroundLocked) showInstalledSignatureCheck()
+                }
+            })
+            panel.addView(TextView(this).apply {
                 text = "🌐  第三方网址默认打开方式"
                 textSize = 16f
                 setTextColor(menuForeground)
@@ -478,7 +597,7 @@ class AvenqirActivity : FragmentActivity() {
                 }
             })
             panel.addView(TextView(this).apply {
-                text = "网站管理后台使用独立的 AVENQIR 登录会话"
+                text = "独立 AVENQIR 登录会话 · 网页不能替代原生应用签名检查"
                 textSize = 12f
                 setTextColor(menuMuted)
                 setPadding(dp(8), dp(12), dp(8), dp(2))
@@ -613,7 +732,7 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     private fun requestPageUnlock() {
-        if (!backgroundLocked || promptActive || isFinishing) return
+        if (!backgroundLocked || promptActive || isFinishing || passkeyBridge?.busy == true) return
         promptActive = true
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -641,26 +760,51 @@ class AvenqirActivity : FragmentActivity() {
         else super.onBackPressed()
     }
 
+    private fun observeVisibleDirectory(view: WebView, url: String, serial: Long, attempt: Int) {
+        // Check only the public directory after a normal visible user visit.
+        // No challenge interaction, hidden navigation, API call or cookie export.
+        if (publicDirectoryObserved || backgroundLocked || isFinishing || isDestroyed ||
+            webView !== view || serial != navigationSerial || view.url != url ||
+            !AvenqirUrlPolicy.isFirstParty(url) || Uri.parse(url).path != "/directory.html" ||
+            lastFailedMainFrameUrl != null ||
+            !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+        val script = "(function(){var n=document.getElementById('atlasStartupNotice');var r=document.getElementById('atlasResults');return !!(n&&n.hidden&&r&&window.AVENQIR_ATLAS_CATALOG);})()"
+        view.evaluateJavascript(script) { answer ->
+            if (serial != navigationSerial || webView !== view || view.url != url ||
+                backgroundLocked || isDestroyed || isFinishing ||
+                !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@evaluateJavascript
+            if (answer == "true") {
+                publicDirectoryObserved = true
+                setResult(android.app.Activity.RESULT_OK, Intent().putExtra("avenqir_directory_rendered", true))
+            } else if (attempt < 3) {
+                view.postDelayed({ observeVisibleDirectory(view, url, serial, attempt + 1) }, 500L)
+            }
+        }
+    }
+
     override fun onPause() {
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_PAUSE")
         webView?.onPause()
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_RESUME")
         navigatingToExternal = false
         if (backgroundLocked) {
             // Keep the previous WebView, page scroll, forms, navigation and
             // separate AVENQIR admin cookies. Never restore by reloading URL.
             lockCurtain?.visibility = View.VISIBLE
             webView?.onPause()
-            lockCurtain?.post { requestPageUnlock() }
+            if (passkeyBridge?.busy != true) lockCurtain?.post { requestPageUnlock() }
         } else {
             webView?.onResume()
         }
     }
 
     override fun onStop() {
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_STOP")
         // Backgrounding is NOT closing: preserve the same WebView instance.
         // Cover sensitive admin content before recent-apps/task snapshots and
         // require biometric/device credential before revealing it on return.
@@ -673,6 +817,8 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        passkeyBridge?.close()
+        passkeyBridge = null
         pendingUpload?.onReceiveValue(null)
         pendingUpload = null
         pendingExport = null

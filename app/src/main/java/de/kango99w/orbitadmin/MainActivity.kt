@@ -126,23 +126,32 @@ class MainActivity : FragmentActivity() {
     private val avenqirStatusPrefs by lazy {
         getSharedPreferences("avenqir_public_status_v1", MODE_PRIVATE)
     }
-    private var avenqirAutoCheck by mutableStateOf(true)
+    private var avenqirAutoCheck by mutableStateOf(false)
     private var avenqirStatusBusy by mutableStateOf(false)
     private var avenqirPublicStatus by mutableStateOf<AvenqirPublicStatus?>(null)
-    private var avenqirStatusFailed by mutableStateOf(false)
+    private var avenqirStatusIssue by mutableStateOf<AvenqirCheckIssue?>(null)
     private val avenqirStatusGate = AvenqirStatusGate()
+    private var avenqirDirectorySeen by mutableStateOf(false)
+    // Explicit activity result from the isolated, visible first-party browser.
+    // No cookies, account data, query text or private page contents cross processes.
+    private val avenqirVisit = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK &&
+            result.data?.getBooleanExtra("avenqir_directory_rendered", false) == true) {
+            avenqirDirectorySeen = true
+        }
+    }
     private fun refreshAvenqirPublicStatus() {
         if (!unlocked || !avenqirAutoCheck || avenqirStatusBusy ||
             !avenqirStatusGate.tryStart(SystemClock.elapsedRealtime())) return
         avenqirStatusBusy = true
-        avenqirStatusFailed = false
+        avenqirStatusIssue = null
         avenqirStatusIo.execute {
             val result = AvenqirPublicStatusClient.fetch()
             runOnUiThread {
                 if (!isDestroyed && !isFinishing) {
                     avenqirStatusBusy = false
-                    avenqirPublicStatus = result
-                    avenqirStatusFailed = result == null
+                    if (result.status != null) avenqirPublicStatus = result.status
+                    avenqirStatusIssue = result.issue
                 }
             }
         }
@@ -153,10 +162,16 @@ class MainActivity : FragmentActivity() {
         if (enabled) refreshAvenqirPublicStatus()
     }
     private fun avenqirStatusLabel(): String = when {
-        !avenqirAutoCheck -> "启动时目录检查已关闭"
+        !avenqirAutoCheck -> "可直接打开目录 · 自动状态检查未开启"
         avenqirStatusBusy -> "正在检查公开目录…"
-        avenqirStatusFailed -> "最近一次目录检查失败 · 不影响邮件"
-        avenqirPublicStatus != null -> "最近检查：可访问 · 公开网址 ${avenqirPublicStatus!!.count} 条"
+        avenqirStatusIssue != null -> when (avenqirStatusIssue) {
+            AvenqirCheckIssue.BROWSER_REQUIRED -> if (avenqirDirectorySeen) "本次已确认目录页面可用 · 自动接口仍需浏览器验证" else "自动接口需浏览器验证 · 点击正常打开目录"
+            AvenqirCheckIssue.LOCAL_POLICY -> "自动检查因本地会话隔离跳过 · 可正常手动打开"
+            AvenqirCheckIssue.NETWORK -> "自动检查网络未确认 · 可手动打开"
+            AvenqirCheckIssue.HTTP -> "公开接口响应异常 · 可手动打开网页"
+            else -> "公开目录数据未确认 · 可手动打开"
+        }
+        avenqirPublicStatus != null -> "最近检查：接口可访问 · 后台条目 ${avenqirPublicStatus!!.count} 条（不含内置目录）"
         else -> "公开目录尚未检查"
     }
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
@@ -606,7 +621,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
-        avenqirAutoCheck = avenqirStatusPrefs.getBoolean("enabled", true)
+        avenqirAutoCheck = avenqirStatusPrefs.getBoolean("enabled", false)
         appearanceMode=OrbitAppearanceMode.parse(
             getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
                 .getString("mode",OrbitAppearanceMode.SYSTEM.name))
@@ -783,7 +798,7 @@ class MainActivity : FragmentActivity() {
                     }
                     Column(Modifier.weight(1f)) {
                         Text("AVENQIR", style = MaterialTheme.typography.titleLarge)
-                        Text("网站 · 工具 · 独立后台",
+                        Text("网站 · 浏览器安全标签页 · 后台",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(avenqirStatusLabel(),
@@ -792,6 +807,20 @@ class MainActivity : FragmentActivity() {
                     }
                     Text("›", style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                TextButton(onClick = ::selectAvenqirBrowser) { Text("选择浏览器") }
+                TextButton(onClick = ::openAvenqirCompatibility) { Text("兼容模式") }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::updateAvenqirAutoCheck)
+                Column(Modifier.weight(1f)) {
+                    Text("启动时自动检查公开目录状态", style = MaterialTheme.typography.bodySmall)
+                    Text("仅检查网络状态，不影响网站搜索；解锁后五分钟内不重复。", style = MaterialTheme.typography.labelSmall)
                 }
             }
             Spacer(Modifier.height(20.dp))
@@ -2573,7 +2602,18 @@ class MainActivity : FragmentActivity() {
     private fun openAvenqirTools() {
         if (!unlocked) return
         showTools = false
-        startActivity(Intent(this, AvenqirActivity::class.java))
+        AvenqirPasskeyBrowserTab(this, canOpen = { unlocked }).chooseAndOpen(AvenqirBrowserDestination.HOME)
+    }
+
+    private fun openAvenqirCompatibility() {
+        if (!unlocked || isFinishing || isDestroyed) return
+        showTools = false
+        avenqirVisit.launch(Intent(this, AvenqirActivity::class.java))
+    }
+
+    private fun selectAvenqirBrowser() {
+        if (!unlocked || isFinishing || isDestroyed) return
+        AvenqirPasskeyBrowserTab(this, canOpen = { unlocked }).settings()
     }
 
     @Composable
@@ -2589,7 +2629,7 @@ class MainActivity : FragmentActivity() {
                     Text("普通页面优先使用 Android 原生界面；只有未接通原生接口的功能才需手动打开网站授权。", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = ::openAvenqirTools,
                         modifier = Modifier.fillMaxWidth()) {
-                        Text("AVENQIR 网址与工具中心 · 应用内")
+                        Text("AVENQIR 网址与工具中心 · 浏览器标签页")
                     }
                     AdminDestination.entries.forEach { entry ->
                         val nativeSection = when (entry) {
@@ -5320,8 +5360,12 @@ class MainActivity : FragmentActivity() {
             OutlinedButton(
                 onClick = ::openAvenqirTools,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("打开 AVENQIR 工具中心 · 不离开 Orbit Mail") }
-            Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
+            ) { Text("打开 AVENQIR · 浏览器标签页") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = ::selectAvenqirBrowser, modifier = Modifier.weight(1f)) { Text("选择浏览器") }
+                OutlinedButton(onClick = ::openAvenqirCompatibility, modifier = Modifier.weight(1f)) { Text("兼容模式") }
+            }
+            Text("标签页由所选浏览器管理，使用该浏览器的登录状态及安全设置，不共享 Orbit 邮箱账号或设备授权。关闭标签页后再次打开从首页开始；后台请按需在网站退出登录。",
                 style=MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::updateAvenqirAutoCheck)

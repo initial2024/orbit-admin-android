@@ -1,7 +1,7 @@
-name: Orbit v0.9.31 stable candidate (UNSIGNED preflight)
+name: Orbit v0.9.41 stable candidate (UNSIGNED preflight)
 on:
   push:
-    branches: ["release-candidate/orbit-credential-v0.9.31-20261124"]
+    branches: ["fix/avenqir-native-passkey-v0933-20261124"]
   pull_request:
     paths:
       - ".github/workflows/android-stable-candidate-verify.yml"
@@ -42,17 +42,17 @@ jobs:
         run: |
           set -euo pipefail
           grep -F 'applicationId = "de.kango99w.orbitadmin"' app/build.gradle.kts
-          grep -F 'versionCode = 48' app/build.gradle.kts
-          grep -F 'versionName = "0.9.31"' app/build.gradle.kts
+          grep -F 'versionCode = 58' app/build.gradle.kts
+          grep -F 'versionName = "0.9.41"' app/build.gradle.kts
           grep -F 'isMinifyEnabled = true' app/build.gradle.kts
           grep -F 'isShrinkResources = true' app/build.gradle.kts
           test -z "${ORBIT_RELEASE_KEYSTORE_FILE:-}"
-          echo "UNSIGNED preflight only; Production keys are not exposed to this workflow"
+          echo "UNSIGNED browser-only AVENQIR preflight; Production keys are not exposed to this workflow"
       - name: Build and unit test Debug plus minified Release
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --no-configuration-cache \
+          gradle --no-daemon --no-configuration-cache -Porbit.avenqirNativePasskey=false \
             :app:testDebugUnitTest :app:testReleaseUnitTest \
             :app:assembleDebug :app:assembleRelease
       - name: Check unsigned release manifest and compact ratio
@@ -67,15 +67,15 @@ jobs:
           test -s "$DEBUG"
           test -n "$RELEASE" && test -s "$RELEASE"
           "$AAPT" dump badging "$RELEASE" | grep -F "package: name='de.kango99w.orbitadmin'"
-          "$AAPT" dump badging "$RELEASE" | grep -F "versionCode='48' versionName='0.9.31'"
+          "$AAPT" dump badging "$RELEASE" | grep -F "versionCode='58' versionName='0.9.41'"
           DEBUG_SIZE="$(wc -c < "$DEBUG")"
           RELEASE_SIZE="$(wc -c < "$RELEASE")"
           test "$RELEASE_SIZE" -lt "$((DEBUG_SIZE * 80 / 100))"
           {
-            echo "## Orbit Mail + AVENQIR stable 0.9.31 candidate"
+            echo "## Orbit Mail + AVENQIR stable 0.9.41 candidate"
             echo "Commit: $GITHUB_SHA"
             echo "Original package: de.kango99w.orbitadmin"
-            echo "versionCode: 48; versionName: 0.9.31"
+            echo "versionCode: 58; versionName: 0.9.41"
             echo "Debug bytes: $DEBUG_SIZE; R8 unsigned release bytes: $RELEASE_SIZE"
             echo "Unit tests and release variant compiles: PASS"
             echo "Signing: NOT PERFORMED. DO NOT DISTRIBUTE UNSIGNED APK."
@@ -86,7 +86,7 @@ jobs:
       - name: Publish preflight text evidence only
         uses: actions/upload-artifact@v4
         with:
-          name: orbit-v0931-unsigned-preflight-evidence
+          name: orbit-v0941-unsigned-preflight-evidence
           path: stable-candidate-evidence.txt
           retention-days: 14
           if-no-files-found: error

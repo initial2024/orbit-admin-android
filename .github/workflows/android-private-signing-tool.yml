@@ -1,0 +1,40 @@
+name: Official Android signing tool export (no private material)
+on:
+  push:
+    branches: [fix/avenqir-native-passkey-v0933-20261124]
+    paths: [.github/workflows/android-private-signing-tool.yml]
+permissions:
+  contents: read
+jobs:
+  export-official-apksigner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Export official Android SDK Build Tools signer only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          if ! test -s "$SDK_ROOT/build-tools/35.0.0/lib/apksigner.jar"; then
+            set +o pipefail
+            yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+            set -o pipefail
+            "$SDKMANAGER" --sdk_root="$SDK_ROOT" "build-tools;35.0.0"
+          fi
+          mkdir tool-export
+          cp "$SDK_ROOT/build-tools/35.0.0/lib/apksigner.jar" tool-export/apksigner.jar
+          java -jar tool-export/apksigner.jar version
+          (cd tool-export && sha256sum apksigner.jar > apksigner.jar.sha256)
+          printf 'Android SDK Build Tools 35.0.0 official apksigner; no APK, keystore or passwords included.\n' > tool-export/NOTICE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-sdk35-official-apksigner-only
+          path: tool-export/
+          retention-days: 2
+          if-no-files-found: error

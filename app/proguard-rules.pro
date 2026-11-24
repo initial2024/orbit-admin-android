@@ -12,3 +12,6 @@
 
 # Do not turn off R8, resource shrinking, TLS policy, Keystore constraints,
 # or native account isolation to achieve a smaller APK.
+
+# Keep credential exception names for actionable owner-side diagnostics.
+-keepnames class androidx.credentials.exceptions.**
