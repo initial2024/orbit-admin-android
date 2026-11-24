@@ -47,7 +47,7 @@ import javax.net.ssl.HttpsURLConnection
  * the independent "avenqir" WebView profile; it never handles Orbit credentials.
  *
  * PHP upload and export use the Android document picker. External websites
- * remain in the user's system browser, not in the trusted AVENQIR WebView.
+ * open via a user-chosen external browser or a separate public-only WebView profile.
  */
 class AvenqirActivity : FragmentActivity() {
     private var webView: WebView? = null
@@ -447,6 +447,19 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
+                text = "↗  第三方网址打开方式"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    AvenqirBrowserLauncher(this@AvenqirActivity).settings()
+                }
+            })
+            panel.addView(TextView(this).apply {
                 text = "网站管理后台使用独立的 AVENQIR 登录会话"
                 textSize = 12f
                 setTextColor(menuMuted)
@@ -577,14 +590,8 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     private fun openExternal(url: String) {
-        try {
-            navigatingToExternal = true
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                .addCategory(Intent.CATEGORY_BROWSABLE))
-        } catch (_: ActivityNotFoundException) {
-            navigatingToExternal = false
-            Toast.makeText(this, "没有可用的系统浏览器", Toast.LENGTH_SHORT).show()
-        }
+        if (backgroundLocked || isFinishing || !AvenqirUrlPolicy.isExternalHttps(url)) return
+        AvenqirBrowserLauncher(this).open(url)
     }
 
     private fun requestPageUnlock() {
