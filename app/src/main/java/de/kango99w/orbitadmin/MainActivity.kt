@@ -126,7 +126,7 @@ class MainActivity : FragmentActivity() {
     private val avenqirStatusPrefs by lazy {
         getSharedPreferences("avenqir_public_status_v1", MODE_PRIVATE)
     }
-    private var avenqirAutoCheck by mutableStateOf(true)
+    private var avenqirAutoCheck by mutableStateOf(false)
     private var avenqirStatusBusy by mutableStateOf(false)
     private var avenqirPublicStatus by mutableStateOf<AvenqirPublicStatus?>(null)
     private var avenqirStatusIssue by mutableStateOf<AvenqirCheckIssue?>(null)
@@ -612,7 +612,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         createNotificationChannel()
-        avenqirAutoCheck = avenqirStatusPrefs.getBoolean("enabled", true)
+        avenqirAutoCheck = avenqirStatusPrefs.getBoolean("enabled", false)
         appearanceMode=OrbitAppearanceMode.parse(
             getSharedPreferences("orbit_appearance_v1",MODE_PRIVATE)
                 .getString("mode",OrbitAppearanceMode.SYSTEM.name))
