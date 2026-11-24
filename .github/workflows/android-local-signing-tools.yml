@@ -27,6 +27,7 @@ jobs:
           mkdir -p artifact
           cp "$SDK_ROOT/build-tools/35.0.0/lib/apksigner.jar" artifact/
           cp "$SDK_ROOT/build-tools/35.0.0/zipalign" artifact/
+          cp "$SDK_ROOT/build-tools/35.0.0/lib64/libc++.so" artifact/
           java -jar artifact/apksigner.jar --version | tee artifact/apksigner-version.txt
           sha256sum artifact/apksigner.jar artifact/zipalign > artifact/SHA256SUMS
       - uses: actions/upload-artifact@v4
