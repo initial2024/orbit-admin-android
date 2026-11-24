@@ -28,13 +28,27 @@ jobs:
           set -euo pipefail
           set +x
           # Checks must never create a new key or write the existing key to Git.
-          for name in SIGNING_KEYSTORE_B64 ORBIT_STORE_PASSWORD ORBIT_KEY_ALIAS ORBIT_KEY_PASSWORD ORBIT_CERT_PIN; do
+          # Report every missing GitHub setting (names only) in one run.
+          missing=0
+          for pair in \
+            SIGNING_KEYSTORE_B64:ORBIT_RELEASE_KEYSTORE_BASE64 \
+            ORBIT_STORE_PASSWORD:ORBIT_RELEASE_KEYSTORE_PASSWORD \
+            ORBIT_KEY_ALIAS:ORBIT_RELEASE_KEY_ALIAS \
+            ORBIT_KEY_PASSWORD:ORBIT_RELEASE_KEY_PASSWORD \
+            ORBIT_CERT_PIN:ORBIT_RELEASE_CERT_SHA256; do
+            name="${pair%%:*}"
+            setting="${pair#*:}"
             if test -z "${!name}"; then
-              echo "SIGNING_KEY_READINESS=DENY"
-              echo "Missing protected Production setting: $name"
-              exit 1
+              echo "::error title=Missing protected Production setting::$setting"
+              missing=$((missing+1))
             fi
           done
+          if test "$missing" -ne 0; then
+            echo "SIGNING_KEY_READINESS=DENY"
+            echo "MISSING_PRODUCTION_SETTINGS=$missing"
+            echo "Configure the original signing key privately in the Production environment. Do not generate a replacement just to pass this check."
+            exit 1
+          fi
           if ! [[ "$ORBIT_CERT_PIN" =~ ^[0-9a-fA-F]{64}$ ]]; then
             echo "SIGNING_KEY_READINESS=DENY"
             echo "Production certificate pin has wrong format"
@@ -70,6 +84,8 @@ jobs:
             "$WORKDIR/probe.jar" "$ORBIT_KEY_ALIAS" >/dev/null
           jarsigner -verify "$WORKDIR/signed.jar" > "$WORKDIR/verify.txt"
           grep -Fq 'jar verified.' "$WORKDIR/verify.txt"
+          # The certificate digest is public, unlike the private key or passwords.
+          echo "SIGNING_CERT_SHA256=$ACTUAL"
           echo "SIGNING_KEY_READINESS=PASS"
           echo "The existing protected keystore, alias, passwords, certificate pin and private-key signing operation were validated."
           echo "No Android APK was built or published. Stable release still requires reviewed main branch and real-device acceptance."

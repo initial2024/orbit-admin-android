@@ -42,6 +42,23 @@ If the readiness result is `SIGNING_KEY_READINESS=PASS`, **do not recreate
 your key**. If it reports a missing item, set that item privately using
 the directions below. This check never creates a new signing key or APK.
 
+## Missing-secret troubleshooting
+
+If the readiness job reports a missing setting, the workflow never opened
+the keystore. Check the exact secret name in Settings → Environments →
+Production. A secret name alone does not prove the value is correct.
+The updated job lists all missing settings in one run, without showing
+values. Re-upload only the original encrypted keystore from a trusted
+backup, not an APK or a public certificate. If an installed APK already
+uses a stable signing certificate, preserve that identity and do not
+uninstall it to work around a mismatch.
+
+After a successful readiness run, the public `SIGNING_CERT_SHA256`
+can be compared with AVENQIR's Digital Asset Links certificate and the
+installed Android app certificate. A mismatched association must be
+reviewed before native Passkey testing. Do not blindly change the
+association or authorize a debug certificate.
+
 ## 2. Only if the original keystore truly does not exist
 
 On a trusted Android device install Termux from an official channel.
