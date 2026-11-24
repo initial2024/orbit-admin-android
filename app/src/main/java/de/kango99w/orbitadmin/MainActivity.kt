@@ -147,7 +147,7 @@ class MainActivity : FragmentActivity() {
             }
         }
     }
-    private fun setAvenqirAutoCheck(enabled: Boolean) {
+    private fun updateAvenqirAutoCheck(enabled: Boolean) {
         avenqirAutoCheck = enabled
         avenqirStatusPrefs.edit().putBoolean("enabled", enabled).apply()
         if (enabled) refreshAvenqirPublicStatus()
@@ -5324,7 +5324,7 @@ class MainActivity : FragmentActivity() {
             Text("独立网页进程与缓存；不共享邮箱 Cookie、设备授权或管理员身份。首次访问仍需联网。",
                 style=MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::setAvenqirAutoCheck)
+                Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::updateAvenqirAutoCheck)
                 Column(Modifier.weight(1f)) {
                     Text("启动时检查 AVENQIR 公开目录")
                     Text("解锁后按需检查，五分钟内不重复；不后台轮询。", style=MaterialTheme.typography.bodySmall)
