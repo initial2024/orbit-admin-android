@@ -1,0 +1,113 @@
+name: Export compact Android 35 smoke-tested preview (no release API)
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths: [".github/workflows/android-compact-smoke-prerelease.yml"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prerelease:
+    if: >-
+      github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107'
+      && contains(github.event.head_commit.message, '[publish-compact-smoke]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check successful independent Android 35 smoke and source equivalence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          SMOKE="$(gh api "repos/$REPO/actions/runs/42466761447")"
+          printf '%s' "$SMOKE" | jq -e '.conclusion=="success" and .head_sha=="63aff5fcd734c93d5c2b2bb7901530f963285e00"' >/dev/null
+          CHANGED="$(gh api "repos/$REPO/compare/881e2602bf0cdd5ee7b4402fa085d9549733a4d0...$GITHUB_SHA" --jq '.files[].filename')"
+          if printf '%s\n' "$CHANGED" | grep -E '^app/'; then
+            echo 'App code changed since this pinned prebuilt; refuse to publish' >&2
+            exit 1
+          fi
+      - name: Fetch exact prebuilt compact APK from successful size audit
+        uses: actions/download-artifact@v4
+        with:
+          name: orbit-compact-diagnostic-not-release
+          run-id: 42464089115
+          github-token: ${{ github.token }}
+          path: prebuilt
+      - name: Fetch successful Android 35 cold-start evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: orbit-compact-android35-smoke-evidence
+          run-id: 42466761447
+          github-token: ${{ github.token }}
+          path: smoke
+      - name: Verify APK then create immutable test-only files
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find prebuilt -type f -name app-compact.apk -print -quit)"
+          test -s "$APK"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          audits=list(Path('prebuilt').rglob('apk-size-audit.json'))
+          assert len(audits)==1
+          audit=json.loads(audits[0].read_text())
+          assert audit['commit']=='881e2602bf0cdd5ee7b4402fa085d9549733a4d0'
+          assert audit['bytes']['compact']==14_210_870
+          files=list(Path('prebuilt').rglob('app-compact.apk'))
+          assert len(files)==1 and files[0].stat().st_size==14_210_870
+          summary=list(Path('smoke').rglob('summary.md'))
+          assert len(summary)==1 and 'Both cold and warm Android launch survived' in summary[0].read_text()
+          PY
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$APK" | grep -F "versionName='0.9.25-dev'"
+          NAME='Orbit-Mail-v0.9.25-dev-compact-smoke-debug.apk'
+          cp "$APK" "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          cat > INSTALL_NOTES.txt <<'EOF'
+          Orbit Mail v0.9.25-dev R8 COMPACT SMOKE-TESTED PREVIEW. NOT STABLE.
+          Pinned app source: 881e2602bf0cdd5ee7b4402fa085d9549733a4d0
+          APK bytes: 14210870, compared to full Debug 32758506 (56.62% reduction).
+          Android 35 emulator first cold/warm launch: PASS in successful CI #42466761447.
+          App source unchanged from the pinned build through the publishing commit.
+          Full minified Keystore, login, WebView and FCM instrumentation remain BLOCKED.
+          Production server PRs #620, #621 and #625 are not deployed.
+          This uses an ephemeral CI debug signature, not the fixed production signing key.
+          Same Android package de.kango99w.orbitadmin; NOT a side-by-side installation.
+          Do not uninstall your current working app just to try this build.
+          If signature mismatch occurs, keep the current app. Removing it loses local data/session.
+          This preview does not prove real-device installed storage, RAM, or e-mail acceptance.
+          EOF
+          ZIP='Orbit-Mail-v0.9.25-dev-compact-smoke-debug.zip'
+          cp "$(find smoke -type f -name summary.md -print -quit)" ANDROID35_SMOKE_SUMMARY.md
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt ANDROID35_SMOKE_SUMMARY.md >/dev/null
+          unzip -t "$ZIP" >/dev/null
+          {
+            echo "APK=$NAME"
+            echo "ZIP=$ZIP"
+            echo "CHECKSUM=$NAME.sha256"
+          } >> "$GITHUB_ENV"
+      - name: Upload compact APK, ZIP and SHA256 as immutable workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-mail-v0.9.25-compact-smoke-test-package
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.apk
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.apk.sha256
+            Orbit-Mail-v0.9.25-dev-compact-smoke-debug.zip
+            INSTALL_NOTES.txt
+            ANDROID35_SMOKE_SUMMARY.md

@@ -1,0 +1,137 @@
+name: Publish Orbit Mail debug APK (manual GitHub release)
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - ".github/workflows/android-preview-release.yml"
+      - "app/**"
+  workflow_dispatch:
+    inputs:
+      acknowledgement:
+        description: "Type PUBLISH_TEST_APK to publish a debug APK as a GitHub pre-release"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+jobs:
+  build-preview:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.acknowledgement == 'PUBLISH_TEST_APK')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107' && contains(github.event.head_commit.message, '[publish-debug]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK and accepted licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Guard preview Firebase identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            if [ -n "${!key}" ]; then count=$((count+1)); fi
+          done
+          if [ "$count" -ne 0 ] && [ "$count" -ne 4 ]; then
+            echo 'Incomplete preview Firebase identifiers: fail closed' >&2
+            exit 1
+          fi
+          if [ "$count" -eq 0 ]; then
+            echo 'This Firebase-enabled preview must have all four repository variables. Configure ORBIT_FIREBASE_PREVIEW_* before publication.' >&2
+            exit 1
+          fi
+          echo 'Four Firebase Android identifiers present; Firebase SDK initialization will be compiled into this preview.'
+      - name: Test and package
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify debug APK and generate publish metadata
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -F "versionName='${VERSION}'"
+          APK_SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          test -x "$APK_SIGNER"
+          "$APK_SIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+          NAME="Orbit-Mail-v${VERSION}-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          printf "%s\n" \
+            "Orbit Mail $VERSION — DEBUG ONLY, same package as prior v0.9.4." \
+            "Package: de.kango99w.orbitadmin (same Android package; NOT side-by-side)." \
+            "Built from pinned GitHub source commit $GITHUB_SHA." \
+            "Administrator mailbox screen, login and TOTP are native Jetpack Compose." \
+            "No in-app administrator WebView exists; advanced website links open the external browser explicitly." \
+            "Uninstall the old Orbit Mail application BEFORE installing this APK if its signature differs. Uninstall erases old app data and browser/Keystore sessions." \
+            "CI Debug signing is temporary and not the previous v0.9.4 key. Never claim a compatible in-place update." \
+            "You authorized a fresh install and new login. All old local state is lost on uninstall, including trusted sessions and saved data." \
+            "Ordinary account direct native password/TOTP API requires undeployed backend Draft PR #620." \
+            "Registration schedule/quota editor requires undeployed Worker/D1 Draft PR #625; this APK cannot independently change production registration state." \
+            "FCM new-mail notifications require public Firebase identifiers and Worker Draft PR #621; no real-device delivery has been verified." \
+            "Offline metadata cache excludes message bodies, passwords and OTP codes, and is never treated as proof of a current session." \
+            "Administrator production accounts and real mail content remain unverified on physical Android hardware." > INSTALL_NOTES.txt
+          ZIP="Orbit-Mail-v${VERSION}-debug.zip"
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null
+          test -s "$ZIP"
+          unzip -t "$ZIP" >/dev/null
+          TAG="orbit-mail-v${VERSION}-${GITHUB_SHA:0:12}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha=$NAME.sha256" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable prerelease (direct APK asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.seal.outputs.tag }}
+          APK: ${{ steps.seal.outputs.apk }}
+          CHECKSUM: ${{ steps.seal.outputs.sha }}
+          ZIP: ${{ steps.seal.outputs.zip }}
+          VERSION: ${{ steps.seal.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing debug release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" "$CHECKSUM" "$ZIP" \
+            --target "$GITHUB_SHA" \
+            --title "Orbit Mail $TAG (native Compose debug/reinstall)" \
+            --notes "$VERSION ANDROID DEBUG REINSTALL. Original Android package de.kango99w.orbitadmin; uninstall incompatible v0.9.4 before installing, which erases old local data and requires re-login. APK signed by ephemeral CI Debug key and not proven compatible with old installed APK. Administrator is a native Jetpack Compose + first-party protected admin API (not WebView). Advanced domain/security links use external browser only. Regular-account native credential backend PR #620 is NOT deployed. Registration policy Worker PR #625 and FCM Worker PR #621 are NOT deployed; server rollout and Firebase device testing remain required. Real-phone administrator login/TOTP/mailbox acceptance remains unverified. Do not treat as stable production release." \
+            --prerelease
+          echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
+          echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
+          echo "SHA256 checksum: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${CHECKSUM}"

@@ -1,0 +1,161 @@
+name: Orbit AVENQIR compact Android preview (side by side)
+on:
+  push:
+    branches: [feat/avenqir-isolated-in-app-20261123]
+    paths:
+      - ".github/workflows/android-avenqir-compact-preview.yml"
+      - "app/**"
+      - "scripts/ci/smoke-compact-side-by-side.sh"
+permissions:
+  contents: write
+concurrency:
+  group: orbit-avenqir-compact-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-minified-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android API 36 and build-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Test routes, compile baseline and R8 compact preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-configuration-cache \
+            :app:testDebugUnitTest \
+            :app:testCompactPreviewUnitTest \
+            :app:assembleDebug \
+            :app:assembleCompactPreview
+      - name: Validate package identities and compact size
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          BASE="app/build/outputs/apk/debug/app-debug.apk"
+          PREVIEW="app/build/outputs/apk/compactPreview/app-compactPreview.apk"
+          test -s "$BASE" && test -s "$PREVIEW"
+          "$SIGNER" verify --verbose "$BASE"
+          "$SIGNER" verify --verbose "$PREVIEW"
+          "$AAPT" dump badging "$BASE" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$AAPT" dump badging "$PREVIEW" | grep -F "package: name='de.kango99w.orbitadmin.compactpreview'"
+          BASE_BYTES="$(wc -c < "$BASE")"
+          PREVIEW_BYTES="$(wc -c < "$PREVIEW")"
+          test "$PREVIEW_BYTES" -lt "$((BASE_BYTES * 80 / 100))" || {
+            echo "R8 preview must save at least 20% vs original debug" >&2
+            exit 1
+          }
+          echo "Debug bytes=$BASE_BYTES; compact preview bytes=$PREVIEW_BYTES"
+      - name: Enable Android 35 emulator
+        shell: bash
+        run: |
+          test -e /dev/kvm || exit 1
+          sudo chmod 666 /dev/kvm
+      - name: Side-by-side Android 35 install and launch
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: bash scripts/ci/smoke-compact-side-by-side.sh
+      - name: Package minified APK, SHA256 and notes with ZIP -9
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
+          APK="Orbit-Mail-AVENQIR-v${VERSION}-compact-preview.apk"
+          cp app/build/outputs/apk/compactPreview/app-compactPreview.apk "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+          cat > INSTALL_NOTES.txt <<EOF
+          Orbit Mail + AVENQIR compact Android preview.
+          Source commit: $GITHUB_SHA
+          R8 minification and resource shrinking enabled, ZIP -9 archive.
+          Android application ID: de.kango99w.orbitadmin.compactpreview
+          Side-by-side test package: it will NOT replace or delete existing Orbit Mail data.
+          Uses temporary CI debug signature; NOT the Production signing certificate.
+          Never mistake this APK for a fixed-signature production upgrade.
+          Contains the fingerprint-gated Orbit/AVENQIR chooser and isolated WebView.
+          AVENQIR admin and feedback-admin pages require their own site credentials.
+          Live website API behavior, actual mail, certificate pin, Vivo phone and file
+          upload/download have NOT passed production acceptance by this smoke test.
+          First-party AVENQIR remains online. This is not an offline full mirror.
+          EOF
+          ZIP="Orbit-Mail-AVENQIR-v${VERSION}-compact-preview.zip"
+          zip -9 "$ZIP" "$APK" "$APK.sha256" INSTALL_NOTES.txt compact-preview-evidence/summary.md >/dev/null
+          unzip -t "$ZIP"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha=$APK.sha256" >> "$GITHUB_OUTPUT"
+          echo "tag=orbit-avenqir-v${VERSION}-preview-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "## Orbit AVENQIR preview" >> "$GITHUB_STEP_SUMMARY"
+          cat compact-preview-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$APK" "$ZIP" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload installable compact preview artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-mail-avenqir-compact-preview
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            Orbit-Mail-AVENQIR-*-compact-preview.apk
+            Orbit-Mail-AVENQIR-*-compact-preview.zip
+            Orbit-Mail-AVENQIR-*-compact-preview.apk.sha256
+            INSTALL_NOTES.txt
+            compact-preview-evidence/summary.md
+      - name: Publish immutable debug-only preview for direct GitHub downloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.package.outputs.tag }}
+          APK: ${{ steps.package.outputs.apk }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          SHA: ${{ steps.package.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing immutable prerelease; do not overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" "$ZIP" "$SHA" INSTALL_NOTES.txt \
+            --target "$GITHUB_SHA" \
+            --title "Orbit Mail + AVENQIR $TAG (R8 TEST ONLY)" \
+            --notes-file INSTALL_NOTES.txt \
+            --prerelease
+          echo "APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK"
+          echo "ZIP: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ZIP"
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-avenqir-compact-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            compact-preview-evidence/
+            app/build/reports/tests/
+            app/build/reports/androidTests/

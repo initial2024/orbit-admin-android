@@ -1,0 +1,192 @@
+name: Publish Orbit Mail compact preview (Android 35 gated)
+on:
+  push:
+    branches: [feat/secure-admin-shell-v0-20261107]
+    paths:
+      - ".github/workflows/android-compact-preview-release.yml"
+      - "app/**"
+  workflow_dispatch:
+    inputs:
+      acknowledgement:
+        description: "Type PUBLISH_COMPACT_DEBUG for a minified test-only APK"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+jobs:
+  compact-preview:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107' && contains(github.event.head_commit.message, '[publish-compact]'))
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/secure-admin-shell-v0-20261107' && inputs.acknowledgement == 'PUBLISH_COMPACT_DEBUG')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      ORBIT_FIREBASE_APP_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_APP_ID }}
+      ORBIT_FIREBASE_API_KEY: ${{ vars.ORBIT_FIREBASE_PREVIEW_API_KEY }}
+      ORBIT_FIREBASE_SENDER_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_SENDER_ID }}
+      ORBIT_FIREBASE_PROJECT_ID: ${{ vars.ORBIT_FIREBASE_PREVIEW_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK platforms, verify Firebase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in ORBIT_FIREBASE_APP_ID ORBIT_FIREBASE_API_KEY ORBIT_FIREBASE_SENDER_ID ORBIT_FIREBASE_PROJECT_ID; do
+            test -n "${!key}" || { echo "Missing Firebase variable: $key" >&2; exit 1; }
+          done
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - name: Install Gradle 8.13 directly from official CDN (SHA256-pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/gradle-8.13-bin.zip"
+          SHA="20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78"
+          for attempt in 1 2 3 4; do
+            if curl --fail --location --silent --show-error \
+                  --connect-timeout 20 --max-time 220 \
+                  "https://downloads.gradle.org/distributions/gradle-8.13-bin.zip" -o "$ZIP"; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Official Gradle distribution unavailable: stop without publishing" >&2
+              exit 1
+            fi
+            sleep $((attempt * 8))
+          done
+          printf '%s  %s\n' "$SHA" "$ZIP" | sha256sum --check --status ||
+            { echo "Gradle distribution SHA256 mismatch" >&2; exit 1; }
+          unzip -q "$ZIP" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.13/bin" >> "$GITHUB_PATH"
+      - name: Baseline and R8 compact unit tests and APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if gradle --no-daemon --no-configuration-cache \
+                :app:testDebugUnitTest :app:testCompactUnitTest \
+                :app:assembleDebug :app:assembleCompact; then break; fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Gradle or Kotlin official dependency unavailable; no release" >&2
+              exit 1
+            fi
+            sleep $((attempt * 12))
+          done
+      - name: Enable Android emulator KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm || { echo "KVM missing: cannot publish without runtime validation" >&2; exit 1; }
+          sudo chmod 666 /dev/kvm
+      - name: Required Android 35 minified instrumentation and storage audit
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          script: |
+            gradle --no-daemon -Porbit.instrumentCompact=true :app:connectedCompactAndroidTest
+            bash scripts/ci/audit-compact-installed-storage.sh
+      - name: Validate package, signature and minimum size reduction
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]
+          DEBUG="app/build/outputs/apk/debug/app-debug.apk"
+          COMPACT="app/build/outputs/apk/compact/app-compact.apk"
+          test -s "$DEBUG"; test -s "$COMPACT"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          SIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
+          for apk in "$DEBUG" "$COMPACT"; do
+            "$SIGNER" verify --verbose --print-certs "$apk" >/dev/null
+            "$AAPT" dump badging "$apk" | grep -F "package: name='de.kango99w.orbitadmin'"
+            "$AAPT" dump badging "$apk" | grep -F "versionName='$VERSION'"
+          done
+          DEBUG_BYTES="$(wc -c < "$DEBUG")"
+          COMPACT_BYTES="$(wc -c < "$COMPACT")"
+          test "$COMPACT_BYTES" -lt "$((DEBUG_BYTES * 80 / 100))" ||
+            { echo "Compact must save at least 20% vs baseline." >&2; exit 1; }
+          cmp <("$SIGNER" verify --print-certs "$DEBUG" | grep -F "certificate SHA-256 digest:") \
+              <("$SIGNER" verify --print-certs "$COMPACT" | grep -F "certificate SHA-256 digest:")
+          NAME="Orbit-Mail-v${VERSION}-compact-debug.apk"
+          cp "$COMPACT" "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          printf '%s\n' \
+            "Orbit Mail $VERSION R8 compact -- DEBUG/TEST ONLY, not a stable release." \
+            "Package: de.kango99w.orbitadmin; same package as existing Orbit Mail." \
+            "Commit: $GITHUB_SHA. Compact APK: $COMPACT_BYTES bytes; baseline: $DEBUG_BYTES bytes." \
+            "Tests: unit suites and Android 35 connectedCompactAndroidTest passed in this exact run." \
+            "Ephemeral GitHub Actions debug signature, not guaranteed to match the currently installed APK." \
+            "DO NOT uninstall the current app to update without backing up and accepting loss of local data." \
+            "If an install fails due to signature incompatibility, keep the currently installed version." \
+            "Server PRs #620, #621 and #625 remain unmerged; those features do not become enabled by this APK." \
+            "Offline metadata caching, native authorization and FCM client code are retained." \
+            "Emulator cold-start PSS and fresh storage are not real-phone production measurements." \
+            > INSTALL_NOTES.txt
+          test -s compact-storage-audit/summary.md
+          ZIP="Orbit-Mail-v${VERSION}-compact-debug.zip"
+          zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt compact-storage-audit/summary.md >/dev/null
+          unzip -t "$ZIP" >/dev/null
+          TAG="orbit-mail-v${VERSION}-compact-${GITHUB_SHA:0:12}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk=$NAME" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "checksum=$NAME.sha256" >> "$GITHUB_OUTPUT"
+          echo "size=$COMPACT_BYTES" >> "$GITHUB_OUTPUT"
+          echo "baseline_size=$DEBUG_BYTES" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Compact prerelease gate passed"
+            echo "Compact: $COMPACT_BYTES bytes, Debug: $DEBUG_BYTES bytes."
+            cat compact-storage-audit/summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish immutable compact debug prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.seal.outputs.tag }}
+          APK: ${{ steps.seal.outputs.apk }}
+          ZIP: ${{ steps.seal.outputs.zip }}
+          CHECKSUM: ${{ steps.seal.outputs.checksum }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists; no overwrite of an immutable preview." >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" "$ZIP" "$CHECKSUM" \
+            --target "$GITHUB_SHA" \
+            --title "Orbit Mail $TAG (R8 compact debug test)" \
+            --notes-file INSTALL_NOTES.txt \
+            --prerelease
+          echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$APK"
+          echo "ZIP: https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$ZIP"
+      - name: Upload diagnostic evidence if any gate fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-compact-prepublication-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            compact-storage-audit/
+            app/build/reports/tests/
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
