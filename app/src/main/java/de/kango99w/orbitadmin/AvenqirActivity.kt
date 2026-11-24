@@ -664,7 +664,7 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     private fun requestPageUnlock() {
-        if (!backgroundLocked || promptActive || isFinishing) return
+        if (!backgroundLocked || promptActive || isFinishing || passkeyBridge?.busy == true) return
         promptActive = true
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
