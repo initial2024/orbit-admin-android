@@ -113,25 +113,17 @@ class AvenqirActivity : FragmentActivity() {
             .setNegativeButton("关闭", null).show()
     }
 
-    /** User-requested first-party browser visit; never pass account tokens,
-     * cookies, passwords or challenges between the browser and Orbit. */
+    /** User-initiated, browser-owned first-party passkey page. No cookie,
+     * code, challenge, or session transfer into the isolated app WebView. */
     private fun openPasskeyInSystemBrowser() {
         if (backgroundLocked || isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
-            .setTitle("使用系统浏览器测试通行密钥")
-            .setMessage("将在外部浏览器打开 avenqir.bg5.net 的正式通行密钥页面。浏览器登录与 Orbit 独立，需要正常登录及验证；登记后凭证能否在 Orbit 使用取决于同一系统密码管理器及应用关联。不会自动迁移会话。")
+            .setTitle("浏览器通行密钥登录")
+            .setMessage("通过系统浏览器的独立安全标签页打开 AVENQIR 正式登录入口，可使用浏览器已有的通行密钥。登录成功后可直接在该标签页使用网站管理功能。关闭标签页后，Orbit 内置页面的会话仍独立，不会自动变成已登录。")
             .setNegativeButton("取消", null)
-            .setPositiveButton("打开浏览器") { _, _ ->
+            .setPositiveButton("选择浏览器并登录") { _, _ ->
                 if (!backgroundLocked && !isFinishing && !isDestroyed) {
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AvenqirNativePasskeyPolicy.PAGE))
-                            .addCategory(Intent.CATEGORY_BROWSABLE)
-                        startActivity(Intent.createChooser(intent, "选择系统浏览器"))
-                    } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(this, "未找到可用浏览器", Toast.LENGTH_SHORT).show()
-                    } catch (_: SecurityException) {
-                        Toast.makeText(this, "系统拒绝打开浏览器", Toast.LENGTH_SHORT).show()
-                    }
+                    AvenqirPasskeyBrowserTab(this).chooseAndOpen()
                 }
             }.show()
     }
@@ -536,7 +528,7 @@ class AvenqirActivity : FragmentActivity() {
                 "🔒  私人 GitHub 项目" to "owner-projects.php",
                 "✉  留言管理后台" to "feedback-admin.php",
                 "🛡  防滥用测试中心" to "admin.php?view=feedback-security",
-                "🔑  通行密钥登录 / 管理" to "passkey.php"
+                "🔑  内置页面通行密钥（需网站关联）" to "passkey.php"
             )
             destinations.forEach { (label, route) ->
                 panel.addView(TextView(this).apply {
@@ -555,7 +547,7 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
-                text = "🌐  系统浏览器登记 / 测试通行密钥"
+                text = "🔑  浏览器通行密钥登录（推荐）"
                 textSize = 16f
                 setTextColor(menuForeground)
                 setPadding(dp(14), dp(12), dp(14), dp(12))
