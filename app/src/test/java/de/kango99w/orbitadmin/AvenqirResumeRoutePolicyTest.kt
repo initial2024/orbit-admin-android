@@ -9,6 +9,9 @@ class AvenqirResumeRoutePolicyTest {
         assertEquals("https://avenqir.bg5.net/directory.html",
             AvenqirResumeRoutePolicy.publicPageWithoutState(
                 "https://avenqir.bg5.net/directory.html?q=secret#private"))
+        assertEquals("https://avenqir.bg5.net/owner-sites.php",
+            AvenqirResumeRoutePolicy.publicPageWithoutState(
+                "https://avenqir.bg5.net/owner-sites.php?temporary=session#private"))
         assertEquals("https://avenqir.bg5.net/admin.php",
             AvenqirResumeRoutePolicy.publicPageWithoutState(
                 "https://avenqir.bg5.net/admin.php?token=do-not-persist"))
