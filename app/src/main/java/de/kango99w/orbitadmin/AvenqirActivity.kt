@@ -456,7 +456,7 @@ class AvenqirActivity : FragmentActivity() {
                 isFocusable = true
                 setOnClickListener {
                     dialog.dismiss()
-                    AvenqirBrowserLauncher(this@AvenqirActivity).settings()
+                    AvenqirBrowserLauncher(this@AvenqirActivity) { !backgroundLocked }.settings()
                 }
             })
             panel.addView(TextView(this).apply {
@@ -591,7 +591,7 @@ class AvenqirActivity : FragmentActivity() {
 
     private fun openExternal(url: String) {
         if (backgroundLocked || isFinishing || !AvenqirUrlPolicy.isExternalHttps(url)) return
-        AvenqirBrowserLauncher(this).open(url)
+        AvenqirBrowserLauncher(this) { !backgroundLocked }.open(url)
     }
 
     private fun requestPageUnlock() {

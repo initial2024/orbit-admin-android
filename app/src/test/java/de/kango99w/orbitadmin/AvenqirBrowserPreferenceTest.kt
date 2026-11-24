@@ -28,7 +28,7 @@ class AvenqirBrowserPreferenceTest {
         assertFalse(viewer.contains("addJavascriptInterface"))
         assertTrue(viewer.contains("allowFileAccess = false"))
         assertTrue(viewer.contains("AvenqirUrlPolicy.isExternalHttps"))
-        assertTrue(trusted.contains("AvenqirBrowserLauncher(this).open(url)"))
+        assertTrue(trusted.contains("AvenqirBrowserLauncher(this) { !backgroundLocked }.open(url)"))
         assertTrue(trusted.contains("打开第三方网站？"))
     }
 }

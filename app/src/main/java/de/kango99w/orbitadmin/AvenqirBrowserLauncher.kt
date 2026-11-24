@@ -23,7 +23,7 @@ object AvenqirBrowserPreference {
     }
 }
 
-class AvenqirBrowserLauncher(private val activity: Activity) {
+class AvenqirBrowserLauncher(private val activity: Activity, private val canOpen: () -> Boolean) {
     private val prefs = activity.getSharedPreferences("avenqir_browser_choice_v1", Context.MODE_PRIVATE)
     private data class Choice(val key: String, val label: String)
     private fun view(url: String) = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -49,19 +49,20 @@ class AvenqirBrowserLauncher(private val activity: Activity) {
     ) + browsers()
 
     fun settings() {
+        if (!canOpen()) return
         val options = choices()
         val current = AvenqirBrowserPreference.normalize(prefs.getString("default", null),
             options.map { it.key.removePrefix(AvenqirBrowserPreference.PACKAGE) }.toSet())
         AlertDialog.Builder(activity).setTitle("默认打开第三方网址")
             .setSingleChoiceItems(options.map { it.label }.toTypedArray(),
                 options.indexOfFirst { it.key == current }.coerceAtLeast(0)) { dialog, i ->
-                prefs.edit().putString("default", options[i].key).apply()
+                if (canOpen()) prefs.edit().putString("default", options[i].key).apply()
                 dialog.dismiss()
             }.setNegativeButton("取消", null).show()
     }
 
     fun open(url: String) {
-        if (!AvenqirUrlPolicy.isExternalHttps(url)) return
+        if (!canOpen() || !AvenqirUrlPolicy.isExternalHttps(url)) return
         val options = choices()
         val current = AvenqirBrowserPreference.normalize(prefs.getString("default", null),
             options.map { it.key.removePrefix(AvenqirBrowserPreference.PACKAGE) }.toSet())
@@ -71,6 +72,7 @@ class AvenqirBrowserLauncher(private val activity: Activity) {
         AlertDialog.Builder(activity)
             .setTitle("打开 " + (Uri.parse(url).host ?: "第三方网址"))
             .setItems(items.map { it.label }.toTypedArray()) { _, i ->
+                if (!canOpen()) return@setItems
                 val selected = items[i]
                 if (selected.key == AvenqirBrowserPreference.ASK) {
                     launch(url, selected.key)
@@ -87,12 +89,20 @@ class AvenqirBrowserLauncher(private val activity: Activity) {
             }.setNegativeButton("取消", null).show()
     }
     private fun launch(url: String, key: String): Boolean {
-        if (!AvenqirUrlPolicy.isExternalHttps(url) || activity.isFinishing || activity.isDestroyed) return false
+        if (!canOpen() || !AvenqirUrlPolicy.isExternalHttps(url) || activity.isFinishing || activity.isDestroyed) return false
         return try {
             when {
                 key == AvenqirBrowserPreference.BUILTIN -> activity.startActivity(
                     Intent(activity, AvenqirPublicBrowserActivity::class.java).putExtra("url", url))
-                key == AvenqirBrowserPreference.SYSTEM -> activity.startActivity(view(url))
+                key == AvenqirBrowserPreference.SYSTEM -> {
+                    // Resolve the generic web handler rather than prefer an app-specific deep link.
+                    val defaultBrowser = activity.packageManager.resolveActivity(
+                        view("https://example.com/"), PackageManager.MATCH_DEFAULT_ONLY)
+                        ?.activityInfo?.packageName
+                    val isBrowser = browsers().any { it.key == AvenqirBrowserPreference.PACKAGE + defaultBrowser }
+                    if (defaultBrowser != null && isBrowser) activity.startActivity(view(url).setPackage(defaultBrowser))
+                    else activity.startActivity(Intent.createChooser(view(url), "选择浏览器"))
+                }
                 key.startsWith(AvenqirBrowserPreference.PACKAGE) -> activity.startActivity(
                     view(url).setPackage(key.removePrefix(AvenqirBrowserPreference.PACKAGE)))
                 else -> activity.startActivity(Intent.createChooser(view(url), "选择打开方式"))

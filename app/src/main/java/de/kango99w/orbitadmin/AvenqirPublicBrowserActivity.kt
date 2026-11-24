@@ -65,8 +65,10 @@ class AvenqirPublicBrowserActivity : Activity() {
                 Toast.makeText(this@AvenqirPublicBrowserActivity, "HTTPS 证书验证失败", Toast.LENGTH_SHORT).show()
             }
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
-                (view?.parent as? android.view.ViewGroup)?.removeView(view)
-                view?.destroy()
+                if (view != null) {
+                    (view.parent as? android.view.ViewGroup)?.removeView(view)
+                    view.destroy()
+                }
                 page = null
                 finish()
                 return true
