@@ -17,7 +17,7 @@ object AvenqirResumeRoutePolicy {
         "/notes.html", "/transfer.html", "/daily.html", "/fun.html",
         "/appearance.html", "/privacy.html", "/disclaimer.html",
         "/deploy-status.html", "/orbit-bridge.html",
-        "/admin.php", "/owner-sites.php", "/feedback-admin.php", "/feedback.php", "/passkey.php"
+        "/admin.php", "/owner-sites.php", "/owner-projects.php", "/feedback-admin.php", "/feedback.php", "/passkey.php"
     )
 
     fun publicPageWithoutState(url: String?): String? {
