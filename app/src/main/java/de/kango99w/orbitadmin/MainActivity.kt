@@ -153,7 +153,7 @@ class MainActivity : FragmentActivity() {
         if (enabled) refreshAvenqirPublicStatus()
     }
     private fun avenqirStatusLabel(): String = when {
-        !avenqirAutoCheck -> "启动时目录检查已关闭"
+        !avenqirAutoCheck -> "可直接打开目录 · 自动状态检查未开启"
         avenqirStatusBusy -> "正在检查公开目录…"
         avenqirStatusIssue != null -> when (avenqirStatusIssue) {
             AvenqirCheckIssue.BROWSER_REQUIRED -> "自动检查未确认 · 请打开 AVENQIR 进行正常网页访问"
@@ -162,7 +162,7 @@ class MainActivity : FragmentActivity() {
             AvenqirCheckIssue.HTTP -> "公开接口响应异常 · 可手动打开网页"
             else -> "公开目录数据未确认 · 可手动打开"
         }
-        avenqirPublicStatus != null -> "最近检查：可访问 · 公开网址 ${avenqirPublicStatus!!.count} 条"
+        avenqirPublicStatus != null -> "最近检查：接口可访问 · 后台条目 ${avenqirPublicStatus!!.count} 条（不含内置目录）"
         else -> "公开目录尚未检查"
     }
     private var message by mutableStateOf("使用设备生物识别或锁屏凭据解锁。")
@@ -798,6 +798,16 @@ class MainActivity : FragmentActivity() {
                     }
                     Text("›", style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(checked = avenqirAutoCheck, onCheckedChange = ::updateAvenqirAutoCheck)
+                Column(Modifier.weight(1f)) {
+                    Text("启动时自动检查公开目录状态", style = MaterialTheme.typography.bodySmall)
+                    Text("仅检查网络状态，不影响网站搜索；解锁后五分钟内不重复。", style = MaterialTheme.typography.labelSmall)
                 }
             }
             Spacer(Modifier.height(20.dp))

@@ -101,8 +101,12 @@ class AvenqirActivity : FragmentActivity() {
                 clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Orbit Passkey diagnostics", report))
             }
             .setNeutralButton("打开系统密码设置") { _, _ ->
-                try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
-                catch (_: Exception) { Toast.makeText(this, "请手动打开系统设置 → 密码、通行密钥与自动填充", Toast.LENGTH_LONG).show() }
+                try {
+                    startActivity(Intent("android.settings.CREDENTIAL_PROVIDER"))
+                } catch (_: Exception) {
+                    try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+                    catch (_: Exception) { Toast.makeText(this, "请手动打开系统设置 → 密码、通行密钥与自动填充", Toast.LENGTH_LONG).show() }
+                }
             }
             .setNegativeButton("关闭", null).show()
     }

@@ -19,6 +19,12 @@ class AvenqirNativePasskeyPolicyTest {
         assertFalse(p.canLaunchProvider(true,true,false,p.PAGE))
         assertFalse(p.canLaunchProvider(true,true,true,p.ORIGIN+"/admin.php"))
     }
+    @Test fun frameworkAndAndroidXCancellationAreRecognized() {
+        val p=AvenqirNativePasskeyPolicy
+        assertTrue(p.providerCancelled("android.credentials.CreateCredentialException.TYPE_USER_CANCELED"))
+        assertTrue(p.providerCancelled("androidx.credentials.TYPE_CREATE_CREDENTIAL_CANCELLATION_EXCEPTION"))
+        assertFalse(p.providerCancelled("android.credentials.CreateCredentialException.TYPE_UNKNOWN"))
+    }
     @Test fun onlyPinnedRelyingPartyAndRequiredVerification() {
         val p=AvenqirNativePasskeyPolicy
         val challenge="A".repeat(43)

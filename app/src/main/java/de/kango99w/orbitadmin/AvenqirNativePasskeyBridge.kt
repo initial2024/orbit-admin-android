@@ -44,6 +44,11 @@ object AvenqirNativePasskeyPolicy {
         allowed: Boolean, pageUrl: String?): Boolean =
         consented && foreground && allowed && pageUrl == PAGE
 
+    // Android framework uses CANCELED, AndroidX often uses CANCELLATION.
+    fun providerCancelled(type: String): Boolean =
+        type.contains("CANCEL", ignoreCase = true) ||
+            type.contains("NotAllowedError", ignoreCase = true)
+
     fun validOptions(operation: String, options: JSONObject): Boolean {
         if (!options.optString("challenge").matches(Regex("[A-Za-z0-9_-]{43}"))) return false
         if (options.has("origin")) return false
@@ -208,8 +213,7 @@ class AvenqirNativePasskeyBridge(
                 }
                 note("PROVIDER_ERROR_TYPE_" + safeType)
                 val code = when {
-                    safeType.contains("CANCELL", ignoreCase = true) ||
-                        safeType.contains("NotAllowedError", ignoreCase = true) -> "CANCELLED"
+                    AvenqirNativePasskeyPolicy.providerCancelled(safeType) -> "CANCELLED"
                     safeType.contains("NO_CREDENTIAL", ignoreCase = true) ||
                         safeType.contains("NO_CREATE_OPTION", ignoreCase = true) -> "NO_CREDENTIAL"
                     safeType.contains("UNSUPPORTED", ignoreCase = true) ||
@@ -245,7 +249,7 @@ class AvenqirNativePasskeyBridge(
                 else -> "系统凭证操作未完成，请检查网站关联及密码管理器。"
             })
         } else if (code == null) status("系统凭证已返回，等待服务器验证")
-        else status("系统凭证操作已取消，可从菜单查看诊断")
+        else status("系统凭证流程已取消或未完成；请检查系统密码管理器，或在网页选择标准 WebAuthn。")
         respond(reply, id, code, credential)
         if (!closed) finished()
     }
