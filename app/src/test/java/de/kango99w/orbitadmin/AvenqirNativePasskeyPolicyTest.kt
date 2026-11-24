@@ -11,13 +11,13 @@ class AvenqirNativePasskeyPolicyTest {
         assertFalse(p.allows(p.ORIGIN,true,p.ORIGIN+"/admin.php"))
         assertFalse(p.allows(p.ORIGIN,true,p.PAGE+"?other=1"))
     }
-    @Test fun localDeviceVerificationCannotBypassForegroundOrOrigin() {
+    @Test fun consentCannotBypassForegroundOrOrigin() {
         val p=AvenqirNativePasskeyPolicy
-        assertTrue(p.canLaunchAfterVerification(true,true,true,p.PAGE))
-        assertFalse(p.canLaunchAfterVerification(false,true,true,p.PAGE))
-        assertFalse(p.canLaunchAfterVerification(true,false,true,p.PAGE))
-        assertFalse(p.canLaunchAfterVerification(true,true,false,p.PAGE))
-        assertFalse(p.canLaunchAfterVerification(true,true,true,p.ORIGIN+"/admin.php"))
+        assertTrue(p.canLaunchProvider(true,true,true,p.PAGE))
+        assertFalse(p.canLaunchProvider(false,true,true,p.PAGE))
+        assertFalse(p.canLaunchProvider(true,false,true,p.PAGE))
+        assertFalse(p.canLaunchProvider(true,true,false,p.PAGE))
+        assertFalse(p.canLaunchProvider(true,true,true,p.ORIGIN+"/admin.php"))
     }
     @Test fun onlyPinnedRelyingPartyAndRequiredVerification() {
         val p=AvenqirNativePasskeyPolicy

@@ -1,8 +1,9 @@
 package de.kango99w.orbitadmin
 
-import android.hardware.biometrics.BiometricManager
-import android.hardware.biometrics.BiometricPrompt
-import android.os.CancellationSignal
+import android.app.AlertDialog
+import android.content.MutableContextWrapper
+import android.widget.Toast
+import android.util.Log
 import android.webkit.WebView
 import androidx.credentials.CredentialManager
 import androidx.credentials.CreatePublicKeyCredentialRequest
@@ -18,8 +19,6 @@ import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CancellationException
@@ -38,11 +37,11 @@ object AvenqirNativePasskeyPolicy {
     fun allows(sourceOrigin: String, mainFrame: Boolean, pageUrl: String?): Boolean =
         mainFrame && sourceOrigin == ORIGIN && pageUrl == PAGE
 
-    // A local verification result is never a web assertion; the actual
-    // Credential Manager request must still be made from a foreground page.
-    fun canLaunchAfterVerification(verified: Boolean, foreground: Boolean,
+    // Consent is NOT an assertion. Only Credential Manager performs passkey
+    // user verification and the server validates the signed response.
+    fun canLaunchProvider(consented: Boolean, foreground: Boolean,
         allowed: Boolean, pageUrl: String?): Boolean =
-        verified && foreground && allowed && pageUrl == PAGE
+        consented && foreground && allowed && pageUrl == PAGE
 
     fun validOptions(operation: String, options: JSONObject): Boolean {
         if (!options.optString("challenge").matches(Regex("[A-Za-z0-9_-]{43}"))) return false
@@ -70,6 +69,7 @@ class AvenqirNativePasskeyBridge(
         private set
     private var closed = false
     private var job: Job? = null
+    private var dialog: AlertDialog? = null
 
 
     fun install() {
@@ -90,67 +90,33 @@ class AvenqirNativePasskeyBridge(
                 options == null || !AvenqirNativePasskeyPolicy.validOptions(operation, options)) {
                 respond(reply, id, "INVALID"); return@addWebMessageListener
             }
-            // Replace the ordinary confirmation dialog with the actual Android
-            // system biometric UI. This is a LOCAL gate, not a Passkey assertion.
+            // Explicit consent from native UI, followed by ONE credential
+            // provider operation. No separate biometric prompt may compete
+            // with Android Credential Manager's own authentication window.
             busy = true
-            invokeSystem(operation, options.toString(), reply, id)
+            var consented = false
+            val confirmation = AlertDialog.Builder(activity)
+                .setTitle(if (operation == "create") "登记 AVENQIR 通行密钥" else "使用通行密钥登录")
+                .setMessage("继续后将打开 Android 凭证服务，由系统决定指纹或设备锁验证方式。仅用于 avenqir.bg5.net 管理员 adm。")
+                .setNegativeButton("取消") { _, _ -> complete(reply, id, "CANCELLED") }
+                .setPositiveButton("打开系统凭证") { _, _ -> consented = true }
+                .create()
+            dialog = confirmation
+            confirmation.setOnDismissListener {
+                dialog = null
+                if (closed || !busy) return@setOnDismissListener
+                if (!consented) complete(reply, id, "CANCELLED")
+                else invokeSystem(operation, options.toString(), reply, id)
+            }
+            try { confirmation.show() }
+            catch (_: RuntimeException) { complete(reply, id, "UNAVAILABLE") }
         }
     }
 
-    private suspend fun verifyDevice(operation: String): String? =
-        suspendCancellableCoroutine { continuation ->
-            val manager = activity.getSystemService(BiometricManager::class.java)
-            val strong = BiometricManager.Authenticators.BIOMETRIC_STRONG
-            val screenLock = BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            // Prefer enrolled strong biometrics; otherwise use the device screen
-            // lock. Android, not the app, selects the available biometric modality.
-            val authenticators = when {
-                manager?.canAuthenticate(strong) == BiometricManager.BIOMETRIC_SUCCESS -> strong
-                manager?.canAuthenticate(screenLock) == BiometricManager.BIOMETRIC_SUCCESS -> screenLock
-                else -> {
-                    continuation.resume("UNAVAILABLE")
-                    return@suspendCancellableCoroutine
-                }
-            }
-            val cancellation = CancellationSignal()
-            continuation.invokeOnCancellation { cancellation.cancel() }
-            val executor = activity.mainExecutor
-            try {
-                val builder = BiometricPrompt.Builder(activity)
-                    .setTitle(if (operation == "create") "验证设备 · 登记通行密钥" else "验证设备 · AVENQIR 登录")
-                    .setSubtitle("avenqir.bg5.net · 管理员 adm")
-                    .setDescription("验证通过后仍须由系统凭证服务完成真正的通行密钥操作。")
-                    .setAllowedAuthenticators(authenticators)
-                    .setConfirmationRequired(true)
-                if (authenticators == strong) {
-                    builder.setNegativeButton("取消", executor) { _, _ ->
-                        cancellation.cancel()
-                        if (continuation.isActive) continuation.resume("CANCELLED")
-                    }
-                }
-                builder.build().authenticate(cancellation, executor,
-                    object : BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                            if (continuation.isActive) continuation.resume(null)
-                        }
-                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                            val code = when (errorCode) {
-                                BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
-                                BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
-                                BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON -> "CANCELLED"
-                                BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE,
-                                BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT,
-                                BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS,
-                                BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL -> "UNAVAILABLE"
-                                else -> "PROVIDER"
-                            }
-                            if (continuation.isActive) continuation.resume(code)
-                        }
-                    })
-            } catch (_: Exception) {
-                if (continuation.isActive) continuation.resume("UNAVAILABLE")
-            }
-        }
+    private fun status(message: String) {
+        if (!closed && !activity.isDestroyed)
+            Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+    }
 
     private fun foreground(): Boolean =
         activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
@@ -160,33 +126,34 @@ class AvenqirNativePasskeyBridge(
         job = activity.lifecycleScope.launch {
             try {
                 val response = withTimeout(100000L) {
-                    val localError = withTimeout(35000L) { verifyDevice(operation) }
-                    if (localError != null) {
-                        complete(reply, id, localError)
-                        return@launch
-                    }
-                    // The system biometric window may retain focus briefly after
-                    // success. Wait for its dismissal instead of launching a
-                    // second credential window over it.
-                    repeat(40) { if (!foreground()) delay(50) }
-                    if (!AvenqirNativePasskeyPolicy.canLaunchAfterVerification(
+                    // onDismiss happens before the window focus transition.
+                    // Wait only while the approved page is still authorized.
+                    val deadline = android.os.SystemClock.elapsedRealtime() + 8000L
+                    while (!foreground() && allowed() && !closed &&
+                        page.url == AvenqirNativePasskeyPolicy.PAGE &&
+                        android.os.SystemClock.elapsedRealtime() < deadline) delay(100)
+                    if (!AvenqirNativePasskeyPolicy.canLaunchProvider(
                             true, foreground(), allowed() && !closed, page.url)) {
                         complete(reply, id, "INVALID")
                         return@launch
                     }
+                    status("正在打开 Android 系统凭证，请选择通行密钥")
+                    Log.i("OrbitPasskey", "PROVIDER_LAUNCH operation=$operation")
+                    val context = MutableContextWrapper(activity)
                     val manager = CredentialManager.create(activity)
                     if (operation == "create") {
-                        val result = manager.createCredential(activity,
-                            CreatePublicKeyCredentialRequest(options))
+                        val result = manager.createCredential(context = context,
+                            request = CreatePublicKeyCredentialRequest(options))
                         (result as? CreatePublicKeyCredentialResponse)?.registrationResponseJson
                             ?: error("unexpected credential")
                     } else {
                         val request = GetCredentialRequest(listOf(GetPublicKeyCredentialOption(options)))
-                        val result = manager.getCredential(activity, request)
+                        val result = manager.getCredential(context = context, request = request)
                         (result.credential as? PublicKeyCredential)?.authenticationResponseJson
                             ?: error("unexpected credential")
                     }
                 }
+                Log.i("OrbitPasskey", "PROVIDER_RETURNED")
                 val credential = JSONObject(response)
                 if (response.length > 120000 || credential.optString("type") != "public-key" ||
                     credential.optString("rawId").isBlank() || credential.optJSONObject("response") == null) {
@@ -222,11 +189,25 @@ class AvenqirNativePasskeyBridge(
     private fun complete(reply: JavaScriptReplyProxy, id: String, code: String?, credential: JSONObject? = null) {
         if (!busy) return
         busy = false
+        dialog?.dismiss()
+        dialog = null
+        Log.i("OrbitPasskey", "COMPLETE code=${code ?: "RESPONSE"}")
+        if (code != null && code != "CANCELLED") {
+            status(when (code) {
+                "INVALID" -> "凭证窗口未能启动或页面状态已变更，请返回后重新执行第一步。"
+                "TIMEOUT" -> "系统凭证服务超时，请检查手机默认密码管理器。"
+                "UNAVAILABLE" -> "手机的系统凭证服务不可用，请检查默认密码管理器。"
+                "NO_CREDENTIAL" -> "没有找到可用通行密钥，请确认之前登记的密码管理器。"
+                else -> "系统凭证操作未完成，请检查网站关联及密码管理器。"
+            })
+        } else if (code == null) status("系统凭证已返回，等待服务器验证")
         respond(reply, id, code, credential)
         if (!closed) finished()
     }
     fun close() {
         closed = true
+        dialog?.dismiss()
+        dialog = null
         job?.cancel()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT)
