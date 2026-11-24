@@ -10,6 +10,8 @@ import androidx.credentials.CreatePublicKeyCredentialResponse
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
+import androidx.credentials.exceptions.CreateCredentialException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.JavaScriptReplyProxy
@@ -191,15 +193,28 @@ class AvenqirNativePasskeyBridge(
                 complete(reply, id, "CANCELLED")
                 throw e
             } catch (e: Exception) {
-                val type = e.javaClass.simpleName.filter { it.isLetterOrDigit() }.take(80)
-                note("PROVIDER_EXCEPTION_" + type)
+                // The SDK type is a stable protocol identifier, unlike the
+                // runtime simpleName of R8-obfuscated exception subclasses.
+                val sdkType = when (e) {
+                    is CreateCredentialException -> e.type
+                    is GetCredentialException -> e.type
+                    is SecurityException -> "SECURITY"
+                    else -> "UNCLASSIFIED"
+                }
+                // Log only a restricted SDK identifier; never e.message, raw
+                // credential data, options, or an exception stack trace.
+                val safeType = sdkType.take(200).filter {
+                    it.isLetterOrDigit() || it == '_' || it == '.' || it == '/' || it == '-'
+                }
+                note("PROVIDER_ERROR_TYPE_" + safeType)
                 val code = when {
-                    e.javaClass.simpleName.contains("Cancellation") -> "CANCELLED"
-                    e.javaClass.simpleName.contains("NoCredential") -> "NO_CREDENTIAL"
-                    e is SecurityException || e.javaClass.simpleName.contains("Security") -> "PROVIDER"
-                    e.javaClass.simpleName.contains("Unsupported") ||
-                        e.javaClass.simpleName.contains("ProviderConfiguration") -> "UNAVAILABLE"
-                    e.javaClass.simpleName.contains("Credential") -> "PROVIDER"
+                    safeType.contains("CANCELL", ignoreCase = true) ||
+                        safeType.contains("NotAllowedError", ignoreCase = true) -> "CANCELLED"
+                    safeType.contains("NO_CREDENTIAL", ignoreCase = true) ||
+                        safeType.contains("NO_CREATE_OPTION", ignoreCase = true) -> "NO_CREDENTIAL"
+                    safeType.contains("UNSUPPORTED", ignoreCase = true) ||
+                        safeType.contains("PROVIDER_CONFIGURATION", ignoreCase = true) -> "UNAVAILABLE"
+                    e is CreateCredentialException || e is GetCredentialException || e is SecurityException -> "PROVIDER"
                     else -> "OTHER"
                 }
                 complete(reply, id, code)

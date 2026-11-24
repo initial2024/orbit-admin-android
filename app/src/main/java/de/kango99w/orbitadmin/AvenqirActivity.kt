@@ -92,6 +92,7 @@ class AvenqirActivity : FragmentActivity() {
             android.os.Build.VERSION.SDK_INT + "\nWebView WebAuthn: " +
             WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION) +
             "\n\n" + (passkeyBridge?.diagnosticsText() ?: "原生桥未安装") +
+            "\n标准 WebAuthn 路径请查看网页上的 SYSTEM_* 错误代码。" +
             "\n\n仅包含操作阶段，不包含密码、验证码、账号、凭证或挑战。"
         AlertDialog.Builder(this).setTitle("通行密钥诊断")
             .setMessage(report)
@@ -503,6 +504,7 @@ class AvenqirActivity : FragmentActivity() {
                 "🛡  私人站点与软件验证" to "owner-sites.php",
                 "🔒  私人 GitHub 项目" to "owner-projects.php",
                 "✉  留言管理后台" to "feedback-admin.php",
+                "🛡  防滥用测试中心" to "admin.php?view=feedback-security",
                 "🔑  通行密钥登录 / 管理" to "passkey.php"
             )
             destinations.forEach { (label, route) ->
