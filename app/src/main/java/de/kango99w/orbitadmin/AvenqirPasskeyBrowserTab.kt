@@ -23,7 +23,11 @@ internal class AvenqirPasskeyBrowserTab(
 ) {
     private val prefs = activity.getSharedPreferences("avenqir_first_party_browser_v1", Context.MODE_PRIVATE)
     private val pm = activity.packageManager
-    private data class Browser(val pkg: String, val label: String)
+    private data class Browser(val pkg: String, val label: String, val supportsTab: Boolean) {
+        fun display() = label + if (supportsTab) " · 安全标签页" else " · 外部浏览器"
+    }
+    private fun supportsCustomTabs(pkg: String) = pm.resolveService(
+        Intent("android.support.customtabs.action.CustomTabsService").setPackage(pkg), 0) != null
     private fun allowed() = canOpen() && !activity.isFinishing && !activity.isDestroyed
     private fun view(destination: AvenqirBrowserDestination) =
         Intent(Intent.ACTION_VIEW, Uri.parse(destination.url)).addCategory(Intent.CATEGORY_BROWSABLE)
@@ -36,8 +40,9 @@ internal class AvenqirPasskeyBrowserTab(
         return declared.asSequence()
             .filter { it.activityInfo.packageName != activity.packageName && it.activityInfo.packageName in handlers }
             .distinctBy { it.activityInfo.packageName }
-            .map { Browser(it.activityInfo.packageName, it.loadLabel(pm).toString().take(80)) }
-            .sortedBy { it.label.lowercase() }.toList()
+            .map { Browser(it.activityInfo.packageName, it.loadLabel(pm).toString().take(80),
+                supportsCustomTabs(it.activityInfo.packageName)) }
+            .sortedWith(compareByDescending<Browser> { it.supportsTab }.thenBy { it.label.lowercase() }).toList()
     }
 
     fun settings() {
@@ -47,7 +52,7 @@ internal class AvenqirPasskeyBrowserTab(
         val selected = browsers.indexOfFirst { it.pkg == chosen } + 1
         AlertDialog.Builder(activity)
             .setTitle("AVENQIR 浏览器偏好")
-            .setSingleChoiceItems((listOf("每次询问") + browsers.map { "${it.label} (${it.pkg})" }).toTypedArray(), selected) { dialog, index ->
+            .setSingleChoiceItems((listOf("每次询问") + browsers.map { "${it.display()} (${it.pkg})" }).toTypedArray(), selected) { dialog, index ->
                 if (allowed()) {
                     if (index == 0) prefs.edit().remove("browser").apply()
                     else prefs.edit().putString("browser", browsers[index-1].pkg).apply()
@@ -68,11 +73,11 @@ internal class AvenqirPasskeyBrowserTab(
         if (preferred != null) prefs.edit().remove("browser").apply()
         AlertDialog.Builder(activity)
             .setTitle("选择 AVENQIR 浏览器")
-            .setItems(browsers.map { "${it.label} (${it.pkg})" }.toTypedArray()) { _, index ->
+            .setItems(browsers.map { "${it.display()} (${it.pkg})" }.toTypedArray()) { _, index ->
                 if (!allowed()) return@setItems
                 val chosen = browsers[index]
                 AlertDialog.Builder(activity).setTitle("使用 ${chosen.label}")
-                    .setMessage("浏览器负责通行密钥、会话与网页导航；不会将网页登录状态传给 Orbit。请选择你信任的浏览器。")
+                    .setMessage((if (chosen.supportsTab) "优先在 Orbit 上方打开浏览器安全标签页，关闭即可返回。" else "此浏览器未声明安全标签页服务，将在完整浏览器界面打开。") + "\n浏览器负责通行密钥及会话；不会将网页登录状态传给 Orbit Mail。")
                     .setNeutralButton("取消", null)
                     .setNegativeButton("仅本次") { _, _ -> launch(chosen.pkg, destination) }
                     .setPositiveButton("设为默认并打开") { _, _ ->
@@ -83,8 +88,7 @@ internal class AvenqirPasskeyBrowserTab(
 
     private fun launch(pkg: String, destination: AvenqirBrowserDestination): Boolean {
         if (!allowed() || installedBrowsers().none { it.pkg == pkg }) return false
-        val supportsTab = pm.resolveService(
-            Intent("android.support.customtabs.action.CustomTabsService").setPackage(pkg), 0) != null
+        val supportsTab = supportsCustomTabs(pkg)
         if (supportsTab) {
             try {
                 val tab = CustomTabsIntent.Builder().setShowTitle(true).build()
@@ -98,6 +102,7 @@ internal class AvenqirPasskeyBrowserTab(
             }
         }
         return try {
+            Toast.makeText(activity, "正在打开所选完整浏览器；可返回 Orbit", Toast.LENGTH_SHORT).show()
             activity.startActivity(view(destination).setPackage(pkg))
             true
         } catch (_: ActivityNotFoundException) {
