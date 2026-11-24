@@ -37,6 +37,8 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -47,7 +49,7 @@ import javax.net.ssl.HttpsURLConnection
  * the independent "avenqir" WebView profile; it never handles Orbit credentials.
  *
  * PHP upload and export use the Android document picker. External websites
- * remain in the user's system browser, not in the trusted AVENQIR WebView.
+ * open via a user-chosen external browser or a separate public-only WebView profile.
  */
 class AvenqirActivity : FragmentActivity() {
     private var webView: WebView? = null
@@ -235,6 +237,7 @@ class AvenqirActivity : FragmentActivity() {
         }
 
         CookieManager.getInstance().setAcceptThirdPartyCookies(page, false)
+        page.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         page.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -249,6 +252,20 @@ class AvenqirActivity : FragmentActivity() {
             setGeolocationEnabled(false)
             mediaPlaybackRequiresUserGesture = true
             safeBrowsingEnabled = true
+        }
+        // Enable the official platform bridge only when the installed WebView
+        // supports it. WebAuthn still requires FIRST-PARTY HTTPS server-side
+        // challenge/signature verification and assetlinks.json for the *actual*
+        // APK signing certificate. No password/2FA bypass is implemented here.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+            try {
+                WebSettingsCompat.setWebAuthenticationSupport(
+                    page.settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
+                )
+            } catch (_: RuntimeException) {
+                // Unsupported Android credential provider must not block AVENQIR.
+                android.util.Log.i("OrbitAvenqir", "System WebAuthn unavailable; password login retained")
+            }
         }
         page.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -447,6 +464,20 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
+                text = "🌐  第三方网址默认打开方式"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    AvenqirBrowserLauncher(this@AvenqirActivity) { !backgroundLocked }.settings()
+                }
+            })
+            panel.addView(TextView(this).apply {
                 text = "网站管理后台使用独立的 AVENQIR 登录会话"
                 textSize = 12f
                 setTextColor(menuMuted)
@@ -577,14 +608,8 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     private fun openExternal(url: String) {
-        try {
-            navigatingToExternal = true
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                .addCategory(Intent.CATEGORY_BROWSABLE))
-        } catch (_: ActivityNotFoundException) {
-            navigatingToExternal = false
-            Toast.makeText(this, "没有可用的系统浏览器", Toast.LENGTH_SHORT).show()
-        }
+        if (backgroundLocked || isFinishing || !AvenqirUrlPolicy.isExternalHttps(url)) return
+        AvenqirBrowserLauncher(this) { !backgroundLocked }.open(url)
     }
 
     private fun requestPageUnlock() {
