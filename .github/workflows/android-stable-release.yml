@@ -2,6 +2,12 @@ name: Orbit Mail stable signed APK (protected manual)
 on:
   workflow_dispatch:
     inputs:
+      avenqir_passkey_mode:
+        description: "Browser mode disables AVENQIR native credentials; native mode requires live DAL."
+        required: true
+        type: choice
+        options: [browser, native]
+        default: browser
       acknowledgement:
         description: "Type PUBLISH_SIGNED_STABLE only after real-device and server gates pass"
         required: true
@@ -53,7 +59,20 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
           set -o pipefail
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - name: Require original signing pin and selected AVENQIR credential mode
+        env:
+          ORBIT_EXPECTED_CERT_SHA256: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
+          AVENQIR_MODE: ${{ inputs.avenqir_passkey_mode }}
+        run: |
+          set -euo pipefail
+          test "${ORBIT_EXPECTED_CERT_SHA256^^}" = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
+          case "$AVENQIR_MODE" in
+            browser) echo 'AVENQIR_BROWSER_ONLY: native WebView and Credential Manager entry disabled; no session transfer' ;;
+            native) echo 'AVENQIR_NATIVE: live DAL is mandatory' ;;
+            *) exit 1 ;;
+          esac
       - name: Require live AVENQIR association before loading signing keys
+        if: inputs.avenqir_passkey_mode == 'native'
         env:
           ORBIT_EXPECTED_CERT_SHA256: ${{ vars.ORBIT_RELEASE_CERT_SHA256 }}
         run: |
@@ -136,7 +155,7 @@ jobs:
           ORBIT_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEYSTORE_PASSWORD }}
           ORBIT_RELEASE_KEY_ALIAS: ${{ secrets.ORBIT_RELEASE_KEY_ALIAS }}
           ORBIT_RELEASE_KEY_PASSWORD: ${{ secrets.ORBIT_RELEASE_KEY_PASSWORD }}
-        run: gradle --no-daemon :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
+        run: gradle --no-daemon -Porbit.avenqirNativePasskey=${{ inputs.avenqir_passkey_mode == 'native' }} :app:testDebugUnitTest :app:testReleaseUnitTest :app:assembleRelease
       - name: Verify stable version, signature and SHA-256
         id: seal
         shell: bash
@@ -192,6 +211,8 @@ jobs:
           APK's certificate, direct upgrade is impossible. Back up device data
           before any intentional uninstall and new sign-in.
           AVENQIR has its own login sessions and isolated WebView profile.
+          AVENQIR Passkey mode: ${{ inputs.avenqir_passkey_mode }}.
+          Browser mode authenticates in the browser-owned tab; it does not authenticate the isolated WebView.
           EOF
           ZIP="Orbit-Mail-v${VERSION}-R8.zip"
           zip -9 "$ZIP" "$NAME" "$NAME.sha256" INSTALL_NOTES.txt >/dev/null

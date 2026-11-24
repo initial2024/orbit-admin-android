@@ -138,6 +138,10 @@ class AvenqirNativePasskeyBridge(
                 return@addWebMessageListener
             AvenqirPasskeyBrowserTab(activity).chooseAndOpen()
         }
+        if (!BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED) {
+            note("AVENQIR_BROWSER_ONLY")
+            return
+        }
         WebViewCompat.addWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT,
             setOf(AvenqirNativePasskeyPolicy.ORIGIN)) { view, message, origin, mainFrame, reply ->
             if (closed || view !== page ||
@@ -311,7 +315,8 @@ class AvenqirNativePasskeyBridge(
         dialog = null
         job?.cancel()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT)
+            if (BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED)
+                WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT)
             WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.BROWSER_OBJECT)
         }
     }

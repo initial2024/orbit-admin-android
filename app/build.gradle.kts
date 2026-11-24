@@ -26,8 +26,11 @@ android {
         applicationId = "de.kango99w.orbitadmin"
         minSdk = 30
         targetSdk = 35
-        versionCode = 57
-        versionName = "0.9.40"
+        versionCode = 58
+        versionName = "0.9.41"
+        // AVENQIR browser-only is the default; this does not affect Orbit Mail credentials.
+        buildConfigField("boolean", "AVENQIR_NATIVE_PASSKEY_ENABLED",
+            (providers.gradleProperty("orbit.avenqirNativePasskey").orNull == "true").toString())
         // Firebase mobile config values are public identifiers, not service-account secrets.
         // All four must be provided or the optional background push client stays off.
         val fcmNames = listOf("ORBIT_FIREBASE_APP_ID", "ORBIT_FIREBASE_API_KEY",

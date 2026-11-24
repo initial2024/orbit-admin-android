@@ -93,6 +93,7 @@ class AvenqirActivity : FragmentActivity() {
         val report = "Orbit " + BuildConfig.VERSION_NAME + "\nAndroid API " +
             android.os.Build.VERSION.SDK_INT + "\nWebView WebAuthn: " +
             WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION) +
+            "\nAVENQIR 凭证模式: " + (if (BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED) "原生 + 浏览器" else "浏览器专用") +
             "\n\n" + (passkeyBridge?.diagnosticsText() ?: "原生桥未安装") +
             "\n标准 WebAuthn 路径请查看网页上的 SYSTEM_* 错误代码。" +
             "\n\n仅包含操作阶段，不包含密码、验证码、账号、凭证或挑战。"
@@ -326,7 +327,8 @@ class AvenqirActivity : FragmentActivity() {
         // supports it. WebAuthn still requires FIRST-PARTY HTTPS server-side
         // challenge/signature verification and assetlinks.json for the *actual*
         // APK signing certificate. No password/2FA bypass is implemented here.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+        if (BuildConfig.AVENQIR_NATIVE_PASSKEY_ENABLED &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
             try {
                 WebSettingsCompat.setWebAuthenticationSupport(
                     page.settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
@@ -528,7 +530,7 @@ class AvenqirActivity : FragmentActivity() {
                 "🔒  私人 GitHub 项目" to "owner-projects.php",
                 "✉  留言管理后台" to "feedback-admin.php",
                 "🛡  防滥用测试中心" to "admin.php?view=feedback-security",
-                "🔑  内置页面通行密钥（需网站关联）" to "passkey.php"
+                "🔑  通行密钥说明与管理页面" to "passkey.php"
             )
             destinations.forEach { (label, route) ->
                 panel.addView(TextView(this).apply {
