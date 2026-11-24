@@ -15,6 +15,15 @@ class AvenqirPublicStatusTest {
         assertNull(AvenqirPublicStatusClient.parse("""{"ok":true,"items":[""" +
             List(301) { "{}" }.joinToString(",") + "]}"))
     }
+    @Test fun compactPublicStatusAndFallbackPolicy() {
+        val p=AvenqirPublicStatusClient
+        assertEquals(AvenqirPublicStatus(12),p.parse("""{"ok":true,"schema":"avenqir-directory-status-v1","count":12}"""))
+        assertNull(p.parse("""{"ok":true,"schema":"avenqir-directory-status-v1","count":"12"}"""))
+        assertNull(p.parse("""{"ok":true,"schema":"avenqir-directory-status-v1","count":301}"""))
+        assertNull(p.parse("""{"ok":true,"schema":"unrecognized","count":12}"""))
+        assertTrue(p.mayUseLegacyEndpoint(404))
+        for (code in listOf(0,200,302,403,429,500,503)) assertFalse(p.mayUseLegacyEndpoint(code))
+    }
     @Test fun distinguishBrowserResponseFromNetworkFailure() {
         assertNull(AvenqirPublicStatusClient.classifyResponse(200,"application/json; charset=utf-8"))
         assertEquals(AvenqirCheckIssue.BROWSER_REQUIRED,AvenqirPublicStatusClient.classifyResponse(200,"text/html"))
@@ -37,8 +46,12 @@ class AvenqirPublicStatusTest {
         val client=source("AvenqirPublicStatusClient.kt")
         val main=source("MainActivity.kt")
         assertTrue(client.contains("https://avenqir.bg5.net/public-api.php"))
-        assertTrue(client.contains("instanceFollowRedirects = false"))
-        assertTrue(client.contains("CookieHandler.getDefault() != null"))
+        assertTrue(client.contains(".followRedirects(false)"))
+        assertTrue(client.contains("CookieJar.NO_COOKIES"))
+        assertFalse(client.contains("CookieHandler.getDefault()"))
+        assertTrue(client.contains("https://avenqir.bg5.net/directory-status.php"))
+        assertTrue(client.contains(".authenticator(Authenticator.NONE)"))
+        assertTrue(client.contains(".followSslRedirects(false)"))
         assertFalse(client.contains("CookieManager.getInstance"))
         assertFalse(client.contains("Authorization"))
         assertFalse(client.contains("setHostnameVerifier"))
