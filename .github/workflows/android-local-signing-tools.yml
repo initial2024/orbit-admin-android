@@ -1,0 +1,37 @@
+name: Prepare Android 35 local signing tools (no private keys)
+on:
+  push:
+    branches: [chore/reproducible-local-signing-tools-20261124]
+    paths:
+      - .github/workflows/android-local-signing-tools.yml
+permissions:
+  contents: read
+jobs:
+  export-public-buildtools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Locate SDK build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "build-tools;35.0.0"
+          test -s "$SDK_ROOT/build-tools/35.0.0/lib/apksigner.jar"
+          test -x "$SDK_ROOT/build-tools/35.0.0/zipalign"
+          mkdir -p artifact
+          cp "$SDK_ROOT/build-tools/35.0.0/lib/apksigner.jar" artifact/
+          cp "$SDK_ROOT/build-tools/35.0.0/zipalign" artifact/
+          java -jar artifact/apksigner.jar --version | tee artifact/apksigner-version.txt
+          sha256sum artifact/apksigner.jar artifact/zipalign > artifact/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-android-35-signing-tools
+          path: artifact/
+          retention-days: 3
+          if-no-files-found: error
