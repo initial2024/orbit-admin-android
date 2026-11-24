@@ -1,0 +1,63 @@
+name: Orbit v0.9.30 optimized unsigned APK for private signing
+on:
+  push:
+    branches: [chore/reproducible-local-signing-tools-20261124]
+    paths:
+      - .github/workflows/orbit-v0930-unsigned-optimized-local-signing.yml
+permissions:
+  contents: read
+jobs:
+  optimized-unsigned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android 36 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Validate original app ID and build optimized release
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'applicationId = "de.kango99w.orbitadmin"' app/build.gradle.kts
+          grep -Fq 'versionName = "0.9.30"' app/build.gradle.kts
+          test -z "${ORBIT_RELEASE_KEYSTORE_FILE:-}"
+          gradle --no-daemon --no-configuration-cache \
+            :app:testReleaseUnitTest :app:assembleRelease
+      - name: Assert unsigned, compact release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SRC="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*unsigned*.apk' | head -n 1)"
+          test -n "$SRC" && test -s "$SRC"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$SRC" | grep -F "package: name='de.kango99w.orbitadmin'"
+          "$SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$SRC" | grep -F "versionCode='47' versionName='0.9.30'"
+          cp "$SRC" Orbit-v0.9.30-unsigned-optimized.apk
+          sha256sum Orbit-v0.9.30-unsigned-optimized.apk > Orbit-v0.9.30-unsigned-optimized.apk.sha256
+          printf "Source SHA: %s\nThis file is intentionally UNSIGNED. Must sign with private owner keystore.\n" "$GITHUB_SHA" > build-evidence.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-v0930-unsigned-optimized
+          retention-days: 5
+          if-no-files-found: error
+          path: |
+            Orbit-v0.9.30-unsigned-optimized.apk
+            Orbit-v0.9.30-unsigned-optimized.apk.sha256
+            build-evidence.txt
