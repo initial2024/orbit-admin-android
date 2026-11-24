@@ -34,6 +34,10 @@ object AvenqirNativePasskeyPolicy {
     const val PAGE = "$ORIGIN/passkey.php"
     const val RP = "avenqir.bg5.net"
     const val OBJECT = "OrbitAvenqirPasskey"
+    const val BROWSER_OBJECT = "OrbitAvenqirBrowserAuth"
+
+    fun allowsBrowserOpen(sourceOrigin: String, mainFrame: Boolean, pageUrl: String?, message: String?, foreground: Boolean, unlocked: Boolean): Boolean =
+        foreground && unlocked && allows(sourceOrigin, mainFrame, pageUrl) && message == "OPEN_PASSKEY_PAGE"
 
     fun allows(sourceOrigin: String, mainFrame: Boolean, pageUrl: String?): Boolean =
         mainFrame && sourceOrigin == ORIGIN && pageUrl == PAGE
@@ -125,6 +129,15 @@ class AvenqirNativePasskeyBridge(
     fun install() {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) { note("BRIDGE_UNSUPPORTED"); return }
         note("BRIDGE_INSTALLED")
+        // Separate no-argument capability: only opens the fixed first-party page.
+        // No URL, credentials, session or response channel is accepted.
+        WebViewCompat.addWebMessageListener(page, AvenqirNativePasskeyPolicy.BROWSER_OBJECT,
+            setOf(AvenqirNativePasskeyPolicy.ORIGIN)) { view, message, origin, mainFrame, _ ->
+            if (closed || busy || view !== page || !AvenqirNativePasskeyPolicy.allowsBrowserOpen(
+                    origin.toString(), mainFrame, page.url, message.data, foreground(), allowed()))
+                return@addWebMessageListener
+            AvenqirPasskeyBrowserTab(activity).chooseAndOpen()
+        }
         WebViewCompat.addWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT,
             setOf(AvenqirNativePasskeyPolicy.ORIGIN)) { view, message, origin, mainFrame, reply ->
             if (closed || view !== page ||
@@ -297,7 +310,9 @@ class AvenqirNativePasskeyBridge(
         dialog?.dismiss()
         dialog = null
         job?.cancel()
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT)
+            WebViewCompat.removeWebMessageListener(page, AvenqirNativePasskeyPolicy.BROWSER_OBJECT)
+        }
     }
 }
