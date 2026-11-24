@@ -49,6 +49,37 @@ object AvenqirNativePasskeyPolicy {
         type.contains("CANCEL", ignoreCase = true) ||
             type.contains("NotAllowedError", ignoreCase = true)
 
+    // Compatibility profile for native creation, not an authentication bypass.
+    // Keep the original RP, challenge, user, excluded IDs, resident-key and UV
+    // requirements. Reorder only algorithms actually offered by the server.
+    // Optional extension discovery and transport hints are unnecessary here.
+    fun providerOptions(operation: String, input: JSONObject): JSONObject {
+        require(validOptions(operation, input))
+        val out = JSONObject(input.toString())
+        if (operation == "create") {
+            val original = out.optJSONArray("pubKeyCredParams") ?: error("missing algorithms")
+            val params = (0 until original.length()).map { original.getJSONObject(it) }
+            require(params.isNotEmpty() && params.all { it.optString("type") == "public-key" })
+            val ordered = params.sortedBy { when (it.optInt("alg")) {
+                -7 -> 0
+                -257 -> 1
+                else -> 2
+            } }
+            out.put("pubKeyCredParams", org.json.JSONArray(ordered))
+            val extensions = out.optJSONObject("extensions")
+            // Only remove the informational exts discovery request. Never
+            // remove unknown or security-related extensions.
+            extensions?.remove("exts")
+            if (extensions != null && extensions.length() == 0) out.remove("extensions")
+            val exclude = out.optJSONArray("excludeCredentials")
+            if (exclude != null) for (i in 0 until exclude.length()) {
+                exclude.getJSONObject(i).remove("transports")
+            }
+        }
+        require(validOptions(operation, out))
+        return out
+    }
+
     fun validOptions(operation: String, options: JSONObject): Boolean {
         if (!options.optString("challenge").matches(Regex("[A-Za-z0-9_-]{43}"))) return false
         if (options.has("origin")) return false
@@ -175,8 +206,10 @@ class AvenqirNativePasskeyBridge(
                     // Do not wrap it in a MutableContextWrapper.
                     val manager = CredentialManager.create(activity)
                     if (operation == "create") {
+                        val compatible = AvenqirNativePasskeyPolicy.providerOptions(operation, JSONObject(options))
+                        note("CREATE_OPTIONS_COMPAT_PROFILE")
                         val result = manager.createCredential(context = activity,
-                            request = CreatePublicKeyCredentialRequest(options))
+                            request = CreatePublicKeyCredentialRequest(compatible.toString()))
                         (result as? CreatePublicKeyCredentialResponse)?.registrationResponseJson
                             ?: error("unexpected credential")
                     } else {

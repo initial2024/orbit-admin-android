@@ -113,6 +113,29 @@ class AvenqirActivity : FragmentActivity() {
             .setNegativeButton("关闭", null).show()
     }
 
+    /** User-requested first-party browser visit; never pass account tokens,
+     * cookies, passwords or challenges between the browser and Orbit. */
+    private fun openPasskeyInSystemBrowser() {
+        if (backgroundLocked || isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("使用系统浏览器测试通行密钥")
+            .setMessage("将在外部浏览器打开 avenqir.bg5.net 的正式通行密钥页面。浏览器登录与 Orbit 独立，需要正常登录及验证；登记后凭证能否在 Orbit 使用取决于同一系统密码管理器及应用关联。不会自动迁移会话。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("打开浏览器") { _, _ ->
+                if (!backgroundLocked && !isFinishing && !isDestroyed) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AvenqirNativePasskeyPolicy.PAGE))
+                            .addCategory(Intent.CATEGORY_BROWSABLE)
+                        startActivity(Intent.createChooser(intent, "选择系统浏览器"))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(this, "未找到可用浏览器", Toast.LENGTH_SHORT).show()
+                    } catch (_: SecurityException) {
+                        Toast.makeText(this, "系统拒绝打开浏览器", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }.show()
+    }
+
     private fun showInstalledSignatureCheck() {
         val expected = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
         val fingerprints = try {
@@ -531,6 +554,16 @@ class AvenqirActivity : FragmentActivity() {
                     }
                 })
             }
+            panel.addView(TextView(this).apply {
+                text = "🌐  系统浏览器登记 / 测试通行密钥"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { dialog.dismiss(); openPasskeyInSystemBrowser() }
+            })
             panel.addView(TextView(this).apply {
                 text = "🔧  通行密钥诊断 / 复制报告"
                 textSize = 16f

@@ -25,6 +25,24 @@ class AvenqirNativePasskeyPolicyTest {
         assertTrue(p.providerCancelled("androidx.credentials.TYPE_CREATE_CREDENTIAL_CANCELLATION_EXCEPTION"))
         assertFalse(p.providerCancelled("android.credentials.CreateCredentialException.TYPE_UNKNOWN"))
     }
+    @Test fun nativeCreationCompatibilityPreservesServerSecurityFields() {
+        val p=AvenqirNativePasskeyPolicy
+        val source=JSONObject("""{"challenge":"${"A".repeat(43)}","rp":{"id":"avenqir.bg5.net","name":"AVENQIR"},"user":{"name":"adm","id":"AQID","displayName":"adm"},"authenticatorSelection":{"userVerification":"required","residentKey":"required","requireResidentKey":true},"attestation":"none","pubKeyCredParams":[{"type":"public-key","alg":-8},{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}],"extensions":{"exts":true,"credProps":true},"excludeCredentials":[{"id":"AQIDBA","type":"public-key","transports":["internal","hybrid"]}]}""")
+        val out=p.providerOptions("create",source)
+        assertEquals(-7,out.getJSONArray("pubKeyCredParams").getJSONObject(0).getInt("alg"))
+        assertEquals(-257,out.getJSONArray("pubKeyCredParams").getJSONObject(1).getInt("alg"))
+        assertEquals(-8,out.getJSONArray("pubKeyCredParams").getJSONObject(2).getInt("alg"))
+        for (name in listOf("challenge","rp","user","authenticatorSelection","attestation"))
+            assertEquals(source.get(name).toString(),out.get(name).toString())
+        assertEquals("AQIDBA",out.getJSONArray("excludeCredentials").getJSONObject(0).getString("id"))
+        assertFalse(out.getJSONArray("excludeCredentials").getJSONObject(0).has("transports"))
+        assertTrue(source.getJSONObject("extensions").has("exts"))
+        assertFalse(out.getJSONObject("extensions").has("exts"))
+        assertTrue(out.getJSONObject("extensions").getBoolean("credProps"))
+        val get=JSONObject().put("challenge","A".repeat(43)).put("rpId",p.RP)
+            .put("userVerification","required").put("allowCredentials",org.json.JSONArray().put(JSONObject().put("id","abc")))
+        assertEquals(get.toString(),p.providerOptions("get",get).toString())
+    }
     @Test fun onlyPinnedRelyingPartyAndRequiredVerification() {
         val p=AvenqirNativePasskeyPolicy
         val challenge="A".repeat(43)
