@@ -1,4 +1,4 @@
-name: Orbit v0.9.35 unsigned personal release artifact
+name: Orbit v0.9.36 unsigned personal release artifact
 on:
   push:
     branches: [fix/avenqir-native-passkey-v0933-20261124]
@@ -47,18 +47,18 @@ jobs:
           SRC="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name 'app-release*.apk' | head -n 1)"
           test -s "$SRC"
           "$AAPT" dump badging "$SRC" | grep -F "package: name='de.kango99w.orbitadmin'"
-          "$AAPT" dump badging "$SRC" | grep -F "versionCode='52' versionName='0.9.35'"
+          "$AAPT" dump badging "$SRC" | grep -F "versionCode='53' versionName='0.9.36'"
           grep -Fq 'WEB_AUTHENTICATION_SUPPORT_FOR_APP' app/src/main/java/de/kango99w/orbitadmin/AvenqirActivity.kt
           grep -Fq 'https://avenqir.bg5.net/.well-known/assetlinks.json' app/src/main/res/values/strings.xml
-          mv "$SRC" Orbit-v0.9.35-unsigned-R8.apk
-          sha256sum Orbit-v0.9.35-unsigned-R8.apk > Orbit-v0.9.35-unsigned-R8.apk.sha256
+          mv "$SRC" Orbit-v0.9.36-unsigned-R8.apk
+          sha256sum Orbit-v0.9.36-unsigned-R8.apk > Orbit-v0.9.36-unsigned-R8.apk.sha256
           printf 'Built from SHA: %s\nNot signed. Never install this artifact.\n' "$GITHUB_SHA" > UNSIGNED-NOTICE.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-v0935-unsigned-for-private-signing
+          name: orbit-v0936-unsigned-for-private-signing
           retention-days: 7
           if-no-files-found: error
           path: |
-            Orbit-v0.9.35-unsigned-R8.apk
-            Orbit-v0.9.35-unsigned-R8.apk.sha256
+            Orbit-v0.9.36-unsigned-R8.apk
+            Orbit-v0.9.36-unsigned-R8.apk.sha256
             UNSIGNED-NOTICE.txt

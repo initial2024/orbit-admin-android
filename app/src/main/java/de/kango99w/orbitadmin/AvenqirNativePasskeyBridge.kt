@@ -1,7 +1,6 @@
 package de.kango99w.orbitadmin
 
 import android.app.AlertDialog
-import android.content.MutableContextWrapper
 import android.widget.Toast
 import android.util.Log
 import android.webkit.WebView
@@ -70,10 +69,20 @@ class AvenqirNativePasskeyBridge(
     private var closed = false
     private var job: Job? = null
     private var dialog: AlertDialog? = null
+    private val diagnostics = ArrayDeque<String>()
+    private var startedAt = android.os.SystemClock.elapsedRealtime()
+    fun note(stage: String) {
+        val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+        if (diagnostics.size >= 24) diagnostics.removeFirst()
+        diagnostics.addLast("${elapsed}ms $stage")
+        Log.i("OrbitPasskey", stage)
+    }
+    fun diagnosticsText(): String = diagnostics.joinToString("\n").ifBlank { "尚未收到 Passkey 请求" }
 
 
     fun install() {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) { note("BRIDGE_UNSUPPORTED"); return }
+        note("BRIDGE_INSTALLED")
         WebViewCompat.addWebMessageListener(page, AvenqirNativePasskeyPolicy.OBJECT,
             setOf(AvenqirNativePasskeyPolicy.ORIGIN)) { view, message, origin, mainFrame, reply ->
             if (closed || view !== page ||
@@ -86,30 +95,45 @@ class AvenqirNativePasskeyBridge(
             val operation = input.optString("operation")
             val options = input.optJSONObject("options")
             if (busy) { respond(reply, id, "BUSY"); return@addWebMessageListener }
+            diagnostics.clear(); startedAt = android.os.SystemClock.elapsedRealtime()
+            note(if (operation == "create") "REQUEST_CREATE" else if (operation == "get") "REQUEST_GET" else "REQUEST_INVALID")
             if (!allowed() || !activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) ||
                 options == null || !AvenqirNativePasskeyPolicy.validOptions(operation, options)) {
-                respond(reply, id, "INVALID"); return@addWebMessageListener
+                note("REQUEST_REJECTED"); respond(reply, id, "INVALID"); return@addWebMessageListener
             }
             // Explicit consent from native UI, followed by ONE credential
             // provider operation. No separate biometric prompt may compete
             // with Android Credential Manager's own authentication window.
             busy = true
             var consented = false
+            var dispatched = false
             val confirmation = AlertDialog.Builder(activity)
                 .setTitle(if (operation == "create") "登记 AVENQIR 通行密钥" else "使用通行密钥登录")
                 .setMessage("继续后将打开 Android 凭证服务，由系统决定指纹或设备锁验证方式。仅用于 avenqir.bg5.net 管理员 adm。")
                 .setNegativeButton("取消") { _, _ -> complete(reply, id, "CANCELLED") }
-                .setPositiveButton("打开系统凭证") { _, _ -> consented = true }
+                .setPositiveButton("打开系统凭证", null)
                 .create()
             dialog = confirmation
             confirmation.setOnDismissListener {
                 dialog = null
                 if (closed || !busy) return@setOnDismissListener
+                note("CONSENT_DISMISSED")
                 if (!consented) complete(reply, id, "CANCELLED")
-                else invokeSystem(operation, options.toString(), reply, id)
             }
-            try { confirmation.show() }
-            catch (_: RuntimeException) { complete(reply, id, "UNAVAILABLE") }
+            try {
+                confirmation.show()
+                note("CONSENT_SHOWN")
+                confirmation.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    if (dispatched || closed || !busy) return@setOnClickListener
+                    dispatched = true
+                    consented = true
+                    note("CONSENT_ACCEPTED")
+                    confirmation.dismiss()
+                    // Dispatch from the explicit click, not an optional OEM
+                    // onDismiss callback. Wait for the real Activity to regain focus.
+                    page.post { if (!closed && busy) invokeSystem(operation, options.toString(), reply, id) }
+                }
+            } catch (_: RuntimeException) { complete(reply, id, "UNAVAILABLE") }
         }
     }
 
@@ -138,37 +162,41 @@ class AvenqirNativePasskeyBridge(
                     return@launch
                 }
                 status("正在打开 Android 系统凭证，请选择通行密钥")
-                Log.i("OrbitPasskey", "PROVIDER_LAUNCH operation=$operation")
+                note("PROVIDER_LAUNCH")
                 val response = withTimeout(85000L) {
-                    val context = MutableContextWrapper(activity)
+                    // The request context must be the foreground Activity itself.
+                    // Do not wrap it in a MutableContextWrapper.
                     val manager = CredentialManager.create(activity)
                     if (operation == "create") {
-                        val result = manager.createCredential(context = context,
+                        val result = manager.createCredential(context = activity,
                             request = CreatePublicKeyCredentialRequest(options))
                         (result as? CreatePublicKeyCredentialResponse)?.registrationResponseJson
                             ?: error("unexpected credential")
                     } else {
                         val request = GetCredentialRequest(listOf(GetPublicKeyCredentialOption(options)))
-                        val result = manager.getCredential(context = context, request = request)
+                        val result = manager.getCredential(context = activity, request = request)
                         (result.credential as? PublicKeyCredential)?.authenticationResponseJson
                             ?: error("unexpected credential")
                     }
                 }
-                Log.i("OrbitPasskey", "PROVIDER_RETURNED")
+                note("PROVIDER_RETURNED")
                 val credential = JSONObject(response)
                 if (response.length > 120000 || credential.optString("type") != "public-key" ||
                     credential.optString("rawId").isBlank() || credential.optJSONObject("response") == null) {
                     complete(reply, id, "INVALID")
                 } else complete(reply, id, null, credential)
             } catch (_: TimeoutCancellationException) {
-                complete(reply, id, "TIMEOUT")
+                note("PROVIDER_TIMEOUT"); complete(reply, id, "TIMEOUT")
             } catch (e: CancellationException) {
                 complete(reply, id, "CANCELLED")
                 throw e
             } catch (e: Exception) {
+                val type = e.javaClass.simpleName.filter { it.isLetterOrDigit() }.take(80)
+                note("PROVIDER_EXCEPTION_" + type)
                 val code = when {
                     e.javaClass.simpleName.contains("Cancellation") -> "CANCELLED"
                     e.javaClass.simpleName.contains("NoCredential") -> "NO_CREDENTIAL"
+                    e is SecurityException || e.javaClass.simpleName.contains("Security") -> "PROVIDER"
                     e.javaClass.simpleName.contains("Unsupported") ||
                         e.javaClass.simpleName.contains("ProviderConfiguration") -> "UNAVAILABLE"
                     e.javaClass.simpleName.contains("Credential") -> "PROVIDER"
@@ -192,7 +220,7 @@ class AvenqirNativePasskeyBridge(
         busy = false
         dialog?.dismiss()
         dialog = null
-        Log.i("OrbitPasskey", "COMPLETE code=${code ?: "RESPONSE"}")
+        note("COMPLETE_" + (code ?: "RESPONSE"))
         if (code != null && code != "CANCELLED") {
             status(when (code) {
                 "INVALID" -> "凭证窗口未能启动或页面状态已变更，请返回后重新执行第一步。"
@@ -202,6 +230,7 @@ class AvenqirNativePasskeyBridge(
                 else -> "系统凭证操作未完成，请检查网站关联及密码管理器。"
             })
         } else if (code == null) status("系统凭证已返回，等待服务器验证")
+        else status("系统凭证操作已取消，可从菜单查看诊断")
         respond(reply, id, code, credential)
         if (!closed) finished()
     }

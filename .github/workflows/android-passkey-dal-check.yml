@@ -1,0 +1,48 @@
+name: AVENQIR public Android association diagnosis
+on:
+  push:
+    branches: [fix/avenqir-native-passkey-v0933-20261124]
+    paths: [.github/workflows/android-passkey-dal-check.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check actual public Digital Asset Links and Google verdict
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.parse, urllib.error
+          host='https://avenqir.bg5.net'
+          cert='6E:3E:5B:08:37:BE:97:08:23:8F:EC:5B:20:BD:80:CF:51:A2:AA:63:B2:44:F1:94:62:57:40:1F:3A:EE:04:91'
+          package='de.kango99w.orbitadmin'
+          relation='delegate_permission/common.get_login_creds'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args,**kw): return None
+          opener=urllib.request.build_opener(NoRedirect)
+          def request(url):
+              with opener.open(url,timeout=15) as resp:
+                  content=resp.read(65537)
+                  print('HTTP',resp.status,'MIME',resp.headers.get_content_type())
+                  if len(content)>65536 or resp.headers.get_content_type()!='application/json':
+                      return None
+                  return json.loads(content)
+          try:
+              data=request(host+'/.well-known/assetlinks.json')
+              ok=isinstance(data,list) and any(relation in a.get('relation',[]) and a.get('target',{}).get('package_name')==package and cert in a.get('target',{}).get('sha256_cert_fingerprints',[]) for a in data if isinstance(a,dict))
+              print('DAL_PUBLIC_JSON_MATCH='+('PASS' if ok else 'DENY'))
+          except Exception as e:
+              print('DAL_PUBLIC_JSON_MATCH=INCONCLUSIVE',type(e).__name__)
+          params={'source.web.site':host,'relation':relation,'target.androidApp.packageName':package,'target.androidApp.certificate.sha256Fingerprint':cert}
+          try:
+              result=request('https://digitalassetlinks.googleapis.com/v1/assetlinks:check?'+urllib.parse.urlencode(params))
+              if not isinstance(result,dict): print('GOOGLE_DAL_LINKED=INCONCLUSIVE')
+              else:
+                  print('GOOGLE_DAL_LINKED='+('PASS' if result.get('linked') is True else 'DENY'))
+                  print('GOOGLE_DAL_MAX_AGE',result.get('maxAge',''))
+                  print('GOOGLE_DAL_DIAGNOSTIC',str(result.get('debugString',''))[:600])
+          except Exception as e:
+              print('GOOGLE_DAL_LINKED=INCONCLUSIVE',type(e).__name__)
+          PY

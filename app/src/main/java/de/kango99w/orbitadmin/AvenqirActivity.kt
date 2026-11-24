@@ -86,6 +86,26 @@ class AvenqirActivity : FragmentActivity() {
 
     // This is a local identity diagnostic, NOT proof to a remote server.
     // The expected certificate is the one published in AVENQIR assetlinks.json.
+    private fun showPasskeyDiagnostics() {
+        if (backgroundLocked || isFinishing) return
+        val report = "Orbit " + BuildConfig.VERSION_NAME + "\nAndroid API " +
+            android.os.Build.VERSION.SDK_INT + "\nWebView WebAuthn: " +
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION) +
+            "\n\n" + (passkeyBridge?.diagnosticsText() ?: "原生桥未安装") +
+            "\n\n仅包含操作阶段，不包含密码、验证码、账号、凭证或挑战。"
+        AlertDialog.Builder(this).setTitle("通行密钥诊断")
+            .setMessage(report)
+            .setPositiveButton("复制诊断") { _, _ ->
+                val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Orbit Passkey diagnostics", report))
+            }
+            .setNeutralButton("打开系统密码设置") { _, _ ->
+                try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+                catch (_: Exception) { Toast.makeText(this, "请手动打开系统设置 → 密码、通行密钥与自动填充", Toast.LENGTH_LONG).show() }
+            }
+            .setNegativeButton("关闭", null).show()
+    }
+
     private fun showInstalledSignatureCheck() {
         val expected = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
         val fingerprints = try {
@@ -473,7 +493,8 @@ class AvenqirActivity : FragmentActivity() {
                 setTextColor(menuForeground)
                 setPadding(dp(8), dp(4), dp(8), dp(10))
             })
-            val dialog = AlertDialog.Builder(this).setView(panel).create()
+            val scroll = android.widget.ScrollView(this).apply { addView(panel); isFillViewport = false }
+            val dialog = AlertDialog.Builder(this).setView(scroll).create()
             val destinations = listOf(
                 "⌂  网站首页" to "",
                 "▦  网址目录" to "directory.html",
@@ -500,6 +521,16 @@ class AvenqirActivity : FragmentActivity() {
                     }
                 })
             }
+            panel.addView(TextView(this).apply {
+                text = "🔧  通行密钥诊断 / 复制报告"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { dialog.dismiss(); showPasskeyDiagnostics() }
+            })
             panel.addView(TextView(this).apply {
                 text = "✓  本机应用签名检查"
                 textSize = 16f
@@ -693,12 +724,14 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     override fun onPause() {
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_PAUSE")
         webView?.onPause()
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_RESUME")
         navigatingToExternal = false
         if (backgroundLocked) {
             // Keep the previous WebView, page scroll, forms, navigation and
@@ -712,6 +745,7 @@ class AvenqirActivity : FragmentActivity() {
     }
 
     override fun onStop() {
+        if (passkeyBridge?.busy == true) passkeyBridge?.note("ACTIVITY_STOP")
         // Backgrounding is NOT closing: preserve the same WebView instance.
         // Cover sensitive admin content before recent-apps/task snapshots and
         // require biometric/device credential before revealing it on return.
