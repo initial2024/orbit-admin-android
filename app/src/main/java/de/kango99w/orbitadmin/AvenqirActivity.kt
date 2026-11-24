@@ -84,6 +84,32 @@ class AvenqirActivity : FragmentActivity() {
         if (destination != null && url != null) saveAuthenticatedJson(url, destination)
     }
 
+    // This is a local identity diagnostic, NOT proof to a remote server.
+    // The expected certificate is the one published in AVENQIR assetlinks.json.
+    private fun showInstalledSignatureCheck() {
+        val expected = "6E3E5B0837BE9708238FEC5B20BD80CF51A2AA63B244F1946257401F3AEE0491"
+        val fingerprints = try {
+            @Suppress("DEPRECATION")
+            val info = packageManager.getPackageInfo(packageName,
+                android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+            val current = info.signingInfo?.apkContentsSigners ?: emptyArray()
+            current.map { signature ->
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(signature.toByteArray()).joinToString("") { "%02X".format(it.toInt() and 255) }
+            }
+        } catch (_: Exception) { emptyList() }
+        val result = when {
+            fingerprints.isEmpty() -> "未能读取签名，验证结果未知。"
+            packageName == "de.kango99w.orbitadmin" && fingerprints.size == 1 &&
+                fingerprints.single() == expected -> "当前安装包签名与 AVENQIR 公布的应用关联证书一致。"
+            else -> "当前签名与已公布的关联证书不一致；测试版也可能出现此结果。"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Orbit 本机签名检查")
+            .setMessage(result + "\n\n此检查仅在原生应用内提供。普通网页、第三方内置浏览器无法完成应用身份检查。它不是服务端认证、远程设备证明或安全认证。")
+            .setPositiveButton("关闭", null).show()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -474,6 +500,20 @@ class AvenqirActivity : FragmentActivity() {
                 })
             }
             panel.addView(TextView(this).apply {
+                text = "✓  本机应用签名检查"
+                textSize = 16f
+                setTextColor(menuForeground)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    if (!backgroundLocked) showInstalledSignatureCheck()
+                }
+            })
+            panel.addView(TextView(this).apply {
                 text = "🌐  第三方网址默认打开方式"
                 textSize = 16f
                 setTextColor(menuForeground)
@@ -488,7 +528,7 @@ class AvenqirActivity : FragmentActivity() {
                 }
             })
             panel.addView(TextView(this).apply {
-                text = "网站管理后台使用独立的 AVENQIR 登录会话"
+                text = "独立 AVENQIR 登录会话 · 网页不能替代原生应用签名检查"
                 textSize = 12f
                 setTextColor(menuMuted)
                 setPadding(dp(8), dp(12), dp(8), dp(2))
