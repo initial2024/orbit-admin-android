@@ -37,6 +37,8 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import java.net.HttpURLConnection
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -235,6 +237,9 @@ class AvenqirActivity : FragmentActivity() {
         }
 
         CookieManager.getInstance().setAcceptThirdPartyCookies(page, false)
+        // Android password managers may offer existing username/password autofill.
+        // This is not WebAuthn registration, and no passkey is stored by the app.
+        page.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         page.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -249,6 +254,20 @@ class AvenqirActivity : FragmentActivity() {
             setGeolocationEnabled(false)
             mediaPlaybackRequiresUserGesture = true
             safeBrowsingEnabled = true
+        }
+        // Enable the official platform bridge only when the installed WebView
+        // supports it. WebAuthn still requires FIRST-PARTY HTTPS server-side
+        // challenge/signature verification and assetlinks.json for the *actual*
+        // APK signing certificate. No password/2FA bypass is implemented here.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+            try {
+                WebSettingsCompat.setWebAuthenticationSupport(
+                    page.settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
+                )
+            } catch (_: RuntimeException) {
+                // Unsupported Android credential provider must not block AVENQIR.
+                android.util.Log.i("OrbitAvenqir", "System WebAuthn unavailable; password login retained")
+            }
         }
         page.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
